@@ -1,0 +1,47 @@
+"""Packed pointers only. Never file contents. Never a vendor transcript."""
+from __future__ import annotations
+
+import json
+from pathlib import Path
+from .gitstate import git_state
+from typing import Any
+
+POINTER_FILES = (
+    ("thread", "thread.md"),
+    ("role", "role.md"),
+    ("brief", ".ola/brief.md"),
+)
+
+def _pointer(path: Path) -> str | None:
+    return str(path) if path.is_file() else None
+
+def newest_handoff(root: Path) -> str | None:
+    folder = Path(root) / ".ola"
+    if not folder.is_dir():
+        return None
+    cands = sorted(folder.glob("*handoff*"), key=lambda p: p.stat().st_mtime, reverse=True)
+    files = [p for p in cands if p.is_file()]
+    return str(files[0]) if files else None
+
+def pack(root: Path, instance_id: str | None = None) -> dict[str, Any]:
+    root = Path(root).resolve()
+    out: dict[str, Any] = {}
+    for key, rel in POINTER_FILES:
+        out[key] = _pointer(root / rel)
+    out["handoff"] = newest_handoff(root)
+    out["instance_id"] = instance_id
+    state = git_state(root)
+    out["worktree"] = str(root) if state["git_branch"] else None
+    out["branch"] = state["git_branch"]
+    out["pr"] = state["pr_number"]
+    out["git_sha"] = state["git_sha"]
+    return out
+
+def stdin_for(packed: dict[str, Any], body: str) -> str:
+    paths = {k: v for k, v in packed.items() if k != "instance_id"}
+    return (
+        "read these paths, then do the body. do not expect file contents in this message." + chr(10)
+        + json.dumps(paths, separators=(",", ":"))
+        + chr(10)
+        + body
+    )

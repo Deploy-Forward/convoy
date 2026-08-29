@@ -1,0 +1,11 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.venv/
+.pytest_cache/
+.convoy/
+*.log
+HTTP_MCP_STATUS.md
+ConvoyLayer.ps1

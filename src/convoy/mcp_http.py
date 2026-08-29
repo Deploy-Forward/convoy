@@ -1,0 +1,503 @@
+"""Streamable-style JSON-RPC HTTP MCP for convoy. Attach from Grok Bot is still RED.
+
+Public URL when attached: https://convoy.bot/mcp
+This process does not make that URL live. Do not mark GREEN.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import shutil
+import sys
+from datetime import datetime, timedelta, timezone
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from typing import Any
+from urllib.parse import urlparse
+
+from .bringup import bring_up, hide_windows, live_applier, live_runner, terminals
+from .context import pack
+from .convoy import list_seats, read_thread
+from .gitstate import git_state
+from .layer import feed_since
+from .synapse import fake_runner, ola_runner, send_one
+from .usage import probe
+
+PROTOCOL_LATEST = "2025-03-26"
+PROTOCOL_SUPPORTED = frozenset({PROTOCOL_LATEST, "2024-11-05"})
+SERVER_NAME = "convoy"
+SERVER_VERSION = "0.1.0"
+HOME_LINE = "convoy.bot · a grok-bot native mcp"
+
+HARNESSES = (
+    ("grok", "Grok"),
+    ("claude", "Claude"),
+    ("codex", "Codex"),
+    ("agy", "agy"),
+    ("cursor-agent", "cursor-agent"),
+)
+
+_TOOL_NAMES = ("roster", "terminals", "context", "send", "feed", "bring_up", "open", "hide", "minimize", "background")
+
+
+def _schema(properties: dict[str, Any], required: list[str] | None = None) -> dict[str, Any]:
+    out: dict[str, Any] = {"type": "object", "properties": properties, "additionalProperties": False}
+    if required:
+        out["required"] = required
+    return out
+
+
+TOOLS: list[dict[str, Any]] = [
+    {
+        "name": "roster",
+        "description": "Live harness roster. present/wired from PATH. usage_remaining is JSON null when the harness does not expose a remaining count.",
+        "inputSchema": _schema({}),
+    },
+    {
+        "name": "terminals",
+        "description": "Window metadata for a thread. Pointers only. No PTY dump.",
+        "inputSchema": _schema({
+            "convoy_id": {"type": "string"},
+            "thread": {"type": "string"},
+        }),
+    },
+    {
+        "name": "context",
+        "description": "Packed pointers only (thread.md, role.md, brief, handoff, instance_id, worktree, branch, pr). Not file contents.",
+        "inputSchema": _schema({
+            "instance_id": {"type": "string"},
+        }),
+    },
+    {
+        "name": "send",
+        "description": "headless hop; does not pop a TUI. Hop one compact card to a harness. Default runner is fake. live=true execs ola_runner. Never live_runner / CREATE_NEW_CONSOLE. Refuses limited without waiting.",
+        "inputSchema": _schema(
+            {
+                "to": {"type": "string"},
+                "body": {"type": "string"},
+                "model": {"type": "string"},
+                "label": {"type": "string"},
+                "worktree": {"type": "string"},
+                "live": {"type": "boolean", "default": False},
+            },
+            required=["to", "body"],
+        ),
+    },
+    {
+        "name": "feed",
+        "description": "Layer events since ts. Default last 24h. Not vendor resume.",
+        "inputSchema": _schema({
+            "since": {"type": "string", "description": "ISO UTC lower bound. Default last 24h."},
+        }),
+    },
+    {
+        "name": "bring_up",
+        "description": "Resume hop seats visible. dry_run defaults true so a public URL cannot pop windows. Pass dry_run false to spawn.",
+        "inputSchema": _schema({
+            "convoy_id": {"type": "string"},
+            "thread": {"type": "string"},
+            "dry_run": {"type": "boolean", "default": True},
+        }),
+    },
+    {
+        "name": "open",
+        "description": "Alias of bring_up. The only show command besides bring_up.",
+        "inputSchema": _schema({
+            "convoy_id": {"type": "string"},
+            "thread": {"type": "string"},
+            "dry_run": {"type": "boolean", "default": True},
+        }),
+    },
+    {
+        "name": "hide",
+        "description": "Minimize or hide hop TUI windows. Sessions keep running. Does not kill grok.exe/claude.exe/Grok Bot.exe. dry_run defaults true so a public URL cannot change windows. Pass dry_run false to apply. mode=minimize (default, SW_MINIMIZE) or hide (SW_HIDE). restore is bring_up.",
+        "inputSchema": _schema({
+            "convoy_id": {"type": "string"},
+            "thread": {"type": "string"},
+            "mode": {"type": "string", "default": "minimize", "description": "minimize (default) or hide. restore is bring_up."},
+            "dry_run": {"type": "boolean", "default": True},
+        }),
+    },
+    {
+        "name": "minimize",
+        "description": "Alias of hide (mode minimize). Sessions keep running. Does not kill.",
+        "inputSchema": _schema({
+            "convoy_id": {"type": "string"},
+            "thread": {"type": "string"},
+            "mode": {"type": "string", "default": "minimize"},
+            "dry_run": {"type": "boolean", "default": True},
+        }),
+    },
+    {
+        "name": "background",
+        "description": "Alias of hide (mode minimize). Sessions keep running. Does not kill.",
+        "inputSchema": _schema({
+            "convoy_id": {"type": "string"},
+            "thread": {"type": "string"},
+            "mode": {"type": "string", "default": "minimize"},
+            "dry_run": {"type": "boolean", "default": True},
+        }),
+    },
+]
+
+
+def _null_if_blank(val: Any) -> Any:
+    if val is None:
+        return None
+    if isinstance(val, str) and not val.strip():
+        return None
+    return val
+
+
+def _seat_for(seats: list[dict[str, Any]], hid: str) -> dict[str, Any] | None:
+    found = None
+    for s in seats:
+        if str(s.get("to") or "").strip().lower() == hid:
+            found = s
+    return found
+
+
+def build_roster(root: Path) -> dict[str, Any]:
+    """Live agents. Missing binaries are present false. Never invent usage 0."""
+    seats = list_seats(root)
+    thread = read_thread(root)
+    agents: list[dict[str, Any]] = []
+    for hid, name in HARNESSES:
+        path = shutil.which(hid)
+        present = path is not None
+        wired = bool(present)
+        usage_remaining = None
+        availability = None
+        auth = None
+        models = None
+        if present:
+            probed = probe(hid)
+            usage_remaining = probed.get("usage_remaining")
+            if usage_remaining == 0 and probed.get("raw") is None and hid in ("grok", "agy", "cursor-agent"):
+                # never invent 0 when the harness does not expose a remaining count
+                usage_remaining = None
+            if probed.get("limited"):
+                availability = "limited"
+            else:
+                availability = "available"
+        seat = _seat_for(seats, hid)
+        worktree = None
+        branch = None
+        pr = None
+        if seat is not None:
+            wt = seat.get("worktree")
+            worktree = _null_if_blank(wt)
+            if worktree:
+                state = git_state(worktree)
+                branch = state.get("git_branch")
+                pr = state.get("pr_number")
+        agents.append({
+            "id": hid,
+            "name": name,
+            "present": present,
+            "wired": wired,
+            "auth": auth,
+            "models": models,
+            "availability": availability,
+            "usage_remaining": usage_remaining,
+            "tracking": "off",
+            "board": "off",
+            "thread": thread,
+            "worktree": worktree,
+            "branch": branch,
+            "pr": pr,
+        })
+    return {"ok": True, "agents": agents}
+
+
+def _default_since() -> str:
+    t = datetime.now(timezone.utc) - timedelta(hours=24)
+    return t.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+
+
+def _opt_str(args: dict[str, Any], key: str) -> str | None:
+    val = args.get(key)
+    if val is None:
+        return None
+    if isinstance(val, str):
+        return val
+    return str(val)
+
+
+def _opt_bool(args: dict[str, Any], key: str, default: bool) -> bool:
+    if key not in args or args.get(key) is None:
+        return default
+    val = args.get(key)
+    if isinstance(val, bool):
+        return val
+    if isinstance(val, str):
+        return val.strip().lower() in ("1", "true", "yes")
+    return bool(val)
+
+
+def call_tool(root: Path, name: str, arguments: dict[str, Any] | None) -> dict[str, Any]:
+    args = arguments if isinstance(arguments, dict) else {}
+    if name == "roster":
+        return build_roster(root)
+    if name == "terminals":
+        return terminals(root, convoy_id=_opt_str(args, "convoy_id"), thread=_opt_str(args, "thread"))
+    if name == "context":
+        return pack(root, instance_id=_opt_str(args, "instance_id"))
+    if name == "send":
+        to = _opt_str(args, "to")
+        body = args.get("body")
+        if not to or body is None:
+            return {"ok": False, "error": "send requires to and body"}
+        if not isinstance(body, str):
+            body = str(body)
+        live = _opt_bool(args, "live", False)
+        runner = ola_runner if live else fake_runner
+        card = send_one(
+            root,
+            to,
+            body,
+            label=_opt_str(args, "label"),
+            runner=runner,
+            worktree=_opt_str(args, "worktree"),
+        )
+        model = _opt_str(args, "model")
+        if model is not None and card.get("model") is None:
+            card["model"] = model
+        return card
+    if name == "feed":
+        since = _opt_str(args, "since") or _default_since()
+        rows = feed_since(root, since)
+        return {"ok": True, "since": since, "events": rows}
+    if name in ("bring_up", "open"):
+        dry = _opt_bool(args, "dry_run", True)
+        runner = None if dry else live_runner
+        card = bring_up(
+            root,
+            convoy_id=_opt_str(args, "convoy_id"),
+            thread=_opt_str(args, "thread"),
+            runner=runner,
+        )
+        card["dry_run"] = dry
+        return card
+    if name in ("hide", "minimize", "background"):
+        dry = _opt_bool(args, "dry_run", True)
+        mode = _opt_str(args, "mode") or "minimize"
+        applier = None if dry else live_applier
+        card = hide_windows(
+            root,
+            convoy_id=_opt_str(args, "convoy_id"),
+            thread=_opt_str(args, "thread"),
+            mode=mode,
+            applier=applier,
+        )
+        card["dry_run"] = dry
+        return card
+    return {"ok": False, "error": "tool not found: " + name}
+
+
+def _dumps(obj: Any) -> str:
+    return json.dumps(obj, ensure_ascii=False, separators=(",", ":"), default=_json_default)
+
+
+def _json_default(_o: Any) -> Any:
+    return None
+
+
+def handle_rpc(root: Path, msg: dict[str, Any]) -> dict[str, Any] | None:
+    """Return a JSON-RPC response dict, or None for notifications."""
+    if not isinstance(msg, dict) or msg.get("jsonrpc") != "2.0":
+        return {"jsonrpc": "2.0", "id": None, "error": {"code": -32600, "message": "Invalid Request"}}
+    method = msg.get("method")
+    rpc_id = msg.get("id", None)
+    is_notification = "id" not in msg
+    params = msg.get("params") if isinstance(msg.get("params"), dict) else {}
+    try:
+        if method == "initialize":
+            requested = None
+            if isinstance(params, dict):
+                requested = params.get("protocolVersion")
+            version = requested if requested in PROTOCOL_SUPPORTED else PROTOCOL_LATEST
+            result = {
+                "protocolVersion": version,
+                "capabilities": {"tools": {"listChanged": False}},
+                "serverInfo": {"name": SERVER_NAME, "version": SERVER_VERSION},
+            }
+            if is_notification:
+                return None
+            return {"jsonrpc": "2.0", "id": rpc_id, "result": result}
+        if method == "notifications/initialized":
+            return None
+        if method == "ping":
+            if is_notification:
+                return None
+            return {"jsonrpc": "2.0", "id": rpc_id, "result": {}}
+        if method == "tools/list":
+            if is_notification:
+                return None
+            return {"jsonrpc": "2.0", "id": rpc_id, "result": {"tools": TOOLS}}
+        if method == "tools/call":
+            if is_notification:
+                return None
+            name = ""
+            arguments: dict[str, Any] = {}
+            if isinstance(params, dict):
+                name = str(params.get("name") or "")
+                raw_args = params.get("arguments")
+                if isinstance(raw_args, dict):
+                    arguments = raw_args
+            if name not in {t["name"] for t in TOOLS} and name != "open":
+                payload = {"ok": False, "error": "tool not found: " + name}
+                is_err = True
+            else:
+                payload = call_tool(root, name, arguments)
+                is_err = bool(payload.get("ok") is False and payload.get("error"))
+            result = {
+                "content": [{"type": "text", "text": _dumps(payload)}],
+                "structuredContent": payload,
+                "isError": is_err,
+            }
+            return {"jsonrpc": "2.0", "id": rpc_id, "result": result}
+        if is_notification:
+            return None
+        return {"jsonrpc": "2.0", "id": rpc_id, "error": {"code": -32601, "message": "Method not found"}}
+    except Exception as e:
+        if is_notification:
+            return None
+        return {"jsonrpc": "2.0", "id": rpc_id, "error": {"code": -32603, "message": type(e).__name__}}
+
+
+def _cors(handler: BaseHTTPRequestHandler) -> None:
+    handler.send_header("Access-Control-Allow-Origin", "*")
+    handler.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+    handler.send_header(
+        "Access-Control-Allow-Headers",
+        "Content-Type, Accept, Authorization, MCP-Protocol-Version, Mcp-Session-Id",
+    )
+    handler.send_header("Access-Control-Max-Age", "86400")
+
+
+class McpHandler(BaseHTTPRequestHandler):
+    server_version = "convoy-mcp/" + SERVER_VERSION
+
+    def log_message(self, fmt: str, *args: Any) -> None:
+        # request line only; never log bodies or headers (secrets).
+        sys.stderr.write("%s %s\n" % (self.address_string(), fmt % args))
+
+    def _root(self) -> Path:
+        return Path(getattr(self.server, "convoy_root"))
+
+    def _send(self, code: int, body: bytes, content_type: str, extra: list[tuple[str, str]] | None = None) -> None:
+        self.send_response(code)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(body)))
+        _cors(self)
+        if extra:
+            for k, v in extra:
+                self.send_header(k, v)
+        self.end_headers()
+        if self.command != "HEAD":
+            self.wfile.write(body)
+
+    def do_OPTIONS(self) -> None:  # noqa: N802
+        self.send_response(204)
+        _cors(self)
+        self.end_headers()
+
+    def do_GET(self) -> None:  # noqa: N802
+        path = urlparse(self.path).path
+        if path in ("/", ""):
+            body = HOME_LINE.encode("utf-8")
+            self._send(200, body, "text/html; charset=utf-8")
+            return
+        if path == "/mcp":
+            self._send(405, b"POST JSON-RPC to /mcp", "text/plain; charset=utf-8", extra=[("Allow", "POST, OPTIONS")])
+            return
+        self._send(404, b"not found", "text/plain; charset=utf-8")
+
+    def do_HEAD(self) -> None:  # noqa: N802
+        self.do_GET()
+
+    def do_POST(self) -> None:  # noqa: N802
+        path = urlparse(self.path).path
+        if path != "/mcp":
+            self._send(404, b"not found", "text/plain; charset=utf-8")
+            return
+        length = 0
+        try:
+            length = int(self.headers.get("Content-Length") or "0")
+        except ValueError:
+            length = 0
+        if length < 0:
+            length = 0
+        raw = self.rfile.read(length) if length else b""
+        try:
+            msg = json.loads(raw.decode("utf-8") or "null")
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            body = _dumps({"jsonrpc": "2.0", "id": None, "error": {"code": -32700, "message": "Parse error"}}).encode("utf-8")
+            self._send(400, body, "application/json; charset=utf-8")
+            return
+        if isinstance(msg, list):
+            replies = []
+            for item in msg:
+                if isinstance(item, dict):
+                    r = handle_rpc(self._root(), item)
+                    if r is not None:
+                        replies.append(r)
+            if not replies:
+                self.send_response(202)
+                _cors(self)
+                self.end_headers()
+                return
+            payload = replies
+        elif isinstance(msg, dict):
+            reply = handle_rpc(self._root(), msg)
+            if reply is None:
+                self.send_response(202)
+                _cors(self)
+                self.end_headers()
+                return
+            payload = reply
+        else:
+            payload = {"jsonrpc": "2.0", "id": None, "error": {"code": -32600, "message": "Invalid Request"}}
+        body = _dumps(payload).encode("utf-8")
+        extra = [("MCP-Protocol-Version", PROTOCOL_LATEST)]
+        self._send(200, body, "application/json; charset=utf-8", extra=extra)
+
+
+class McpHTTPServer(ThreadingHTTPServer):
+    daemon_threads = True
+    allow_reuse_address = True
+
+    def __init__(self, addr: tuple[str, int], root: Path):
+        self.convoy_root = Path(root).resolve()
+        super().__init__(addr, McpHandler)
+
+
+def make_server(root: Path | str, host: str = "127.0.0.1", port: int = 8788) -> McpHTTPServer:
+    return McpHTTPServer((host, port), Path(root))
+
+
+def serve(root: Path | str, host: str = "127.0.0.1", port: int = 8788) -> int:
+    srv = make_server(root, host, port)
+    bound_host, bound_port = srv.server_address[:2]
+    print("convoy mcp listening on http://%s:%s/mcp (attach RED until Grok Bot catalogs it)" % (bound_host, bound_port), flush=True)
+    try:
+        srv.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        srv.server_close()
+    return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    p = argparse.ArgumentParser(prog="python -m convoy.mcp_http")
+    p.add_argument("--root", default=".", help="layer root")
+    p.add_argument("--host", default="127.0.0.1")
+    p.add_argument("--port", type=int, default=8788)
+    args = p.parse_args(argv)
+    return serve(Path(args.root).resolve(), host=args.host, port=args.port)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
