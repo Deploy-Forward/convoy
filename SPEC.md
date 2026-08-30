@@ -23,7 +23,7 @@ This block is authoritative for Grok Bot MCP layering and native-send DoD. If ol
 
 ### Locked layer statement
 
-> Grok Bot is the opposite layer from Herdr and CNVS. This Grok Bot chat is the conductor. MCP is how the conductor attaches (`roster`, `send`, `feed`, `context`, `bring_up`/`open`, `terminals`; tree also has `install` and `hide`). Convoy is the SoT: one visible thread, one `cvy_id`, one tied repo, seats that hop without merging native sessions. Default `send` is headless on purpose. `bring_up` is the terminal view, hashed `--resume`, isolated n-pane. Same-branch overlap is refused. Pointers in, compact card out.
+> Grok Bot is the opposite layer from Herdr and CNVS. This Grok Bot chat is the conductor. MCP is how the conductor attaches (`roster`, `onboard`, `send`, `feed`, `context`, `bring_up`/`open`, `terminals`; tree also has `install` and `hide`). Convoy is the SoT: one visible thread, one `cvy_id`, one tied repo, seats that hop without merging native sessions. Default `send` is headless on purpose. `bring_up` is the terminal view, hashed `--resume`, isolated n-pane. Same-branch overlap is refused. Pointers in, compact card out.
 >
 > Bring your own harness. Do not wrap the model. Named refuse: UltraCode-Shim, ola-brain as the product, grok `-p`/`-c`, wrapping Grok as `claude-grok-4-6`.
 
@@ -37,7 +37,7 @@ This block is authoritative for Grok Bot MCP layering and native-send DoD. If ol
 
 - `src/convoy/mcp_http.py` `call_tool("send", ...)` sets `runner = ola_runner if live else fake_runner`.
 - `src/convoy/synapse.py` `ola_runner` executes `ola-brain side-chat send`.
-- `src/convoy/mcp_http.py` `TOOLS` includes `hide` and `install` (plus aliases), but a deployed process can still expose the 7-tool snapshot (`roster`, `send`, `feed`, `context`, `bring_up`, `open`, `terminals`).
+- `src/convoy/mcp_http.py` `TOOLS` includes `onboard`, `hide`, and `install` (plus aliases), but a deployed process can still expose the 7-tool snapshot (`roster`, `send`, `feed`, `context`, `bring_up`, `open`, `terminals`).
 - `src/convoy/bringup.py` and `src/convoy/install.py` refuse wrapper names (`ola-brain`, `side-chat`, `UltraCode-Shim`) for those tool paths.
 
 ### Native-send + structured talk DoD (locked)
@@ -95,7 +95,7 @@ Phase gate note: this is the remaining MCP-attach/send hole inside Phase 7. Do n
 
 | Product | Repo | What it is | What it is not |
 |---|---|---|---|
-| Convoy MCP + hop CLI | `deploy-forward/convoy` | HTTP MCP tools (`roster`, `terminals`, `context`, `send`, `feed`) plus a Python hop CLI that stamps a layer and fires harness CLIs | Not the native Composer `turn.send`. Not `npx deploy-forward` itself. |
+| Convoy MCP + hop CLI | `deploy-forward/convoy` | HTTP MCP tools (`roster`, `onboard`, `terminals`, `context`, `send`, `feed`) plus a Python hop CLI that stamps a layer and fires harness CLIs | Not the native Composer `turn.send`. Not `npx deploy-forward` itself. |
 | Installer / tracker / board | `deploy-forward/deploy-forward` | `npx deploy-forward --convoy --tracker --board`. White-glove attach. Tracking and the public board. | Not the MCP process. Board requires tracker. |
 | Native platform | `Deploy-Forward/platform` | Skinny Convoy thread/layer inside Composer. Native `turn.send`. | Not this HTTP MCP. Do not land MCP code there. |
 
@@ -152,6 +152,72 @@ Returns live agents. Fields, all present, nulls not guesses:
 | `worktree` | string \| null | Checkout path for the live instance |
 | `branch` | string \| null | `git rev-parse --abbrev-ref HEAD` or JSON null |
 | `pr` | number \| null | `gh pr view` number or JSON null |
+
+#### `onboard`
+
+First run after MCP attach. The human names which harnesses they already have.
+
+- MCP tool: `onboard`
+- CLI: `python -m convoy onboard`
+- User-facing chat command mapping: `/onboard` and `/onboard -convoy` are the same flow.
+
+Args:
+
+- `to` (required list): one or more harness ids from `grok`, `claude`, `codex`, `cursor-agent`, `agy`
+- optional `thread`
+- optional `checkout_root`
+
+Refuse list: `gemini-cli`, community `grok-cli`, `UltraCode-Shim`, `ola-brain`.
+
+JSON card shape (per named harness; unnamed are never silently added):
+
+| Field | Type | Meaning |
+|---|---|---|
+| `to` | string | Named harness id from the allowed set |
+| `present` | bool | `shutil.which` / install `_which` found the binary |
+| `wired` | bool | Convoy can exec it from PATH right now |
+| `path` | string \| null | Resolved executable path if found |
+| `availability` | string | `available`, `limited`, or `missing` |
+| `usage_remaining` | number \| object \| string \| null | Probe value if the harness exposes one; `null` when unknown. Never invented `0`. |
+| `limited` | bool | True when probe says limited |
+| `install` | object \| null | For missing named harnesses only: hint to use MCP/CLI `install` with opt-in |
+
+Pseudo-code:
+
+```python
+def onboard(root, named, thread=None, checkout_root=None):
+    ids = normalize(named)  # dedupe, lower
+    refuse_if_empty_or_wrapped(ids)
+    refuse_if_unknown(ids, allowed={"grok","claude","codex","cursor-agent","agy"})
+    target_root = resolve_checkout(root, checkout_root)
+    path_card = ensure_interactive_path()  # ~/.bashrc block for next shell PATH
+    convoy_id, bound_thread = bind_thread_if_requested_without_stomp(target_root, thread)
+    rows = []
+    for hid in ids:
+        path = which(hid)
+        row = {"to": hid, "present": bool(path), "wired": bool(path), "path": path}
+        row["usage_remaining"] = probe_usage_or_null(hid, present=bool(path))
+        if checkout_root:
+            row["first_run"] = ensure_first_run({"to": hid, "worktree": str(target_root)})
+        if not path:
+            row["install"] = {"tool": "install", "opt_in_required": True}
+        rows.append(row)
+    return card(convoy_id, bound_thread, target_root, path_card, rows)
+```
+
+Implementation:
+
+- `src/convoy/onboard.py` implements normalization/refusal, declared-only probing, optional bind, and install hints.
+- `src/convoy/mcp_http.py` exposes MCP tool `onboard`.
+- `src/convoy/cli.py` exposes CLI `python -m convoy onboard`.
+
+Definition of done (emulator):
+
+1. MCP is connected (or unittest fakes simulate PATH with `test/fakes/`).
+2. `onboard` with named harnesses returns cards only for named `to`, each with truthful `present`/`wired` from PATH.
+3. `usage_remaining` is real-or-null; never invented `0`.
+4. Wrapper names are refused.
+5. Flow is dry with respect to UI: no window pop / no `wt` spawn.
 
 #### `terminals`
 
@@ -765,9 +831,10 @@ This tree today (`/workspace/convoy`, not a landed GitHub checkout):
 | Path | What it actually does |
 |---|---|
 | `src/convoy/layer.py` | `hook()`, `feed_since()`, `utc_now()`, `feed_path()`. Feed only. No branch, no worktree, no usage. |
-| `src/convoy/synapse.py` | `fake_runner`, `ola_runner`, `send_many`. `ola_runner` regex-guesses `session_id`, does not pass `--label`. Default runner is fake. |
-| `src/convoy/cli.py` | `hook`, `feed --since`, `send --to [--to ...] [--live]`. No `--worktree`, no `--pr`, no `context`, no `roster`. |
+| `src/convoy/synapse.py` | `fake_runner`, `ola_runner`, `send_one/send_many`. `ola_runner` still shells `ola-brain side-chat send` for live mode; fake runner stays default. |
+| `src/convoy/cli.py` | CLI includes `onboard`, `context`, `send`, `roster`-adjacent probes, convoy id/attach/seat/bind helpers, and bring-up/hide/install paths. |
 | `src/convoy/context.py` | `pack()` pointers only. |
+| `src/convoy/onboard.py` | Declared-harness onboarding: refuse wrappers, probe only named harnesses, optional thread bind, install hints, first-run PATH ungate. |
 | `src/convoy/usage.py` | `probe()`. Unknown remaining is JSON null. |
 | HTTP MCP server | `src/convoy/mcp_http.py` JSON-RPC POST `/mcp`. Attach/read tools may be PARTIAL GREEN when bound; native `send` is RED while `live=true` routes to `ola_runner`. |
 | `test/customer1/temporal_hooks_test.py` | GREEN unit for hook + feed window |
