@@ -7,6 +7,7 @@ import sys
 from pathlib import Path
 
 from .bringup import bring_up, hide_windows, live_applier, live_runner, terminals
+from .install import install as install_harness
 from .context import pack
 from .convoy import attach, bind, ensure_id, list_seats, read_id, read_lead, seat, set_lead, CONDUCTOR
 from .layer import feed_since, hook
@@ -80,6 +81,12 @@ def main(argv: list[str] | None = None) -> int:
         hd.add_argument("--dry-run", action="store_true")
         if name == "hide":
             hd.add_argument("--mode", default="minimize", choices=["minimize", "hide"])
+
+    ins = sub.add_parser("install")
+    ins.add_argument("--to", required=True)
+    ins.add_argument("--opt-in", action="store_true")
+    ins.add_argument("--dry-run", action="store_true", default=True)
+    ins.add_argument("--live", action="store_true", help="run installer; still requires --opt-in")
 
     mcp = sub.add_parser("mcp")
     mcp.add_argument("--root", default=argparse.SUPPRESS, help="layer root (also accepted after subcommand)")
@@ -157,6 +164,13 @@ def main(argv: list[str] | None = None) -> int:
             mode = getattr(args, "mode", None) or "minimize"
         applier = None if args.dry_run else live_applier
         card = hide_windows(root, convoy_id=args.convoy_id, thread=args.thread, mode=mode, applier=applier)
+        print(json.dumps(card))
+        return 0 if card.get("ok") else 1
+    if args.cmd == "install":
+        dry = True
+        if getattr(args, "live", False):
+            dry = False
+        card = install_harness(args.to, dry_run=dry, opt_in=bool(args.opt_in))
         print(json.dumps(card))
         return 0 if card.get("ok") else 1
     if args.cmd == "mcp":

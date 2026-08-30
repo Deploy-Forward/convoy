@@ -95,6 +95,16 @@ class PhaseMcpHttp(unittest.TestCase):
                 self.assertFalse(a["wired"])
                 self.assertIsNone(a["auth"])
                 self.assertIsNone(a["models"])
+        self.assertIn("path", payload)
+        self.assertTrue(payload["path"]["path_ok"])
+        self.assertEqual(payload["path"]["path_host"], "bash-interactive")
+        desc = None
+        for tool in _rpc(self.mcp, "tools/list")["result"]["tools"]:
+            if tool["name"] == "roster":
+                desc = tool["description"]
+        self.assertIsNotNone(desc)
+        self.assertIn(".profile", desc)
+        self.assertIn("claude", desc.lower())
 
     def test_feed_after_hook_returns_that_row(self):
         row = hook(self.root, "note", "mcp-feed-row", instance_id="i-mcp")

@@ -1,0 +1,7 @@
+#!/usr/bin/env python3
+"""BYO codex stub: one-line JSON, exit 0. No vendor login. No -p/-c required."""
+import json
+import sys
+
+print(json.dumps({"ok": True, "harness": "codex", "argv": sys.argv[1:]}))
+raise SystemExit(0)

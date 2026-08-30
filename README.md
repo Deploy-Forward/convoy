@@ -25,11 +25,13 @@ Claude first-run skip is `skipDangerousModePermissionPrompt` in `~/.claude/setti
 
 ```
 pip install -e .
-PYTHONPATH=src python -m unittest discover -s test -v
+PYTHONPATH=src python -m unittest discover -s test/customer1 -p '*_test.py' -v
 ```
+
+unittest's default pattern `test*.py` misses `phase7_*_test.py` (and the rest of `*_test.py`). Equivalent helpers from repo root: `PYTHONPATH=src python -m test` or `PYTHONPATH=src python test/run.py`.
 
 ```
 python -m convoy --root . bring-up --dry-run
 ```
 
-Live TUI spawn is Windows Terminal. Dry-run ungates first-run and does not Popen `wt`.
+Live TUI spawn is Windows Terminal (Windows-only). Dry-run ungates first-run and does not Popen `wt`. Unit tests use fake absolute binaries under `test/fakes/`; Convoy never logs into a vendor on CI/Linux.
