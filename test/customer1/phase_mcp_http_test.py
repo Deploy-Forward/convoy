@@ -153,6 +153,69 @@ class PhaseMcpHttp(unittest.TestCase):
         resumes = {w["to"]: w["resume"] for w in payload["windows"]}
         self.assertEqual(resumes["grok"], "sess-grok")
 
+    def test_roster_claude_blob_usage_normalized_to_null(self):
+        def fake_probe(harness):
+            if harness == "claude":
+                return {
+                    "usage_remaining": "Current session: 7% used\nCurrent week (all models): 69% used",
+                    "limited": False,
+                    "raw": "Current session: 7% used\nCurrent week (all models): 69% used",
+                }
+            return {"usage_remaining": None, "limited": False, "raw": None}
+
+        def fake_which(name):
+            return "/usr/bin/claude" if name == "claude" else None
+
+        with mock.patch("convoy.mcp_http.shutil.which", side_effect=fake_which):
+            with mock.patch("convoy.mcp_http.probe", side_effect=fake_probe):
+                payload = _tool_payload(_rpc(self.mcp, "tools/call", {"name": "roster", "arguments": {}}))
+        by = {a["id"]: a for a in payload["agents"]}
+        self.assertIsNone(by["claude"]["usage_remaining"])
+
+    def test_send_live_can_resume_existing_seat_with_session_id(self):
+        attempts: list[dict[str, str | None]] = []
+
+        def native_stub(to, body, instance_id=None, **k):
+            attempts.append({"to": to, "instance_id": instance_id, "cwd": k.get("cwd")})
+            return {
+                "ok": True,
+                "to": to,
+                "session_id": instance_id,
+                "model": None,
+                "usage_remaining": None,
+                "body": "ACK",
+                "argv": [to, "--resume", instance_id],
+            }
+
+        without_sid = _tool_payload(_rpc(self.mcp, "tools/call", {"name": "send", "arguments": {"to": "grok", "body": "ping", "live": True}}))
+        self.assertFalse(without_sid["ok"])
+        self.assertIn("seat exists", without_sid["error"])
+        with mock.patch("convoy.mcp_http.native_runner", side_effect=native_stub):
+            resumed = _tool_payload(
+                _rpc(
+                    self.mcp,
+                    "tools/call",
+                    {"name": "send", "arguments": {"to": "grok", "body": "ping", "live": True, "session_id": "sess-grok"}},
+                )
+            )
+        self.assertTrue(resumed["ok"])
+        self.assertEqual(resumed["session_id"], "sess-grok")
+        self.assertEqual(len(attempts), 1)
+        self.assertEqual(attempts[0]["instance_id"], "sess-grok")
+
+    def test_send_to_ola_brain_refused_by_name(self):
+        with mock.patch("convoy.mcp_http.native_runner") as spawned:
+            payload = _tool_payload(
+                _rpc(
+                    self.mcp,
+                    "tools/call",
+                    {"name": "send", "arguments": {"to": "ola-brain", "body": "ping", "live": True, "worktree": str(self.wt_g)}},
+                )
+            )
+        self.assertFalse(payload["ok"])
+        self.assertIn("refuse wrapper target", payload["error"])
+        spawned.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()
