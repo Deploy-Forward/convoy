@@ -35,3 +35,27 @@ python -m convoy --root . bring-up --dry-run
 ```
 
 Live TUI spawn is Windows Terminal (Windows-only). Dry-run ungates first-run and does not Popen `wt`. Unit tests use fake absolute binaries under `test/fakes/`; Convoy never logs into a vendor on CI/Linux.
+
+## Glance (OSS data contract)
+
+`glance` is a read-only view over Convoy SoT (`.convoy` seats + feed) and live harness probes.
+It does **not** invent meters, dollars, reset dates, or split shared account quotas.
+
+CLI:
+
+```bash
+python -m convoy glance --json
+python -m convoy glance --thread convoy --json
+python -m convoy glance --convoy-id cvy_... --json
+python -m convoy glance --tray
+```
+
+- **Overall**: keyed by harness (`grok`, `claude`, `codex`, `cursor-agent`, `agy`) with `present`, `badge` (`Live`/`missing`/`limited`), and `usage_remaining` (`number|object|null` only).
+- **By thread**: one `convoy_id` / thread card with seats (`to`, optional `model`, `session_id`, `worktree`, `branch`, `pr`) plus `last_synapse` when present.
+- Missing model is omitted (never `"unknown"`).
+- Tray/indicator is optional; headless tests validate JSON contract only.
+
+Scope lock:
+
+- **Public repo (`deploy-forward/convoy`)**: glance JSON contract (CLI + MCP `glance`) and small optional tray renderer.
+- **Closed platform (`Deploy-Forward/platform`)**: polished native product, vendor billing scrapers, and any leftover-$ UX.
