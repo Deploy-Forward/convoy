@@ -10,6 +10,20 @@ from typing import Any, Callable
 
 ProbeFn = Callable[[str], dict[str, Any]]
 
+
+def normalize_usage_remaining(value: Any) -> Any:
+    """Allow only number|object|null for surfaced usage_remaining."""
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return value
+    if isinstance(value, dict):
+        return value
+    return None
+
+
 def _run(cmd: list[str], timeout: int = 15) -> tuple[int, str]:
     kwargs: dict[str, Any] = {
         "stdout": subprocess.PIPE,
@@ -125,6 +139,6 @@ def surface(harness: str, probed: dict[str, Any] | None = None) -> dict[str, Any
     if w:
         out["week_pct"] = int(w.group(1))
     if name == "codex":
-        out["usage_remaining"] = p.get("usage_remaining")
+        out["usage_remaining"] = normalize_usage_remaining(p.get("usage_remaining"))
     return out
 
