@@ -112,6 +112,17 @@ class OnboardTests(unittest.TestCase):
         names = [t["name"] for t in TOOLS]
         self.assertIn("onboard", names)
 
+    def test_onboard_clamps_blob_usage_remaining_to_null(self):
+        with mock.patch("convoy.onboard._which", return_value="/tmp/claude"), mock.patch(
+            "convoy.onboard.probe",
+            return_value={"usage_remaining": "Total cost: $0.00", "limited": False, "raw": "Total cost: $0.00"},
+        ):
+            card = onboard(self.root, ["claude"])
+        self.assertTrue(card["ok"])
+        entry = card["harnesses"][0]
+        self.assertTrue(entry["present"])
+        self.assertIsNone(entry["usage_remaining"])
+
 
 if __name__ == "__main__":
     unittest.main()

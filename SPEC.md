@@ -178,7 +178,7 @@ JSON card shape (per named harness; unnamed are never silently added):
 | `wired` | bool | Convoy can exec it from PATH right now |
 | `path` | string \| null | Resolved executable path if found |
 | `availability` | string | `available`, `limited`, or `missing` |
-| `usage_remaining` | number \| object \| string \| null | Probe value if the harness exposes one; `null` when unknown. Never invented `0`. |
+| `usage_remaining` | number \| object \| null | Probe value if the harness exposes one; `null` when unknown or unparseable. Never invented `0`. |
 | `limited` | bool | True when probe says limited |
 | `install` | object \| null | For missing named harnesses only: hint to use MCP/CLI `install` with opt-in |
 
@@ -211,13 +211,20 @@ Implementation:
 - `src/convoy/mcp_http.py` exposes MCP tool `onboard`.
 - `src/convoy/cli.py` exposes CLI `python -m convoy onboard`.
 
-Definition of done (emulator):
+Definition of done (split status):
 
-1. MCP is connected (or unittest fakes simulate PATH with `test/fakes/`).
+GREEN (emulator / tree):
+
+1. Unit tests with fakes simulate PATH and harness probes (`test/customer1/onboard_test.py`).
 2. `onboard` with named harnesses returns cards only for named `to`, each with truthful `present`/`wired` from PATH.
-3. `usage_remaining` is real-or-null; never invented `0`.
+3. `usage_remaining` is number/object/null only; blob strings clamp to `null`; never invented `0`.
 4. Wrapper names are refused.
 5. Flow is dry with respect to UI: no window pop / no `wt` spawn.
+
+RED (live deploy until proven):
+
+1. Live `https://convoy.bot/mcp` process serving `onboard` in `tools/list`.
+2. Chat aliases `/onboard` and `/onboard -convoy` in connected Grok Bot sessions (only true once live MCP serves the tool).
 
 #### `terminals`
 

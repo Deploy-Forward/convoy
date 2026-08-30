@@ -23,7 +23,7 @@ from .convoy import list_seats, read_thread
 from .gitstate import git_state
 from .layer import feed_since
 from .synapse import fake_runner, ola_runner, send_one
-from .usage import probe
+from .usage import normalize_usage_remaining, probe
 
 PROTOCOL_LATEST = "2025-03-26"
 PROTOCOL_SUPPORTED = frozenset({PROTOCOL_LATEST, "2024-11-05"})
@@ -207,7 +207,7 @@ def build_roster(root: Path) -> dict[str, Any]:
         models = None
         if present:
             probed = probe(hid)
-            usage_remaining = probed.get("usage_remaining")
+            usage_remaining = normalize_usage_remaining(probed.get("usage_remaining"))
             if usage_remaining == 0 and probed.get("raw") is None and hid in ("grok", "agy", "cursor-agent"):
                 # never invent 0 when the harness does not expose a remaining count
                 usage_remaining = None

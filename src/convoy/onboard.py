@@ -7,7 +7,7 @@ from typing import Any, Iterable
 from .bringup import ensure_first_run, ensure_interactive_path
 from .convoy import bind, ensure_id, read_id, read_thread
 from .install import HARNESSES, _which
-from .usage import probe
+from .usage import normalize_usage_remaining, probe
 
 REFUSED_HARNESSES = frozenset({
     "gemini",
@@ -122,7 +122,7 @@ def _harness_card(hid: str, target_root: Path, run_first_run: bool) -> dict[str,
     availability = "missing"
     if present:
         probed = probe(hid)
-        usage_remaining = probed.get("usage_remaining")
+        usage_remaining = normalize_usage_remaining(probed.get("usage_remaining"))
         if usage_remaining == 0 and probed.get("raw") is None:
             usage_remaining = None
         limited = bool(probed.get("limited"))
