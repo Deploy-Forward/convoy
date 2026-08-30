@@ -15,7 +15,8 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
-from .bringup import bring_up, hide_windows, live_applier, live_runner, terminals
+from .bringup import bring_up, ensure_interactive_path, hide_windows, live_applier, live_runner, terminals
+from .install import install as install_harness
 from .context import pack
 from .convoy import list_seats, read_thread
 from .gitstate import git_state
@@ -37,7 +38,7 @@ HARNESSES = (
     ("cursor-agent", "cursor-agent"),
 )
 
-_TOOL_NAMES = ("roster", "terminals", "context", "send", "feed", "bring_up", "open", "hide", "minimize", "background")
+_TOOL_NAMES = ("roster", "terminals", "context", "send", "feed", "bring_up", "open", "hide", "minimize", "background", "install")
 
 
 def _schema(properties: dict[str, Any], required: list[str] | None = None) -> dict[str, Any]:
@@ -50,7 +51,7 @@ def _schema(properties: dict[str, Any], required: list[str] | None = None) -> di
 TOOLS: list[dict[str, Any]] = [
     {
         "name": "roster",
-        "description": "Live harness roster. present/wired from PATH. usage_remaining is JSON null when the harness does not expose a remaining count.",
+        "description": "Live harness roster. present/wired is shutil.which on the MCP process PATH, not an already-open desktop terminal. Interactive bash skips .profile so ~/.local/bin (claude, codex) can be installed and still command-not-found; roster/bring_up ungate ~/.bashrc. usage_remaining is JSON null when the harness does not expose a remaining count.",
         "inputSchema": _schema({}),
     },
     {
@@ -138,6 +139,18 @@ TOOLS: list[dict[str, Any]] = [
             "dry_run": {"type": "boolean", "default": True},
         }),
     },
+    {
+        "name": "install",
+        "description": "Opt-in vendor harness download. dry_run defaults true. Live needs opt_in true. Only x.ai, claude.ai, chatgpt.com, cursor.com, antigravity.google. Never a wrap. affiliate is always JSON null.",
+        "inputSchema": _schema(
+            {
+                "to": {"type": "string", "description": "grok, claude, codex, cursor-agent, or agy"},
+                "dry_run": {"type": "boolean", "default": True},
+                "opt_in": {"type": "boolean", "default": False},
+            },
+            required=["to"],
+        ),
+    },
 ]
 
 
@@ -158,7 +171,12 @@ def _seat_for(seats: list[dict[str, Any]], hid: str) -> dict[str, Any] | None:
 
 
 def build_roster(root: Path) -> dict[str, Any]:
-    """Live agents. Missing binaries are present false. Never invent usage 0."""
+    """Live agents. Missing binaries are present false. Never invent usage 0.
+
+    present is MCP process PATH. Interactive terminals can still miss claude.
+    ensure_interactive_path writes ~/.bashrc so the next shell sees harness bins.
+    """
+    path_card = ensure_interactive_path()
     seats = list_seats(root)
     thread = read_thread(root)
     agents: list[dict[str, Any]] = []
@@ -207,7 +225,7 @@ def build_roster(root: Path) -> dict[str, Any]:
             "branch": branch,
             "pr": pr,
         })
-    return {"ok": True, "agents": agents}
+    return {"ok": True, "agents": agents, "path": path_card}
 
 
 def _default_since() -> str:
@@ -292,6 +310,13 @@ def call_tool(root: Path, name: str, arguments: dict[str, Any] | None) -> dict[s
         )
         card["dry_run"] = dry
         return card
+    if name == "install":
+        to = _opt_str(args, "to")
+        if not to:
+            return {"ok": False, "error": "install requires to", "ran": False}
+        dry = _opt_bool(args, "dry_run", True)
+        opt_in = _opt_bool(args, "opt_in", False)
+        return install_harness(to, dry_run=dry, opt_in=opt_in)
     return {"ok": False, "error": "tool not found: " + name}
 
 

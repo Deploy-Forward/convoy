@@ -6,8 +6,16 @@ from contextlib import redirect_stdout, redirect_stderr
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 from convoy.cli import main
 from convoy.convoy import bind, ensure_id, seat
-from convoy.bringup import bring_up, ensure_first_run, isolated_wt_argv, resume_argv, _with_claude_live_flags, _pane_seats
+from convoy.bringup import bring_up, ensure_first_run, ensure_interactive_path, isolated_wt_argv, resume_argv, _with_claude_live_flags, _pane_seats, CONVOY_PATH_BEGIN
 
+
+
+def _native_resume(argv, name, sid):
+    """Bare name or PATH-resolved abs exe. Shape is always [exe, --resume, sid]."""
+    assert len(argv) == 3, argv
+    base = os.path.basename(str(argv[0])).lower().removesuffix(".exe")
+    assert base == name, (base, name, argv)
+    assert argv[1:] == ["--resume", sid], argv
 
 def _run(root, *argv):
     buf = io.StringIO()
@@ -155,6 +163,44 @@ class Phase7FirstRun(unittest.TestCase):
             self.assertIsNone(card.get("settings_home"))
             self.assertFalse(self._home_settings().exists())
             self.assertFalse((self.fake_home / ".claude").exists())
+            self.assertTrue(card.get("path_ok"))
+            self.assertEqual(card.get("path_host"), "bash-interactive")
+            self.assertEqual(card.get("path_bashrc"), str(self.fake_home / ".bashrc"))
+
+    def test_ensure_interactive_path_writes_bashrc_when_profile_only(self):
+        profile = self.fake_home / ".profile"
+        profile.write_text(
+            'if [ -d "$HOME/.local/bin" ] ; then PATH="$HOME/.local/bin:$PATH"; fi\n',
+            encoding="utf-8",
+        )
+        bashrc = self.fake_home / ".bashrc"
+        if bashrc.exists():
+            bashrc.unlink()
+        card = ensure_interactive_path()
+        self.assertTrue(card.get("ok"))
+        self.assertTrue(card.get("path_written"))
+        self.assertTrue(card.get("path_ok"))
+        self.assertEqual(card.get("path_host"), "bash-interactive")
+        self.assertEqual(card.get("path_bashrc"), str(bashrc))
+        blob = bashrc.read_text(encoding="utf-8")
+        self.assertIn(CONVOY_PATH_BEGIN, blob)
+        self.assertIn("$HOME/.local/bin", blob)
+        self.assertIn("$HOME/.grok/bin", blob)
+        self.assertNotIn("ola-brain", blob)
+        again = ensure_interactive_path()
+        self.assertTrue(again.get("path_ok"))
+        self.assertFalse(again.get("path_written"))
+        self.assertEqual(bashrc.read_text(encoding="utf-8"), blob)
+
+    def test_ensure_interactive_path_is_idempotent_on_existing_block(self):
+        bashrc = self.fake_home / ".bashrc"
+        bashrc.write_text("export FOO=keep\n\n" + CONVOY_PATH_BEGIN + "\n# <<< convoy harness PATH <<<\n", encoding="utf-8")
+        before = bashrc.read_text(encoding="utf-8")
+        card = ensure_interactive_path()
+        self.assertTrue(card.get("path_ok"))
+        self.assertFalse(card.get("path_written"))
+        self.assertEqual(bashrc.read_text(encoding="utf-8"), before)
+        self.assertIn("FOO=keep", before)
 
     def test_dry_run_bring_up_calls_ensure_first_run_no_popen_wt(self):
         with mock.patch("convoy.bringup.subprocess.Popen") as popen:
@@ -170,8 +216,8 @@ class Phase7FirstRun(unittest.TestCase):
         self.assertIs(data["skipDangerousModePermissionPrompt"], True)
         self.assertEqual(data["permissions"]["defaultMode"], "bypassPermissions")
         self.assertFalse(self._settings(self.wt_g).exists())
-        self.assertEqual(by["claude"]["argv"], ["claude", "--resume", "sess-claude"])
-        self.assertEqual(by["grok"]["argv"], ["grok", "--resume", "sess-grok"])
+        _native_resume(by["claude"]["argv"], "claude", "sess-claude")
+        _native_resume(by["grok"]["argv"], "grok", "sess-grok")
         self.assertTrue(by["claude"]["first_run"]["home_written"])
         self.assertEqual(by["claude"]["first_run"]["settings_home"], str(self._home_settings()))
         self.assertEqual(by["claude"]["first_run"]["settings"], str(self._settings(self.wt_c)))
@@ -210,8 +256,8 @@ class Phase7FirstRun(unittest.TestCase):
         self.assertFalse(by["grok"]["first_run"].get("home_written"))
 
     def test_resume_argv_unchanged_native_shape(self):
-        self.assertEqual(resume_argv(self.g), ["grok", "--resume", "sess-grok"])
-        self.assertEqual(resume_argv(self.c), ["claude", "--resume", "sess-claude"])
+        _native_resume(resume_argv(self.g), "grok", "sess-grok")
+        _native_resume(resume_argv(self.c), "claude", "sess-claude")
 
 
 class Phase7IsolatedWtArgv(unittest.TestCase):

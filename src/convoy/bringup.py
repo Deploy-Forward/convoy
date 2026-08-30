@@ -325,6 +325,64 @@ def _write_json_dict(path: Path, data: dict[str, Any]) -> None:
     path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
 
 
+CONVOY_PATH_BEGIN = "# >>> convoy harness PATH >>>"
+CONVOY_PATH_END = "# <<< convoy harness PATH <<<"
+CONVOY_PATH_BLOCK = (
+    "# >>> convoy harness PATH >>>\n"
+    "# Interactive non-login bash skips .profile. Desktop terminals then miss\n"
+    "# ~/.local/bin (claude, codex) even when the MCP process PATH has them.\n"
+    'if [ -d "$HOME/.local/bin" ]; then export PATH="$HOME/.local/bin:$PATH"; fi\n'
+    'if [ -d "$HOME/.grok/bin" ]; then export PATH="$HOME/.grok/bin:$PATH"; fi\n'
+    "# <<< convoy harness PATH <<<\n"
+)
+
+
+def ensure_interactive_path(home: Path | None = None) -> dict[str, Any]:
+    """Ungate harness bins for interactive non-login bash (desktop terminals).
+
+    roster.present is shutil.which on the MCP/agent process PATH. That is not
+    the PATH of an already-open desktop terminal. Interactive bash reads
+    ~/.bashrc and skips ~/.profile, so ~/.local/bin (claude, codex) can be
+    installed and still command-not-found. Grok's installer writes .bashrc;
+    Debian/Ubuntu put ~/.local/bin only in .profile.
+
+    Writes an idempotent block into ~/.bashrc. No-op on Windows (WT inherits
+    user PATH). Does not clobber vendor installer blocks. Does not source
+    the file into a foreign PID.
+    """
+    out: dict[str, Any] = {
+        "ok": True,
+        "path_written": False,
+        "path_bashrc": None,
+        "path_ok": False,
+        "path_host": "bash-interactive",
+    }
+    if os.name == "nt":
+        out["path_ok"] = True
+        out["path_host"] = "windows-user"
+        return out
+    home_path = Path(home) if home is not None else Path.home()
+    bashrc = home_path / ".bashrc"
+    out["path_bashrc"] = str(bashrc)
+    try:
+        text = bashrc.read_text(encoding="utf-8") if bashrc.is_file() else ""
+        if CONVOY_PATH_BEGIN in text:
+            out["path_ok"] = True
+            return out
+        prefix = text.rstrip()
+        new = (prefix + "\n\n" if prefix else "") + CONVOY_PATH_BLOCK
+        if not new.endswith("\n"):
+            new += "\n"
+        bashrc.write_text(new, encoding="utf-8")
+        out["path_written"] = True
+        out["path_ok"] = True
+        return out
+    except Exception as e:
+        out["ok"] = False
+        out["error"] = type(e).__name__ + ": " + str(e)
+        return out
+
+
 def ensure_first_run(seat: dict[str, Any]) -> dict[str, Any]:
     """Ungate first-run Claude bypass warning for the thread worktree.
 
@@ -349,7 +407,16 @@ def ensure_first_run(seat: dict[str, Any]) -> dict[str, Any]:
         "settings": None,
         "home_written": False,
         "settings_home": None,
+        "path_written": False,
+        "path_bashrc": None,
+        "path_ok": False,
+        "path_host": None,
     }
+    path_card = ensure_interactive_path()
+    out["path_written"] = bool(path_card.get("path_written"))
+    out["path_bashrc"] = path_card.get("path_bashrc")
+    out["path_ok"] = bool(path_card.get("path_ok"))
+    out["path_host"] = path_card.get("path_host")
     if not _is_claude(to):
         return out
     if not (isinstance(wt, str) and wt.strip()) and not isinstance(wt, Path):

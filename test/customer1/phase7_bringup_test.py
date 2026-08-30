@@ -6,6 +6,14 @@ from convoy.cli import main
 from convoy.convoy import bind, ensure_id, lookup_resume, make_resume_key, seat
 from convoy.bringup import CREATE_NEW_CONSOLE, bring_up, isolated_wt_argv, live_runner, live_spawn_kwargs, resume_argv, terminals, tile_rects
 
+
+def _native_resume(argv, name, sid):
+    """Bare name or PATH-resolved abs exe. Shape is always [exe, --resume, sid]."""
+    assert len(argv) == 3, argv
+    base = os.path.basename(str(argv[0])).lower().removesuffix(".exe")
+    assert base == name, (base, name, argv)
+    assert argv[1:] == ["--resume", sid], argv
+
 def _run(root, *argv):
     buf = io.StringIO()
     err = io.StringIO()
@@ -53,8 +61,8 @@ class Phase7BringUp(unittest.TestCase):
     def test_resume_argv_native_two_seats(self):
         gargv = resume_argv(self.g)
         cargv = resume_argv(self.c)
-        self.assertEqual(gargv, ["grok", "--resume", "sess-grok"])
-        self.assertEqual(cargv, ["claude", "--resume", "sess-claude"])
+        _native_resume(gargv, "grok", "sess-grok")
+        _native_resume(cargv, "claude", "sess-claude")
         for argv, sid in ((gargv, "sess-grok"), (cargv, "sess-claude")):
             self.assertIn("--resume", argv)
             self.assertIn(sid, argv)
@@ -86,8 +94,8 @@ class Phase7BringUp(unittest.TestCase):
         self.assertEqual(by["claude"]["resume"], "sess-claude")
         self.assertIsNotNone(by["grok"]["resume"])
         self.assertIsNotNone(by["claude"]["resume"])
-        self.assertEqual(by["grok"]["argv"], ["grok", "--resume", "sess-grok"])
-        self.assertEqual(by["claude"]["argv"], ["claude", "--resume", "sess-claude"])
+        _native_resume(by["grok"]["argv"], "grok", "sess-grok")
+        _native_resume(by["claude"]["argv"], "claude", "sess-claude")
         self.assertEqual(by["grok"]["worktree"], str(self.wt_g))
         self.assertEqual(by["grok"]["cwd"], str(self.wt_g))
         self.assertEqual(by["claude"]["worktree"], str(self.wt_c))
@@ -187,7 +195,7 @@ class Phase7BringUp(unittest.TestCase):
         self.assertEqual(row["session_id"], "ola-instance")
         self.assertEqual(row["resume"], "vendor-uuid-not-invented")
         argv = resume_argv(row)
-        self.assertEqual(argv, ["grok", "--resume", "vendor-uuid-not-invented"])
+        _native_resume(argv, "grok", "vendor-uuid-not-invented")
         self.assertNotIn("ola-instance", argv)
         d = bring_up(root)
         self.assertTrue(d["windows"][0]["ok"])
