@@ -74,7 +74,7 @@ class PhaseMcpHttp(unittest.TestCase):
         self.assertIn(init["result"]["protocolVersion"], ("2025-03-26", "2024-11-05"))
         listed = _rpc(self.mcp, "tools/list")
         names = [t["name"] for t in listed["result"]["tools"]]
-        for want in ("roster", "terminals", "context", "send", "feed", "bring_up"):
+        for want in ("roster", "glance", "terminals", "context", "send", "feed", "bring_up"):
             self.assertIn(want, names)
 
     def test_roster_present_bools_usage_remaining_null_not_zero(self):

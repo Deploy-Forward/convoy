@@ -27,6 +27,34 @@ This block is authoritative for Grok Bot MCP layering and native-send DoD. If ol
 >
 > Bring your own harness. Do not wrap the model. Named refuse: UltraCode-Shim, ola-brain as the product, grok `-p`/`-c`, wrapping Grok as `claude-grok-4-6`.
 
+### Glance contract (Overall vs By thread)
+
+`glance` is a read-only Convoy view, not a second source of truth.
+
+- **Overall usage by harness** (`grok`, `claude`, `codex`, `cursor-agent`, `agy`):
+  - `usage_remaining` is only `number | object | null` (from probe + normalize only).
+  - Grok remaining is always JSON `null` (never invented `0`, never invented dollars).
+  - Missing binary => `present=false`, `usage_remaining=null`, badge `missing`.
+  - Badge is `Live`, `missing`, or `limited`.
+  - Progress bar fields appear only when a real percent was parsed.
+- **By thread** (`--thread` or `--convoy-id`):
+  - Seats are listed from Convoy SoT for that convoy only.
+  - Seat card includes `to`, optional `model` (omitted when unknown), `session_id`, `worktree`, `branch`, `pr`, and `last_synapse` when present.
+  - No thread-level summed token pile.
+  - Claude week% belongs on Overall; do not duplicate as a fake thread budget.
+  - Shared account meters are never split into invented per-seat remaining values.
+
+CLI + MCP:
+
+- CLI: `python -m convoy glance [--thread T|--convoy-id ID] --json`
+- Optional GUI: `python -m convoy glance --tray` (must stay optional/headless-testable).
+- MCP tool: `glance` with optional `thread` / `convoy_id` arguments, read-only and safe for public URL use.
+
+OSS/public vs closed/platform lock:
+
+- **PUBLIC (`deploy-forward/convoy`)**: glance JSON data contract (CLI + MCP), honesty rules, optional lightweight tray JSON renderer.
+- **CLOSED (`Deploy-Forward/platform`)**: polished native tray/notch app, leftover-$ billing scrapers, vendor settings scraping, and platform UI.
+
 ### Neighbors (canonical contrast)
 
 - **Herdr (`herdr.dev`)** owns PTYs on a background server and agents type into sibling TUIs. Convoy does not use PTY paste as the hop bus and does not rebuild Herdr inside this MCP.
