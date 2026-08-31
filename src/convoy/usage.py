@@ -136,6 +136,18 @@ def probe(harness: str, runner: ProbeFn | None = None) -> dict[str, Any]:
     if runner is not None:
         return runner(harness)
     name = (harness or "").strip().lower()
+    if name in ("grok-bot", "grok_bot"):
+        # Public OSS contract: conductor probe hook exists, but has no live
+        # Cursor billing scraper in this repository yet.
+        return {
+            "usage_remaining": None,
+            "week_pct": None,
+            "resets_at": None,
+            "on_demand_spent": None,
+            "on_demand_limit": None,
+            "limited": False,
+            "raw": None,
+        }
     if name == "grok":
         return {"usage_remaining": None, "limited": False, "raw": None}
     if name == "claude":
