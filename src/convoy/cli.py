@@ -13,7 +13,7 @@ from .context import pack
 from .convoy import attach, bind, ensure_id, list_seats, read_id, read_lead, seat, set_lead, CONDUCTOR
 from .glance import build_glance, run_tray
 from .layer import feed_since, hook
-from .synapse import fake_runner, ola_runner, send_many, send_one
+from .synapse import fake_runner, native_runner, send_many, send_one
 from .usage import probe
 
 def main(argv: list[str] | None = None) -> int:
@@ -210,7 +210,7 @@ def main(argv: list[str] | None = None) -> int:
         from .mcp_http import serve
         return serve(root, host=args.host, port=args.port)
     if args.cmd == "send":
-        runner = ola_runner if args.live else fake_runner
+        runner = native_runner if args.live else fake_runner
         wts = args.worktree
         if wts and len(wts) != len(args.to):
             print("need one --worktree per --to", file=sys.stderr)

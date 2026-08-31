@@ -10,7 +10,6 @@ import subprocess
 from typing import Any, Callable
 
 ProbeFn = Callable[[str], dict[str, Any]]
-
 def _run(cmd: list[str], timeout: int = 15) -> tuple[int, str]:
     kwargs: dict[str, Any] = {
         "stdout": subprocess.PIPE,
