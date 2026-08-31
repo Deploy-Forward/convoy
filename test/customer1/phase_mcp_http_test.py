@@ -153,6 +153,24 @@ class PhaseMcpHttp(unittest.TestCase):
         resumes = {w["to"]: w["resume"] for w in payload["windows"]}
         self.assertEqual(resumes["grok"], "sess-grok")
 
+    def test_send_accepts_instance_id_and_does_not_refuse_seat_exists(self):
+        resp = _rpc(
+            self.mcp,
+            "tools/call",
+            {
+                "name": "send",
+                "arguments": {
+                    "to": "grok",
+                    "body": "resume-seat",
+                    "instance_id": "sess-grok",
+                },
+            },
+        )
+        payload = _tool_payload(resp)
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["session_id"], "sess-grok")
+        self.assertNotIn("seat exists", str(payload.get("error") or ""))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -93,6 +93,7 @@ TOOLS: list[dict[str, Any]] = [
             {
                 "to": {"type": "string"},
                 "body": {"type": "string"},
+                "instance_id": {"type": "string"},
                 "model": {"type": "string"},
                 "label": {"type": "string"},
                 "worktree": {"type": "string"},
@@ -304,6 +305,7 @@ def call_tool(root: Path, name: str, arguments: dict[str, Any] | None) -> dict[s
             root,
             to,
             body,
+            instance_id=_opt_str(args, "instance_id"),
             label=_opt_str(args, "label"),
             runner=runner,
             worktree=_opt_str(args, "worktree"),
