@@ -17,6 +17,51 @@ from .registry import live_on_branch, lookup, parse_agents_jsonl, parse_session_
 
 Runner = Callable[..., dict[str, Any]]
 
+_WRAPPER_NAMES = frozenset({
+    "ola-brain",
+    "ola-brain.exe",
+    "ola_brain",
+    "ola_brain.exe",
+    "side-chat",
+    "side-chat.exe",
+    "ultracode-shim",
+    "ultracode-shim.exe",
+    "ultracodeshim",
+    "ultracodeshim.exe",
+})
+
+_NATIVE_BIN = {
+    "grok": "grok",
+    "grok.exe": "grok",
+    "claude": "claude",
+    "claude.exe": "claude",
+    "codex": "codex",
+    "codex.exe": "codex",
+    "cursor-agent": "cursor-agent",
+    "cursor-agent.exe": "cursor-agent",
+    "agy": "agy",
+    "agy.exe": "agy",
+}
+
+
+def _normalize_target_name(name: str) -> str:
+    return str(name or "").strip().lower().replace("_", "-")
+
+
+def _is_wrapper_name(name: str) -> bool:
+    key = _normalize_target_name(name)
+    return key in _WRAPPER_NAMES
+
+
+def _native_harness_bin(to: str) -> str:
+    key = _normalize_target_name(to)
+    if key in _NATIVE_BIN:
+        return _NATIVE_BIN[key]
+    if key.endswith(".exe"):
+        return key[:-4]
+    return key
+
+
 def fake_runner(to: str, body: str, instance_id: str | None = None, label: str | None = None, **_k: Any) -> dict[str, Any]:
     sid = instance_id or ("spawned-" + to + (("-" + label) if label else ""))
     return {
@@ -62,12 +107,95 @@ def ola_runner(to: str, body: str, instance_id: str | None = None, label: str | 
         "label": label,
     }
 
+
+def native_runner(
+    to: str,
+    body: str,
+    instance_id: str | None = None,
+    label: str | None = None,
+    cwd: str | None = None,
+    worktree: str | None = None,
+    resume: str | None = None,
+    **_k: Any,
+) -> dict[str, Any]:
+    harness = _native_harness_bin(to)
+    if _is_wrapper_name(harness):
+        return {
+            "ok": False,
+            "to": to,
+            "session_id": instance_id,
+            "model": None,
+            "usage_remaining": None,
+            "body": "refuse wrapper target: " + str(to),
+            "exit_code": 2,
+            "label": label,
+            "argv": [harness],
+        }
+    exe = shutil.which(harness) or (shutil.which(harness + ".exe") if not harness.endswith(".exe") else None) or harness
+    cmd = [exe]
+    rid = resume if isinstance(resume, str) and resume.strip() else instance_id
+    if isinstance(rid, str) and rid.strip():
+        cmd.extend(["--resume", rid.strip()])
+    try:
+        r = subprocess.run(
+            cmd,
+            input=body,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=180,
+            cwd=cwd,
+        )
+    except OSError as e:
+        return {
+            "ok": False,
+            "to": to,
+            "session_id": instance_id,
+            "model": None,
+            "usage_remaining": None,
+            "body": str(e),
+            "exit_code": 127,
+            "label": label,
+            "argv": cmd,
+        }
+    text = (r.stdout or "") + (r.stderr or "")
+    session_id = parse_session_id(r.stdout or "") or parse_session_id(text)
+    if not session_id and cwd:
+        session_id = parse_agents_jsonl(Path(cwd), to, label=label)
+    if instance_id:
+        session_id = instance_id
+    return {
+        "ok": r.returncode == 0,
+        "to": to,
+        "session_id": session_id,
+        "model": None,
+        "usage_remaining": None,
+        "body": text.strip()[-2000:] if text.strip() else None,
+        "exit_code": r.returncode,
+        "label": label,
+        "argv": cmd,
+    }
+
+
 def send_one(root: Path, to: str, body: str, instance_id: str | None = None, label: str | None = None, runner: Runner | None = None, dry_run: bool = False, worktree: str | None = None, probe_fn=None) -> dict[str, Any]:
     cwd_root = Path(worktree).resolve() if worktree else Path(root).resolve()
     packed = pack(cwd_root, instance_id=instance_id)
     packed["worktree"] = str(cwd_root) if worktree else packed.get("worktree")
     message = stdin_for(packed, body)
     cid = read_id(root)
+    target_name = str(to or "").strip()
+    if _is_wrapper_name(target_name):
+        return {
+            "ok": False,
+            "to": to,
+            "session_id": None,
+            "model": None,
+            "usage_remaining": None,
+            "error": "refuse wrapper target: " + target_name,
+            "pointers": packed,
+            "convoy_id": cid,
+        }
     if dry_run:
         card = {
             "ok": True,
@@ -84,7 +212,7 @@ def send_one(root: Path, to: str, body: str, instance_id: str | None = None, lab
         return card
     if probe_fn is not None:
         usage = probe_fn(to)
-    elif runner is ola_runner:
+    elif runner in (ola_runner, native_runner):
         usage = probe(to)
     else:
         usage = {"usage_remaining": None, "limited": False, "raw": None}

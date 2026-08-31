@@ -2,6 +2,7 @@
 
 Public URL when attached: https://convoy.bot/mcp
 This process does not make that URL live. Do not mark GREEN.
+One MCP process is bound to one convoy root (and its bound thread).
 """
 from __future__ import annotations
 
@@ -22,14 +23,14 @@ from .context import pack
 from .convoy import list_seats, read_thread
 from .gitstate import git_state
 from .layer import feed_since
-from .synapse import fake_runner, ola_runner, send_one
+from .synapse import fake_runner, native_runner, send_one
 from .usage import normalize_usage_remaining, probe
 
 PROTOCOL_LATEST = "2025-03-26"
 PROTOCOL_SUPPORTED = frozenset({PROTOCOL_LATEST, "2024-11-05"})
 SERVER_NAME = "convoy"
 SERVER_VERSION = "0.1.0"
-HOME_LINE = "convoy.bot · a grok-bot native mcp"
+HOME_LINE = "convoy.bot · a grok-bot native mcp · one process ↔ one bound thread"
 
 HARNESSES = (
     ("grok", "Grok"),
@@ -73,7 +74,7 @@ TOOLS: list[dict[str, Any]] = [
     },
     {
         "name": "terminals",
-        "description": "Window metadata for a thread. Pointers only. No PTY dump.",
+        "description": "Window metadata for the process-bound thread. Pointers only. No PTY dump.",
         "inputSchema": _schema({
             "convoy_id": {"type": "string"},
             "thread": {"type": "string"},
@@ -88,7 +89,7 @@ TOOLS: list[dict[str, Any]] = [
     },
     {
         "name": "send",
-        "description": "headless hop; does not pop a TUI. Hop one compact card to a harness. Default runner is fake. live=true execs ola_runner. Never live_runner / CREATE_NEW_CONSOLE. Refuses limited without waiting.",
+        "description": "headless hop; does not pop a TUI. Hop one compact card to a harness. Default runner is fake. live=true execs native harness CLI on PATH (no ola-brain wrap). Optional session_id/resume hops an existing seat. Never live_runner / CREATE_NEW_CONSOLE. Refuses limited without waiting.",
         "inputSchema": _schema(
             {
                 "to": {"type": "string"},
@@ -96,6 +97,8 @@ TOOLS: list[dict[str, Any]] = [
                 "model": {"type": "string"},
                 "label": {"type": "string"},
                 "worktree": {"type": "string"},
+                "session_id": {"type": "string"},
+                "resume": {"type": "string"},
                 "live": {"type": "boolean", "default": False},
             },
             required=["to", "body"],
@@ -298,12 +301,14 @@ def call_tool(root: Path, name: str, arguments: dict[str, Any] | None) -> dict[s
             return {"ok": False, "error": "send requires to and body"}
         if not isinstance(body, str):
             body = str(body)
+        instance_id = _opt_str(args, "session_id") or _opt_str(args, "resume")
         live = _opt_bool(args, "live", False)
-        runner = ola_runner if live else fake_runner
+        runner = native_runner if live else fake_runner
         card = send_one(
             root,
             to,
             body,
+            instance_id=instance_id,
             label=_opt_str(args, "label"),
             runner=runner,
             worktree=_opt_str(args, "worktree"),

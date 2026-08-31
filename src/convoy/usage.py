@@ -13,6 +13,8 @@ ProbeFn = Callable[[str], dict[str, Any]]
 
 def normalize_usage_remaining(value: Any) -> Any:
     """SPEC clamp: number|object|null only for usage_remaining."""
+    if value is None:
+        return None
     if isinstance(value, bool):
         return None
     if isinstance(value, (int, float)):
