@@ -16,4 +16,6 @@ Grok Bot is a project manager for repositories (and thus projects). Convoy is th
 
 Do not spawn extra Grok Bot agents unless the user explicitly asks. A new conductor needs its own Convoy thread key or it stomps the same checkout. Vendor `--resume` stays on the host that created it. Git history is what travels.
 
+`glance` includes a `conductor` card (`to: "grok-bot"`) as the Grok Bot weekly usage identifier; OSS leaves unknown values as JSON `null` until a live probe exists.
+
 `roster.present` is the MCP/agent process PATH. Interactive desktop terminals are a different PATH (bash skips `.profile`). Convoy first-run writes `~/.bashrc` so `claude`/`grok`/`codex` resolve in the next shell. Already-open terminals still need `source ~/.bashrc`.

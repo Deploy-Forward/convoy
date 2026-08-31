@@ -1,4 +1,4 @@
-"""Glance cards: overall harness usage + by-thread seats.
+"""Glance cards: conductor identifier + overall harness usage + by-thread seats.
 
 Honesty lock:
 - usage_remaining is only number|object|null from real probes.
@@ -7,13 +7,15 @@ Honesty lock:
 """
 from __future__ import annotations
 
+from datetime import datetime
 import json
+import math
 import shutil
 import threading
 from pathlib import Path
 from typing import Any, Callable
 
-from .convoy import list_seats, read_id, read_thread
+from .convoy import CONDUCTOR, list_seats, read_id, read_thread
 from .gitstate import git_state
 from .layer import feed_since
 from .usage import normalize_usage_remaining, probe, surface
@@ -53,6 +55,51 @@ def _probe_view(harness: str, probe_fn: ProbeFn) -> dict[str, Any]:
     if isinstance(week_pct, int):
         row["week_pct"] = week_pct
     return row
+
+
+def _normalize_week_pct(value: Any) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int) and 0 <= value <= 100:
+        return value
+    return None
+
+
+def _normalize_number(value: Any) -> int | float | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        if isinstance(value, float) and (math.isnan(value) or math.isinf(value)):
+            return None
+        return value
+    return None
+
+
+def _normalize_iso_ts(value: Any) -> str | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    text = value.strip()
+    parse_target = text[:-1] + "+00:00" if text.endswith("Z") else text
+    try:
+        datetime.fromisoformat(parse_target)
+    except ValueError:
+        return None
+    return text
+
+
+def _conductor_view(probe_fn: ProbeFn) -> dict[str, Any]:
+    probed = probe_fn(CONDUCTOR)
+    if not isinstance(probed, dict):
+        probed = {}
+    return {
+        "to": CONDUCTOR,
+        "badge": "Live",
+        "week_pct": _normalize_week_pct(probed.get("week_pct")),
+        "usage_remaining": normalize_usage_remaining(probed.get("usage_remaining")),
+        "resets_at": _normalize_iso_ts(probed.get("resets_at")),
+        "on_demand_spent": _normalize_number(probed.get("on_demand_spent")),
+        "on_demand_limit": _normalize_number(probed.get("on_demand_limit")),
+    }
 
 
 def build_overall(root: Path, probe_fn: ProbeFn | None = None, which_fn: WhichFn | None = None) -> dict[str, Any]:
@@ -202,6 +249,7 @@ def build_glance(
 ) -> dict[str, Any]:
     fn = probe_fn or probe
     wf = which_fn or shutil.which
+    conductor = _conductor_view(fn)
     overall = build_overall(root, probe_fn=fn, which_fn=wf)
     if thread is not None or convoy_id is not None:
         by_thread = build_by_thread(
@@ -211,8 +259,8 @@ def build_glance(
             probe_fn=fn,
             which_fn=wf,
         )
-        return {"ok": bool(by_thread.get("ok")), "overall": overall["overall"], "by_thread": by_thread}
-    return {"ok": True, "overall": overall["overall"], "threads": discover_threads(root)}
+        return {"ok": bool(by_thread.get("ok")), "conductor": conductor, "overall": overall["overall"], "by_thread": by_thread}
+    return {"ok": True, "conductor": conductor, "overall": overall["overall"], "threads": discover_threads(root)}
 
 
 def _fmt_remaining(value: Any) -> str:

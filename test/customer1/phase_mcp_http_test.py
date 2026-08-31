@@ -153,6 +153,19 @@ class PhaseMcpHttp(unittest.TestCase):
         resumes = {w["to"]: w["resume"] for w in payload["windows"]}
         self.assertEqual(resumes["grok"], "sess-grok")
 
+    def test_glance_includes_conductor_contract_and_keeps_harness_rows(self):
+        payload = _tool_payload(_rpc(self.mcp, "tools/call", {"name": "glance", "arguments": {}}))
+        conductor = payload["conductor"]
+        self.assertEqual(conductor["to"], "grok-bot")
+        self.assertEqual(conductor["badge"], "Live")
+        self.assertIsNone(conductor["week_pct"])
+        self.assertIsNone(conductor["usage_remaining"])
+        self.assertIsNone(conductor["resets_at"])
+        self.assertIsNone(conductor["on_demand_spent"])
+        self.assertIsNone(conductor["on_demand_limit"])
+        self.assertEqual(list(payload["overall"].keys()), ["grok", "claude", "codex", "cursor-agent", "agy"])
+        self.assertNotIn("grok-bot", payload["overall"])
+
     def test_roster_claude_blob_usage_normalized_to_null(self):
         def fake_probe(harness):
             if harness == "claude":

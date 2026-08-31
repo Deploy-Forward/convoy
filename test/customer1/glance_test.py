@@ -67,6 +67,16 @@ class Glance(unittest.TestCase):
 
     def test_glance_json_overall_keyed_honest_nulls_and_missing_harness(self):
         def fake_probe(to: str):
+            if to == "grok-bot":
+                return {
+                    "usage_remaining": "not-a-number",
+                    "week_pct": 80.5,
+                    "resets_at": "3 days",
+                    "on_demand_spent": "$0",
+                    "on_demand_limit": "100",
+                    "limited": False,
+                    "raw": None,
+                }
             if to == "grok":
                 return {"usage_remaining": 0, "limited": False, "raw": None}
             if to == "claude":
@@ -88,6 +98,14 @@ class Glance(unittest.TestCase):
         ):
             rc, card = _run(self.root, "glance", "--json")
         self.assertEqual(rc, 0)
+        conductor = card["conductor"]
+        self.assertEqual(conductor["to"], "grok-bot")
+        self.assertEqual(conductor["badge"], "Live")
+        self.assertIsNone(conductor["usage_remaining"])
+        self.assertIsNone(conductor["week_pct"])
+        self.assertIsNone(conductor["resets_at"])
+        self.assertIsNone(conductor["on_demand_spent"])
+        self.assertIsNone(conductor["on_demand_limit"])
         overall = card["overall"]
         self.assertEqual(list(overall.keys()), ["grok", "claude", "codex", "cursor-agent", "agy"])
         self.assertIsNone(overall["grok"]["usage_remaining"])
@@ -131,6 +149,11 @@ class Glance(unittest.TestCase):
         ):
             rc, card = _run(self.root, "glance", "--json", "--convoy-id", self.cid)
         self.assertEqual(rc, 0)
+        self.assertEqual(card["conductor"]["to"], "grok-bot")
+        self.assertIsNone(card["conductor"]["usage_remaining"])
+        self.assertIsNone(card["conductor"]["week_pct"])
+        self.assertIsNone(card["conductor"]["on_demand_spent"])
+        self.assertIsNone(card["conductor"]["on_demand_limit"])
         by_thread = card["by_thread"]
         self.assertTrue(by_thread["ok"])
         self.assertEqual(by_thread["convoy_id"], self.cid)
@@ -150,6 +173,11 @@ class Glance(unittest.TestCase):
         ):
             rc, card = _run(self.root, "glance", "--json", "--thread", "convoy")
         self.assertEqual(rc, 0)
+        self.assertEqual(card["conductor"]["to"], "grok-bot")
+        self.assertIsNone(card["conductor"]["usage_remaining"])
+        self.assertIsNone(card["conductor"]["week_pct"])
+        self.assertIsNone(card["conductor"]["on_demand_spent"])
+        self.assertIsNone(card["conductor"]["on_demand_limit"])
         self.assertTrue(card["by_thread"]["ok"])
         self.assertEqual(card["by_thread"]["thread"], "convoy")
         self.assertEqual(card["by_thread"]["seat_count"], 1)
