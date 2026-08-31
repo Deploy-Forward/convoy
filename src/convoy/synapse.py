@@ -13,7 +13,7 @@ from .gitstate import git_state
 from .layer import hook
 from .usage import normalize_usage_remaining, probe
 from .convoy import list_seats, read_id
-from .registry import live_on_branch, lookup, parse_agents_jsonl, parse_session_id, register
+from .registry import live_on_branch, lookup, lookup_any, parse_agents_jsonl, parse_session_id, register
 
 Runner = Callable[..., dict[str, Any]]
 
@@ -178,13 +178,19 @@ def native_runner(
     }
 
 
-def send_one(root: Path, to: str, body: str, instance_id: str | None = None, label: str | None = None, runner: Runner | None = None, dry_run: bool = False, worktree: str | None = None, probe_fn=None) -> dict[str, Any]:
+def send_one(root: Path, to: str, body: str, instance_id: str | None = None, label: str | None = None, runner: Runner | None = None, dry_run: bool = False, worktree: str | None = None, probe_fn=None, resume: str | None = None) -> dict[str, Any]:
     cwd_root = Path(worktree).resolve() if worktree else Path(root).resolve()
-    packed = pack(cwd_root, instance_id=instance_id)
-    packed["worktree"] = str(cwd_root) if worktree else packed.get("worktree")
-    message = stdin_for(packed, body)
     cid = read_id(root)
     target_name = str(to or "").strip()
+    resume_token = resume.strip() if isinstance(resume, str) and resume.strip() else None
+    resolved_instance_id = instance_id.strip() if isinstance(instance_id, str) and instance_id.strip() else None
+
+    def _pack_message(current_instance_id: str | None) -> tuple[dict[str, Any], str]:
+        packed_row = pack(cwd_root, instance_id=current_instance_id)
+        packed_row["worktree"] = str(cwd_root) if worktree else packed_row.get("worktree")
+        return packed_row, stdin_for(packed_row, body)
+
+    packed, message = _pack_message(resolved_instance_id)
     if _is_wrapper_name(target_name):
         return {
             "ok": False,
@@ -217,7 +223,7 @@ def send_one(root: Path, to: str, body: str, instance_id: str | None = None, lab
     else:
         usage = {"usage_remaining": None, "limited": False, "raw": None}
     if usage.get("limited"):
-        hook(root, kind="refuse", summary=to + " limited", instance_id=instance_id, extra={"to": to, "raw": usage.get("raw")})
+        hook(root, kind="refuse", summary=to + " limited", instance_id=resolved_instance_id, extra={"to": to, "raw": usage.get("raw")})
         return {
             "ok": False,
             "to": to,
@@ -230,7 +236,35 @@ def send_one(root: Path, to: str, body: str, instance_id: str | None = None, lab
             "pointers": packed,
             "convoy_id": cid,
         }
-    if instance_id and lookup(root, instance_id) is None:
+    seat_row = None
+    if resolved_instance_id:
+        seat_row = lookup_any(root, resolved_instance_id, to=target_name, worktree=worktree)
+        if seat_row is None and lookup(root, resolved_instance_id) is None:
+            return {
+                "ok": False,
+                "to": to,
+                "session_id": None,
+                "error": "instance_id not in registry",
+                "pointers": packed,
+                "convoy_id": cid,
+            }
+        if isinstance(seat_row, dict):
+            sid = seat_row.get("session_id")
+            if isinstance(sid, str) and sid.strip():
+                resolved_instance_id = sid.strip()
+            if not resume_token:
+                vendor_resume = seat_row.get("resume") or seat_row.get("vendor_session_id")
+                if isinstance(vendor_resume, str) and vendor_resume.strip():
+                    resume_token = vendor_resume.strip()
+    elif resume_token:
+        seat_row = lookup_any(root, resume_token, to=target_name, worktree=worktree)
+        if isinstance(seat_row, dict):
+            sid = seat_row.get("session_id")
+            if isinstance(sid, str) and sid.strip():
+                resolved_instance_id = sid.strip()
+
+    packed, message = _pack_message(resolved_instance_id)
+    if resolved_instance_id and lookup(root, resolved_instance_id) is None:
         return {
             "ok": False,
             "to": to,
@@ -239,7 +273,7 @@ def send_one(root: Path, to: str, body: str, instance_id: str | None = None, lab
             "pointers": packed,
             "convoy_id": cid,
         }
-    if not instance_id:
+    if not resolved_instance_id and not resume_token:
         cid = read_id(root)
         if cid:
             for s in list_seats(root, convoy_id=cid):
@@ -253,7 +287,7 @@ def send_one(root: Path, to: str, body: str, instance_id: str | None = None, lab
                         "convoy_id": cid,
                     }
     branch = packed.get("branch")
-    if not instance_id and not worktree:
+    if not resolved_instance_id and not resume_token and not worktree:
         siblings = live_on_branch(root, branch)
         if siblings:
             return {
@@ -267,7 +301,15 @@ def send_one(root: Path, to: str, body: str, instance_id: str | None = None, lab
                 "convoy_id": cid,
             }
     run = runner or fake_runner
-    card = run(to, message, instance_id=instance_id, label=label, cwd=str(cwd_root), worktree=worktree)
+    card = run(
+        to,
+        message,
+        instance_id=resolved_instance_id,
+        label=label,
+        cwd=str(cwd_root),
+        worktree=worktree,
+        resume=resume_token,
+    )
     sid = card.get("session_id")
     state = git_state(cwd_root)
     extra = {"label": label, "worktree": str(cwd_root), **state}
