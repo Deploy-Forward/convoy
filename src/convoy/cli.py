@@ -11,8 +11,9 @@ from .install import install as install_harness
 from .onboard import onboard as run_onboard
 from .context import pack
 from .convoy import attach, bind, ensure_id, list_seats, read_id, read_lead, seat, set_lead, CONDUCTOR
+from .glance import build_glance, run_tray
 from .layer import feed_since, hook
-from .synapse import fake_runner, ola_runner, send_many, send_one
+from .synapse import fake_runner, native_runner, send_many, send_one
 from .usage import probe
 
 def main(argv: list[str] | None = None) -> int:
@@ -88,6 +89,13 @@ def main(argv: list[str] | None = None) -> int:
     ins.add_argument("--opt-in", action="store_true")
     ins.add_argument("--dry-run", action="store_true", default=True)
     ins.add_argument("--live", action="store_true", help="run installer; still requires --opt-in")
+
+    gl = sub.add_parser("glance")
+    gl.add_argument("--thread")
+    gl.add_argument("--convoy-id")
+    gl.add_argument("--json", action="store_true", default=True)
+    gl.add_argument("--tray", action="store_true", help="render glance in tray/app-indicator")
+    gl.add_argument("--refresh-seconds", type=int, default=60)
 
     ob = sub.add_parser("onboard")
     ob.add_argument("--to", action="append", required=True, help="named harness id(s) you already have")
@@ -179,6 +187,21 @@ def main(argv: list[str] | None = None) -> int:
         card = install_harness(args.to, dry_run=dry, opt_in=bool(args.opt_in))
         print(json.dumps(card))
         return 0 if card.get("ok") else 1
+    if args.cmd == "glance":
+        if args.tray:
+            card = run_tray(
+                root,
+                thread=getattr(args, "thread", None),
+                convoy_id=getattr(args, "convoy_id", None),
+                refresh_seconds=max(0, int(getattr(args, "refresh_seconds", 60))),
+            )
+            if args.json:
+                print(json.dumps(card))
+            return 0 if card.get("ok") else 1
+        card = build_glance(root, thread=getattr(args, "thread", None), convoy_id=getattr(args, "convoy_id", None))
+        print(json.dumps(card))
+        return 0 if card.get("ok") else 1
+
     if args.cmd == "onboard":
         card = run_onboard(root, args.to, thread=args.thread, checkout_root=args.checkout_root)
         print(json.dumps(card))
@@ -187,7 +210,7 @@ def main(argv: list[str] | None = None) -> int:
         from .mcp_http import serve
         return serve(root, host=args.host, port=args.port)
     if args.cmd == "send":
-        runner = ola_runner if args.live else fake_runner
+        runner = native_runner if args.live else fake_runner
         wts = args.worktree
         if wts and len(wts) != len(args.to):
             print("need one --worktree per --to", file=sys.stderr)
