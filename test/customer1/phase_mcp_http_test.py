@@ -153,6 +153,51 @@ class PhaseMcpHttp(unittest.TestCase):
         resumes = {w["to"]: w["resume"] for w in payload["windows"]}
         self.assertEqual(resumes["grok"], "sess-grok")
 
+    def test_send_schema_exposes_session_id_and_stays_honest_about_ola(self):
+        listed = _rpc(self.mcp, "tools/list")
+        send = None
+        for tool in listed["result"]["tools"]:
+            if tool["name"] == "send":
+                send = tool
+                break
+        self.assertIsNotNone(send)
+        props = send["inputSchema"]["properties"]
+        self.assertIn("session_id", props)
+        self.assertIn("resume", props)
+        self.assertIn("ola_runner", send["description"])
+        self.assertNotIn("native harness CLI on PATH (no ola-brain wrap)", send["description"])
+
+    def test_send_session_id_resumes_existing_seat(self):
+        resp = _rpc(self.mcp, "tools/call", {
+            "name": "send",
+            "arguments": {"to": "grok", "body": "resume-probe", "session_id": "sess-grok"},
+        })
+        payload = _tool_payload(resp)
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["session_id"], "sess-grok")
+        self.assertNotEqual(payload["session_id"], "spawned-grok")
+
+    def test_send_without_session_id_refuses_when_seat_exists(self):
+        resp = _rpc(self.mcp, "tools/call", {
+            "name": "send",
+            "arguments": {"to": "grok", "body": "no-arg-probe"},
+        })
+        payload = _tool_payload(resp)
+        self.assertFalse(payload["ok"])
+        self.assertIsNone(payload.get("session_id"))
+        self.assertIn("seat exists", payload["error"])
+
+    def test_send_ola_brain_refused_by_name(self):
+        resp = _rpc(self.mcp, "tools/call", {
+            "name": "send",
+            "arguments": {"to": "ola-brain", "body": "wrap-probe"},
+        })
+        payload = _tool_payload(resp)
+        self.assertFalse(payload["ok"])
+        self.assertIn("refuse unknown or wrapped harness", payload["error"])
+        self.assertNotIn("two agents on one branch", payload.get("error") or "")
+        self.assertNotIn("seat exists", payload.get("error") or "")
+
 
 if __name__ == "__main__":
     unittest.main()

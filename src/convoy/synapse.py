@@ -17,6 +17,32 @@ from .registry import live_on_branch, lookup, parse_agents_jsonl, parse_session_
 
 Runner = Callable[..., dict[str, Any]]
 
+# Named refuse before probe / seat / overlap. Not a hop list.
+_REFUSED_SEND = frozenset({
+    "ola-brain",
+    "side-chat",
+    "ultracode-shim",
+    "ultracodeshim",
+    "gemini",
+    "gemini-cli",
+    "grok-cli",
+    "deepseek",
+    "deepseek-cli",
+})
+
+
+def _norm_send_target(to: str) -> str:
+    key = str(to or "").strip().lower().replace("_", "-")
+    if key.endswith(".exe"):
+        key = key[:-4]
+    return key
+
+
+def refused_send_target(to: str) -> bool:
+    """True for wrapper / non-hop names. Path overlap is a different refuse."""
+    return _norm_send_target(to) in _REFUSED_SEND
+
+
 def fake_runner(to: str, body: str, instance_id: str | None = None, label: str | None = None, **_k: Any) -> dict[str, Any]:
     sid = instance_id or ("spawned-" + to + (("-" + label) if label else ""))
     return {
@@ -68,6 +94,17 @@ def send_one(root: Path, to: str, body: str, instance_id: str | None = None, lab
     packed["worktree"] = str(cwd_root) if worktree else packed.get("worktree")
     message = stdin_for(packed, body)
     cid = read_id(root)
+    if refused_send_target(to):
+        return {
+            "ok": False,
+            "to": to,
+            "session_id": None,
+            "model": None,
+            "usage_remaining": None,
+            "error": "refuse unknown or wrapped harness: " + _norm_send_target(to),
+            "pointers": packed,
+            "convoy_id": cid,
+        }
     if dry_run:
         card = {
             "ok": True,

@@ -88,7 +88,7 @@ TOOLS: list[dict[str, Any]] = [
     },
     {
         "name": "send",
-        "description": "headless hop; does not pop a TUI. Hop one compact card to a harness. Default runner is fake. live=true execs ola_runner. Never live_runner / CREATE_NEW_CONSOLE. Refuses limited without waiting.",
+        "description": "headless hop; does not pop a TUI. Hop one compact card to a harness. Default runner is fake. live=true still execs ola_runner (native PATH send is RED). session_id/resume hops an existing seat. Refuses ola-brain, UltraCode-Shim, gemini, deepseek by name before overlap. Never live_runner / CREATE_NEW_CONSOLE. Refuses limited without waiting.",
         "inputSchema": _schema(
             {
                 "to": {"type": "string"},
@@ -96,6 +96,8 @@ TOOLS: list[dict[str, Any]] = [
                 "model": {"type": "string"},
                 "label": {"type": "string"},
                 "worktree": {"type": "string"},
+                "session_id": {"type": "string"},
+                "resume": {"type": "string"},
                 "live": {"type": "boolean", "default": False},
             },
             required=["to", "body"],
@@ -298,12 +300,14 @@ def call_tool(root: Path, name: str, arguments: dict[str, Any] | None) -> dict[s
             return {"ok": False, "error": "send requires to and body"}
         if not isinstance(body, str):
             body = str(body)
+        instance_id = _opt_str(args, "session_id") or _opt_str(args, "resume")
         live = _opt_bool(args, "live", False)
         runner = ola_runner if live else fake_runner
         card = send_one(
             root,
             to,
             body,
+            instance_id=instance_id,
             label=_opt_str(args, "label"),
             runner=runner,
             worktree=_opt_str(args, "worktree"),
