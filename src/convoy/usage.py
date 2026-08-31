@@ -47,7 +47,7 @@ def _run(cmd: list[str], timeout: int = 15) -> tuple[int, str]:
 
 
 def normalize_usage_remaining(value: Any) -> Any:
-    """Return JSON-safe remaining usage: number | object | null."""
+    """SPEC clamp: number|object|null only for usage_remaining."""
     if value is None:
         return None
     if isinstance(value, bool):
@@ -58,15 +58,6 @@ def normalize_usage_remaining(value: Any) -> Any:
         return value
     if isinstance(value, dict):
         return value
-    if isinstance(value, str):
-        text = value.strip()
-        if not text:
-            return None
-        try:
-            parsed = json.loads(text)
-        except json.JSONDecodeError:
-            return None
-        return normalize_usage_remaining(parsed)
     return None
 
 
