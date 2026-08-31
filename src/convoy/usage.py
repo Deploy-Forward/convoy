@@ -10,6 +10,17 @@ from typing import Any, Callable
 
 ProbeFn = Callable[[str], dict[str, Any]]
 
+
+def normalize_usage_remaining(value: Any) -> Any:
+    """SPEC clamp: number|object|null only for usage_remaining."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return value
+    if isinstance(value, dict):
+        return value
+    return None
+
 def _run(cmd: list[str], timeout: int = 15) -> tuple[int, str]:
     kwargs: dict[str, Any] = {
         "stdout": subprocess.PIPE,
@@ -77,14 +88,14 @@ def _parse_claude(raw: str) -> tuple[Any, bool]:
                     break
         remaining: Any = data
     else:
-        remaining = text or None
+        remaining = None
         m = re.search(r"Current session:\s*(\d+)%", text, re.I)
         if m:
             pct = float(m.group(1))
         elif "100%" in text.lower() and "session" in text.lower():
             pct = 100.0
     limited = pct == 100 or pct == 100.0
-    return remaining, limited
+    return normalize_usage_remaining(remaining), limited
 
 def probe(harness: str, runner: ProbeFn | None = None) -> dict[str, Any]:
     if runner is not None:
@@ -96,15 +107,14 @@ def probe(harness: str, runner: ProbeFn | None = None) -> dict[str, Any]:
         bin = shutil.which("claude") or "claude"
         code, raw = _run([bin, "-p", "/usage"], timeout=15)
         remaining, limited = _parse_claude(raw)
-        return {"usage_remaining": remaining, "limited": limited, "raw": raw or None, "exit_code": code}
+        return {"usage_remaining": normalize_usage_remaining(remaining), "limited": limited, "raw": raw or None, "exit_code": code}
     if name == "codex":
         bin = shutil.which("codex") or "codex"
         code, raw = _run([bin, "exec", "/status"], timeout=15)
         low = (raw or "").lower()
         timed_out = code == 124 or low == "probe timeout"
         limited = timed_out or ("out of credits" in low)
-        remaining = None if limited or not raw else raw
-        return {"usage_remaining": remaining, "limited": limited, "raw": raw or None, "exit_code": code}
+        return {"usage_remaining": None, "limited": limited, "raw": raw or None, "exit_code": code}
     return {"usage_remaining": None, "limited": False, "raw": None}
 
 def surface(harness: str, probed: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -125,6 +135,6 @@ def surface(harness: str, probed: dict[str, Any] | None = None) -> dict[str, Any
     if w:
         out["week_pct"] = int(w.group(1))
     if name == "codex":
-        out["usage_remaining"] = p.get("usage_remaining")
+        out["usage_remaining"] = normalize_usage_remaining(p.get("usage_remaining"))
     return out
 

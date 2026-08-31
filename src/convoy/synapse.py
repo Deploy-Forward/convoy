@@ -11,7 +11,7 @@ from typing import Any, Callable
 from .context import pack, stdin_for
 from .gitstate import git_state
 from .layer import hook
-from .usage import probe
+from .usage import normalize_usage_remaining, probe
 from .convoy import list_seats, read_id
 from .registry import live_on_branch, lookup, parse_agents_jsonl, parse_session_id, register
 
@@ -95,7 +95,7 @@ def send_one(root: Path, to: str, body: str, instance_id: str | None = None, lab
             "to": to,
             "session_id": None,
             "model": None,
-            "usage_remaining": usage.get("usage_remaining"),
+            "usage_remaining": normalize_usage_remaining(usage.get("usage_remaining")),
             "refused": True,
             "error": to + " limited",
             "body": usage.get("raw"),
@@ -148,7 +148,7 @@ def send_one(root: Path, to: str, body: str, instance_id: str | None = None, lab
     hook(root, kind="synapse", summary="send " + to, instance_id=sid, extra={"to": to, "ok": card.get("ok"), "dry_run": False, **extra})
     card["pointers"] = packed
     card["stdin"] = message
-    card["usage_remaining"] = usage.get("usage_remaining")
+    card["usage_remaining"] = normalize_usage_remaining(usage.get("usage_remaining"))
     card["convoy_id"] = cid
     return card
 
