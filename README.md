@@ -6,7 +6,7 @@ Convoy is the shared project memory for Grok Bot: attach one MCP endpoint, route
 
 - **Grok Bot**: the conductor in this chat; it orchestrates, is chip-less, and is not a hop or a window.
 - **Hop**: a BYO harness CLI session (`grok`, `claude`, `codex`, `cursor-agent`, or `agy`); not a new Grok Bot.
-- **Synapse**: the hop that actually executes that CLI; one harness, one `session_id`, one meter, compact card back. Never a side-chat, never ola-brain.
+- **Synapse**: the hop that executes the CLI; one harness, one `session_id`, one meter, compact card back.
 - **Convoy**: the singular source of truth any agent taps: feed, seats, `convoy_id`.
 - **Thread**: one Convoy thread per Grok Bot conductor; hops on a thread share it. Sharing a thread key stomps the same checkout.
 - **`convoy_id` (`cvy_...`)**: durable id for that thread.
@@ -37,19 +37,19 @@ Attach `https://convoy.bot/mcp`, run `onboard` to name the harnesses you already
 ## End-to-end example
 
 1. Attach MCP endpoint: `https://convoy.bot/mcp`.
-2. Onboard existing harnesses: `onboard` with `to=["grok","claude","codex"]`.
-3. Send a synapse on one thread: `send` with `to="claude"`, `thread="payments"`, `live=true`.
-4. Convoy returns a compact hop card like `{"harness":"claude","session_id":"sess_claude_9f2b3a","worktree":"/workspace/.convoy/wt/payments","convoy_id":"cvy_7m4q2p9x"}`.
-5. Read shared state with `feed` (since last `ts`) and `context` (pointer pack).
-6. Run `glance` for the thread: `glance convoy_id="cvy_7m4q2p9x"` to see which seats sit on that id.
+2. Onboard existing harnesses: `onboard` with `to=["grok","claude"]` and `thread="payments"`.
+3. Send a synapse: `send` with `to="claude"`, `body="Summarize open payment retry bugs and propose a fix plan."`, `live=true`.
+4. Example hop card shape: `{"ok":true,"to":"claude","session_id":"sess_claude_9f2b3a","argv":["claude","--resume","sess_claude_9f2b3a"],"pointers":{"worktree":"/workspace/.convoy/wt/payments"},"convoy_id":"cvy_7m4q2p9x"}`.
+5. Read updates with `feed` using `since="2026-08-31T00:00:00Z"`.
+6. Run `glance` by thread id: `glance convoy_id="cvy_7m4q2p9x"`.
 
 Tiny CLI equivalent:
 
-`python -m convoy onboard --to grok --to claude --to codex`
+`python -m convoy onboard --to grok --to claude --thread payments`
 
-`python -m convoy send --to claude --thread payments --live`
+`python -m convoy send --to claude --live "Summarize open payment retry bugs and propose a fix plan."`
 
-`python -m convoy feed --convoy-id cvy_7m4q2p9x`
+`python -m convoy feed --since 2026-08-31T00:00:00Z`
 
 `python -m convoy glance --convoy-id cvy_7m4q2p9x --json`
 
