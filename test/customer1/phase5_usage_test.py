@@ -9,7 +9,6 @@ from convoy.layer import feed_since
 from convoy.synapse import native_runner, send_one
 from convoy.usage import _parse_claude, normalize_usage_remaining, probe
 
-
 class Phase5Usage(unittest.TestCase):
     def setUp(self):
         self.root = Path(tempfile.mkdtemp())
@@ -27,6 +26,12 @@ class Phase5Usage(unittest.TestCase):
         self.assertFalse(limited)
         rem100, lim100 = _parse_claude("Current session: 100% used")
         self.assertTrue(lim100)
+
+    def test_claude_blob_not_usage_remaining(self):
+        rem, limited = _parse_claude("Total cost: $0.00\nDuration: 2m\nInput: 0\nOutput: 0")
+        self.assertFalse(limited)
+        self.assertIsNone(rem)
+        self.assertIsNone(normalize_usage_remaining("Total cost: $0.00"))
 
     def test_claude_100_refuses_without_spawn(self):
         def stub(_to):

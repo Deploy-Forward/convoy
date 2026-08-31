@@ -18,6 +18,7 @@ from urllib.parse import urlparse
 
 from .bringup import bring_up, ensure_interactive_path, hide_windows, live_applier, live_runner, terminals
 from .install import install as install_harness
+from .onboard import onboard as run_onboard
 from .context import pack
 from .convoy import list_seats, read_thread
 from .gitstate import git_state
@@ -39,7 +40,7 @@ HARNESSES = (
     ("cursor-agent", "cursor-agent"),
 )
 
-_TOOL_NAMES = ("roster", "terminals", "context", "send", "feed", "bring_up", "open", "hide", "minimize", "background", "install")
+_TOOL_NAMES = ("roster", "onboard", "terminals", "context", "send", "feed", "bring_up", "open", "hide", "minimize", "background", "install")
 
 
 def _schema(properties: dict[str, Any], required: list[str] | None = None) -> dict[str, Any]:
@@ -54,6 +55,22 @@ TOOLS: list[dict[str, Any]] = [
         "name": "roster",
         "description": "Live harness roster. present/wired is shutil.which on the MCP process PATH, not an already-open desktop terminal. Interactive bash skips .profile so ~/.local/bin (claude, codex) can be installed and still command-not-found; roster/bring_up ungate ~/.bashrc. usage_remaining is JSON null when the harness does not expose a remaining count.",
         "inputSchema": _schema({}),
+    },
+    {
+        "name": "onboard",
+        "description": "First-run after MCP attach: user names harnesses they already have. Checks PATH honestly per named harness only; no silent additions. Refuses wrappers (gemini-cli, grok-cli, ultracode-shim, ola-brain). Optional thread + checkout_root bind without stomping an existing different thread. Missing harnesses point to install opt-in; no installer fetch here.",
+        "inputSchema": _schema(
+            {
+                "to": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Named harness ids you already have (grok, claude, codex, cursor-agent, agy)",
+                },
+                "thread": {"type": "string"},
+                "checkout_root": {"type": "string"},
+            },
+            required=["to"],
+        ),
     },
     {
         "name": "terminals",
@@ -260,6 +277,19 @@ def call_tool(root: Path, name: str, arguments: dict[str, Any] | None) -> dict[s
     args = arguments if isinstance(arguments, dict) else {}
     if name == "roster":
         return build_roster(root)
+    if name == "onboard":
+        raw_to = args.get("to")
+        to: list[str] = []
+        if isinstance(raw_to, list):
+            to = [str(x) for x in raw_to]
+        elif raw_to is not None:
+            to = [str(raw_to)]
+        return run_onboard(
+            root,
+            to,
+            thread=_opt_str(args, "thread"),
+            checkout_root=_opt_str(args, "checkout_root"),
+        )
     if name == "terminals":
         return terminals(root, convoy_id=_opt_str(args, "convoy_id"), thread=_opt_str(args, "thread"))
     if name == "context":
