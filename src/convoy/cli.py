@@ -8,6 +8,7 @@ from pathlib import Path
 
 from .bringup import bring_up, hide_windows, live_applier, live_runner, terminals
 from .install import install as install_harness
+from .onboard import onboard as run_onboard
 from .context import pack
 from .convoy import attach, bind, ensure_id, list_seats, read_id, read_lead, seat, set_lead, CONDUCTOR
 from .glance import build_glance, run_tray
@@ -95,6 +96,11 @@ def main(argv: list[str] | None = None) -> int:
     gl.add_argument("--json", action="store_true", default=True)
     gl.add_argument("--tray", action="store_true", help="render glance in tray/app-indicator")
     gl.add_argument("--refresh-seconds", type=int, default=60)
+
+    ob = sub.add_parser("onboard")
+    ob.add_argument("--to", action="append", required=True, help="named harness id(s) you already have")
+    ob.add_argument("--thread")
+    ob.add_argument("--checkout-root")
 
     mcp = sub.add_parser("mcp")
     mcp.add_argument("--root", default=argparse.SUPPRESS, help="layer root (also accepted after subcommand)")
@@ -193,6 +199,9 @@ def main(argv: list[str] | None = None) -> int:
                 print(json.dumps(card))
             return 0 if card.get("ok") else 1
         card = build_glance(root, thread=getattr(args, "thread", None), convoy_id=getattr(args, "convoy_id", None))
+
+    if args.cmd == "onboard":
+        card = run_onboard(root, args.to, thread=args.thread, checkout_root=args.checkout_root)
         print(json.dumps(card))
         return 0 if card.get("ok") else 1
     if args.cmd == "mcp":
