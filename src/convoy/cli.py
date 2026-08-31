@@ -199,6 +199,8 @@ def main(argv: list[str] | None = None) -> int:
                 print(json.dumps(card))
             return 0 if card.get("ok") else 1
         card = build_glance(root, thread=getattr(args, "thread", None), convoy_id=getattr(args, "convoy_id", None))
+        print(json.dumps(card))
+        return 0 if card.get("ok") else 1
 
     if args.cmd == "onboard":
         card = run_onboard(root, args.to, thread=args.thread, checkout_root=args.checkout_root)
