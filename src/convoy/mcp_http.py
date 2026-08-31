@@ -312,7 +312,8 @@ def call_tool(root: Path, name: str, arguments: dict[str, Any] | None) -> dict[s
             return {"ok": False, "error": "send requires to and body"}
         if not isinstance(body, str):
             body = str(body)
-        instance_id = _opt_str(args, "session_id") or _opt_str(args, "resume")
+        instance_id = _opt_str(args, "session_id")
+        resume = _opt_str(args, "resume")
         live = _opt_bool(args, "live", False)
         runner = native_runner if live else fake_runner
         card = send_one(
@@ -320,6 +321,7 @@ def call_tool(root: Path, name: str, arguments: dict[str, Any] | None) -> dict[s
             to,
             body,
             instance_id=instance_id,
+            resume=resume,
             label=_opt_str(args, "label"),
             runner=runner,
             worktree=_opt_str(args, "worktree"),

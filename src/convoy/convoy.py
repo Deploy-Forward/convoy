@@ -26,9 +26,9 @@ CONDUCTOR = "grok-bot"
 def _lead_path(root: Path) -> Path:
     return Path(root) / ".convoy" / "lead"
 
-def make_resume_key(convoy_id: str | None, thread: str | None, to: str | None) -> str:
-    """Map key for (convoy, thread, harness). Not a session_id. Never invent resume."""
-    blob = (convoy_id or "") + "\0" + (thread or "") + "\0" + (to or "")
+def make_resume_key(convoy_id: str | None, thread: str | None, to: str | None, worktree: str | None = None) -> str:
+    """Map key for (convoy, thread, harness, worktree). Not a session_id."""
+    blob = (convoy_id or "") + "\0" + (thread or "") + "\0" + (to or "") + "\0" + (worktree or "")
     return "cvr_" + hashlib.sha256(blob.encode("utf-8")).hexdigest()[:16]
 
 def read_id(root: Path) -> str | None:
@@ -91,7 +91,7 @@ def seat(root: Path, to: str, session_id: str, worktree: str | None = None, mode
     wt = str(worktree) if worktree is not None else None
     thread = read_thread(root) or ""
     resume_val = resume if (isinstance(resume, str) and resume) else session_id
-    rkey = make_resume_key(cid, thread, to)
+    rkey = make_resume_key(cid, thread, to, wt)
     row: dict[str, Any] = {
         "convoy_id": cid,
         "to": to,
@@ -134,14 +134,28 @@ def list_seats(root: Path, convoy_id: str | None = None, require_session: bool =
         return list(found.values())
     return list(found.values()) + blanks
 
-def lookup_resume(root: Path, thread: str, to: str) -> str | None:
-    """Return stored resume for thread+to. Hash is the map key. Never invent a session_id."""
+def lookup_resume(root: Path, thread: str, to: str, worktree: str | None = None) -> str | None:
+    """Return stored vendor resume id for thread+to(+worktree when provided)."""
     cid = read_id(root)
     if not cid:
         return None
-    key = make_resume_key(cid, thread, to)
-    for row in list_seats(root, convoy_id=cid):
+    key = make_resume_key(cid, thread, to, worktree)
+    seats = list_seats(root, convoy_id=cid)
+    if worktree is not None:
+        for row in seats:
+            if row.get("resume_key") == key and row.get("to") == to:
+                r = row.get("resume") or row.get("vendor_session_id") or row.get("session_id")
+                if isinstance(r, str) and r:
+                    return r
+        return None
+    for row in seats:
         if row.get("resume_key") == key and row.get("to") == to:
+            r = row.get("resume") or row.get("vendor_session_id") or row.get("session_id")
+            if isinstance(r, str) and r:
+                return r
+    # Legacy fallback when seats are keyed per-worktree.
+    for row in reversed(seats):
+        if row.get("to") == to:
             r = row.get("resume") or row.get("vendor_session_id") or row.get("session_id")
             if isinstance(r, str) and r:
                 return r

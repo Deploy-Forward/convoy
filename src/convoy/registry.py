@@ -36,6 +36,37 @@ def lookup(root: Path, session_id: str) -> dict[str, Any] | None:
                 found = row
     return found
 
+
+def lookup_any(root: Path, token: str, to: str | None = None, worktree: str | None = None) -> dict[str, Any] | None:
+    """Lookup by convoy session_id or stored vendor resume id."""
+    path = registry_path(root)
+    if not path.exists() or not token:
+        return None
+    wanted_to = str(to).strip().lower() if isinstance(to, str) and to.strip() else None
+    wanted_wt = str(worktree).strip() if isinstance(worktree, str) and worktree.strip() else None
+    found = None
+    with path.open(encoding="utf-8-sig") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            row = json.loads(line)
+            candidates = (
+                row.get("session_id"),
+                row.get("resume"),
+                row.get("vendor_session_id"),
+            )
+            if token not in candidates:
+                continue
+            row_to = str(row.get("to") or "").strip().lower()
+            row_wt = str(row.get("worktree") or "").strip()
+            if wanted_to is not None and row_to != wanted_to:
+                continue
+            if wanted_wt is not None and row_wt != wanted_wt:
+                continue
+            found = row
+    return found
+
 def parse_session_id(stdout: str) -> str | None:
     """JSON card first. Else ola-brain instance_id: reply. Never a UUID regex guess."""
     text = (stdout or "").strip()

@@ -28,7 +28,7 @@ Not grok `-p` (headless), not grok `-c` (continue latest cwd), not `--output-for
 Not ola-brain, not side-chat, not cli-chat-proxy.
 
 resume is the vendor session_id argument. resume_key is the hash map key:
-    cvr_ + sha256(convoy_id + "\0" + thread + "\0" + to).hexdigest()[:16]
+    cvr_ + sha256(convoy_id + "\0" + thread + "\0" + to + "\0" + worktree).hexdigest()[:16]
 Never invent a session_id. Default runner is a no-op (dry). Live runner is not
 called from unit tests.
 """
@@ -749,7 +749,7 @@ def _window_for(root: Path, seat: dict[str, Any], rect: dict[str, int] | None, c
     wt = seat.get("worktree")
     rkey = seat.get("resume_key")
     if not (isinstance(rkey, str) and rkey):
-        rkey = make_resume_key(cid, thread or "", str(to or ""))
+        rkey = make_resume_key(cid, thread or "", str(to or ""), str(wt) if wt is not None else None)
     target = resume_target(seat)
     win: dict[str, Any] = {
         "to": to,
