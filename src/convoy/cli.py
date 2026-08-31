@@ -53,6 +53,8 @@ def main(argv: list[str] | None = None) -> int:
     se.add_argument("--worktree")
     se.add_argument("--model")
     se.add_argument("--resume", help="vendor session_id for --resume; default session_id")
+    se.add_argument("--title", help="optional pane title to restore on bring-up")
+    se.add_argument("--agent", help="optional agent file path used for native resume")
 
     sl = sub.add_parser("seats")
     sl.add_argument("--convoy-id")
@@ -130,7 +132,16 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps({"convoy_id": read_id(root)}))
         return 0
     if args.cmd == "seat":
-        row = seat(root, args.to, args.session_id, worktree=args.worktree, model=args.model, resume=args.resume)
+        row = seat(
+            root,
+            args.to,
+            args.session_id,
+            worktree=args.worktree,
+            model=args.model,
+            resume=args.resume,
+            title=args.title,
+            agent=args.agent,
+        )
         print(json.dumps(row))
         return 0
     if args.cmd == "seats":

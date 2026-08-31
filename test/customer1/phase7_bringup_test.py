@@ -4,15 +4,29 @@ from unittest import mock
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 from convoy.cli import main
 from convoy.convoy import bind, ensure_id, lookup_resume, make_resume_key, seat
-from convoy.bringup import CREATE_NEW_CONSOLE, bring_up, isolated_wt_argv, live_runner, live_spawn_kwargs, resume_argv, terminals, tile_rects
+from convoy.bringup import CREATE_NEW_CONSOLE, _pids_for_resume, bring_up, isolated_wt_argv, live_runner, live_spawn_kwargs, resume_argv, terminals, tile_rects
 
 
-def _native_resume(argv, name, sid):
-    """Bare name or PATH-resolved abs exe. Shape is always [exe, --resume, sid]."""
-    assert len(argv) == 3, argv
+def _native_resume(argv, name, sid, *, model=None, agent=None):
+    """PATH-resolved abs or bare exe; ends with [--resume, sid]."""
     base = os.path.basename(str(argv[0])).lower().removesuffix(".exe")
     assert base == name, (base, name, argv)
-    assert argv[1:] == ["--resume", sid], argv
+    assert "--resume" in argv, argv
+    ridx = argv.index("--resume")
+    assert argv[ridx:] == ["--resume", sid], argv
+    prefix = argv[1:ridx]
+    if model is not None:
+        assert "-m" in prefix, argv
+        midx = prefix.index("-m")
+        assert prefix[midx + 1] == model, argv
+    else:
+        assert "-m" not in prefix, argv
+    if agent is not None:
+        assert "--agent" in prefix, argv
+        aidx = prefix.index("--agent")
+        assert prefix[aidx + 1] == agent, argv
+    else:
+        assert "--agent" not in prefix, argv
 
 def _run(root, *argv):
     buf = io.StringIO()
@@ -61,7 +75,7 @@ class Phase7BringUp(unittest.TestCase):
     def test_resume_argv_native_two_seats(self):
         gargv = resume_argv(self.g)
         cargv = resume_argv(self.c)
-        _native_resume(gargv, "grok", "sess-grok")
+        _native_resume(gargv, "grok", "sess-grok", model="explicit-grok")
         _native_resume(cargv, "claude", "sess-claude")
         for argv, sid in ((gargv, "sess-grok"), (cargv, "sess-claude")):
             self.assertIn("--resume", argv)
@@ -94,7 +108,7 @@ class Phase7BringUp(unittest.TestCase):
         self.assertEqual(by["claude"]["resume"], "sess-claude")
         self.assertIsNotNone(by["grok"]["resume"])
         self.assertIsNotNone(by["claude"]["resume"])
-        _native_resume(by["grok"]["argv"], "grok", "sess-grok")
+        _native_resume(by["grok"]["argv"], "grok", "sess-grok", model="explicit-grok")
         _native_resume(by["claude"]["argv"], "claude", "sess-claude")
         self.assertEqual(by["grok"]["worktree"], str(self.wt_g))
         self.assertEqual(by["grok"]["cwd"], str(self.wt_g))
@@ -204,11 +218,29 @@ class Phase7BringUp(unittest.TestCase):
         root = Path(tempfile.mkdtemp())
         ensure_id(root)
         bind(root, "t")
-        row = seat(root, "grok", "ola-instance", worktree=str(self.wt_g), resume="vendor-uuid-not-invented")
+        row = seat(
+            root,
+            "grok",
+            "ola-instance",
+            worktree=str(self.wt_g),
+            model="grok-4.6",
+            resume="vendor-uuid-not-invented",
+            title="lead-prreview",
+            agent="agents/lead-prreview.md",
+        )
         self.assertEqual(row["session_id"], "ola-instance")
         self.assertEqual(row["resume"], "vendor-uuid-not-invented")
+        self.assertEqual(row["model"], "grok-4.6")
+        self.assertEqual(row["title"], "lead-prreview")
+        self.assertEqual(row["agent"], "agents/lead-prreview.md")
         argv = resume_argv(row)
-        _native_resume(argv, "grok", "vendor-uuid-not-invented")
+        _native_resume(
+            argv,
+            "grok",
+            "vendor-uuid-not-invented",
+            model="grok-4.6",
+            agent="agents/lead-prreview.md",
+        )
         self.assertNotIn("ola-instance", argv)
         d = bring_up(root)
         self.assertTrue(d["windows"][0]["ok"])
@@ -259,6 +291,13 @@ class Phase7BringUp(unittest.TestCase):
             self.assertNotIn("transcript", w)
         lib = terminals(self.root)
         self.assertEqual(len(lib["windows"]), 2)
+
+    def test_terminals_live_derived_from_pid_lookup(self):
+        with mock.patch("convoy.bringup._pids_for_resume", side_effect=lambda resume: {31} if resume == "sess-grok" else set()):
+            card = terminals(self.root)
+        by = {w["to"]: w for w in card["windows"]}
+        self.assertTrue(by["grok"]["live"])
+        self.assertFalse(by["claude"]["live"])
 
     def test_thread_mismatch_refuses(self):
         d = bring_up(self.root, thread="not-this-thread")
@@ -395,6 +434,50 @@ class Phase7BringUp(unittest.TestCase):
             kw = live_spawn_kwargs()
         self.assertTrue(kw.get("start_new_session"))
         self.assertNotIn("creationflags", kw)
+
+    def test_isolated_wt_title_uses_seat_title_or_stable_fallback(self):
+        seats = [
+            {
+                "to": "grok",
+                "session_id": "sess-grok",
+                "resume": "vendor-uuid-grok",
+                "worktree": r"C:\\wt\\grok",
+                "exe": r"C:\\abs\\grok.exe",
+                "title": "lead-prreview",
+            },
+            {
+                "to": "claude",
+                "session_id": "sess-claude",
+                "worktree": r"C:\\wt\\claude",
+                "exe": r"C:\\abs\\claude.exe",
+            },
+        ]
+        argv = isolated_wt_argv("customer1", seats, wt=r"C:\\abs\\wt.exe")
+        title_values = [argv[i + 1] for i, token in enumerate(argv) if token == "--title"]
+        self.assertEqual(title_values[0], "lead-prreview")
+        self.assertNotEqual(title_values[1], "claude-1")
+        self.assertNotIn("grok-0", title_values)
+        self.assertEqual(argv[1:4], ["--window", "new", "nt"])
+
+    def test_pids_for_resume_matches_resume_or_session_id(self):
+        cmd = {
+            101: r'C:\abs\grok.exe --resume vendor-uuid-1',
+            102: r'C:\abs\grok.exe --session-id vendor-uuid-1',
+            103: r'C:\abs\claude.exe --resume other',
+            104: r'C:\abs\Grok Bot.exe --resume vendor-uuid-1',
+        }
+        with mock.patch("convoy.bringup.os.name", "nt"), \
+             mock.patch("convoy.bringup._iter_processes", return_value=[(101, "grok.exe"), (102, "grok.exe"), (103, "claude.exe"), (104, "Grok Bot.exe")]), \
+             mock.patch("convoy.bringup._read_command_line", side_effect=lambda pid: cmd.get(pid)):
+            got = _pids_for_resume("vendor-uuid-1")
+        self.assertEqual(got, {101, 102})
+
+    def test_pids_for_resume_false_when_no_match(self):
+        with mock.patch("convoy.bringup.os.name", "nt"), \
+             mock.patch("convoy.bringup._iter_processes", return_value=[(201, "grok.exe")]), \
+             mock.patch("convoy.bringup._read_command_line", return_value=r"C:\abs\grok.exe --resume other-uuid"):
+            got = _pids_for_resume("vendor-uuid-1")
+        self.assertEqual(got, set())
 
 if __name__ == "__main__":
     unittest.main()

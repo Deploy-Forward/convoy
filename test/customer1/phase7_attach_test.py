@@ -80,6 +80,55 @@ class Phase7Attach(unittest.TestCase):
         listed = list_seats(self.root, convoy_id=cid)
         self.assertEqual({r["session_id"] for r in listed}, ids)
 
+    def test_seat_accepts_title_agent_and_last_write_wins(self):
+        _, initd = _run(self.root, "init")
+        cid = initd["convoy_id"]
+        rc1, first = _run(
+            self.root,
+            "seat",
+            "--to",
+            "grok",
+            "--session-id",
+            "sess-grok",
+            "--worktree",
+            str(self.wt_g),
+            "--model",
+            "grok-4.6",
+            "--title",
+            "lead-pr-review",
+            "--agent",
+            "agents/lead-pr-review.md",
+            "--resume",
+            "vendor-uuid-1",
+        )
+        self.assertEqual(rc1, 0)
+        self.assertEqual(first["title"], "lead-pr-review")
+        self.assertEqual(first["agent"], "agents/lead-pr-review.md")
+        self.assertEqual(first["resume"], "vendor-uuid-1")
+        rc2, second = _run(
+            self.root,
+            "seat",
+            "--to",
+            "grok",
+            "--session-id",
+            "sess-grok",
+            "--worktree",
+            str(self.wt_g),
+            "--title",
+            "lead-pr-review-v2",
+            "--agent",
+            "agents/lead-pr-review-v2.md",
+            "--resume",
+            "vendor-uuid-2",
+        )
+        self.assertEqual(rc2, 0)
+        self.assertEqual(second["convoy_id"], cid)
+        listed = list_seats(self.root, convoy_id=cid)
+        by_sid = {r["session_id"]: r for r in listed}
+        self.assertEqual(by_sid["sess-grok"]["title"], "lead-pr-review-v2")
+        self.assertEqual(by_sid["sess-grok"]["agent"], "agents/lead-pr-review-v2.md")
+        self.assertEqual(by_sid["sess-grok"]["resume"], "vendor-uuid-2")
+
     def test_attach_unknown_id_mismatch_no_seats(self):
         _run(self.root, "init")
         seat(self.root, "grok", "sess-grok", worktree=str(self.wt_g))
