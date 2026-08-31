@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -263,8 +264,11 @@ def resume_argv(seat: dict[str, Any]) -> list[str]:
     """Argv we WOULD exec. No spawn. Native harness --resume only.
 
     FileName is shutil.which absolute path when found, else the bare harness name.
-    Shape is always [exe, '--resume', sid]. Never -d, never `--` separator,
-    never ola-brain, never side-chat, never wt.
+    Grok keeps seat identity flags:
+        [exe, '-m', MODEL?, '--agent', PATH?, '--resume', sid]
+    Other harnesses:
+        [exe, '--resume', sid]
+    Never -d, never `--` separator, never -p/-c, never ola-brain, never side-chat, never wt.
     """
     sid = resume_target(seat)
     if not sid:
@@ -275,8 +279,17 @@ def resume_argv(seat: dict[str, Any]) -> list[str]:
     binary = _absolute_harness(_harness_bin(to))
     if not binary:
         raise ValueError("refuse empty harness")
-    # Visible TUI. Do not add -p, -c, --output-format, ola-brain, side-chat, -d, `--`.
-    return [binary, "--resume", sid]
+    argv = [binary]
+    if _harness_bin(to) == "grok":
+        model = seat.get("model")
+        if isinstance(model, str) and model.strip():
+            argv.extend(["-m", model.strip()])
+        agent = seat.get("agent")
+        if isinstance(agent, str) and agent.strip():
+            argv.extend(["--agent", agent.strip()])
+    # Visible TUI. Do not add prompts, -p, -c, --output-format, ola-brain, side-chat, -d, `--`.
+    argv.extend(["--resume", sid])
+    return argv
 
 
 def _is_claude(to: Any) -> bool:
@@ -285,6 +298,27 @@ def _is_claude(to: Any) -> bool:
         return True
     base = _basename_lower(key)
     return base in ("claude", "claude.exe") or _harness_bin(str(to or "")) == "claude"
+
+
+def _sanitize_title_token(raw: Any) -> str:
+    text = str(raw or "").strip()
+    if not text:
+        return ""
+    leaf = text.replace("\\", "/").split("/")[-1]
+    cleaned = re.sub(r"[^A-Za-z0-9._-]+", "-", leaf).strip("-")
+    return cleaned[:32]
+
+
+def _pane_title(seat: dict[str, Any]) -> str:
+    explicit = seat.get("title")
+    if isinstance(explicit, str) and explicit.strip():
+        return explicit.strip()
+    to = str(seat.get("to") or "seat").strip() or "seat"
+    for key in ("resume", "vendor_session_id", "session_id", "resume_key", "worktree"):
+        token = _sanitize_title_token(seat.get(key))
+        if token:
+            return to + "-" + token
+    return to + "-pane"
 
 
 def _claude_settings_path(worktree: Path) -> Path:
@@ -522,7 +556,7 @@ def isolated_wt_argv(thread: str | int, seats: list[dict[str, Any]], *, wt: str 
         low = " ".join(inner).lower()
         if _is_wrapper_text(low):
             raise ValueError("refuse ola-brain / side-chat / UltraCode-Shim wrap")
-        title = str(seat.get("to") or "seat") + "-" + str(i)
+        title = _pane_title(seat)
         argv.extend(["--title", title])
         if cwd:
             argv.extend(["-d", str(cwd)])
@@ -862,14 +896,16 @@ def terminals(root: Path, convoy_id: str | None = None, thread: str | None = Non
     card = bring_up(root, convoy_id=convoy_id, thread=thread, runner=None)
     windows = []
     for w in card.get("windows") or []:
+        resume = w.get("resume")
+        pids = _pids_for_resume(str(resume)) if isinstance(resume, str) and resume.strip() else set()
         windows.append({
             "to": w.get("to"),
             "session_id": w.get("session_id"),
-            "resume": w.get("resume"),
+            "resume": resume,
             "resume_key": w.get("resume_key"),
             "worktree": w.get("worktree"),
             "rect": w.get("rect"),
-            "live": False,
+            "live": bool(pids),
             "headless": False,
         })
     return {
@@ -987,10 +1023,11 @@ def _read_command_line(pid: int) -> str | None:
 
 
 def _pids_for_resume(resume: str) -> set[int]:
-    """PIDs whose command line contains '--resume {resume}'. Empty if none. Never invent."""
+    """PIDs whose command line contains --resume/--session-id {resume}. Empty if none."""
     if os.name != "nt" or not resume:
         return set()
-    needle = "--resume " + str(resume)
+    token = re.escape(str(resume))
+    pat = re.compile(r'(^|\s)--(?:resume|session-id)(?:\s+|=)["\']?' + token + r'["\']?(?=\s|$)')
     found: set[int] = set()
     for pid, exe in _iter_processes():
         if pid <= 0:
@@ -998,7 +1035,7 @@ def _pids_for_resume(resume: str) -> set[int]:
         if (exe or "").strip().lower() in _CONDUCTOR_EXES:
             continue
         cl = _read_command_line(pid)
-        if cl and needle in cl:
+        if cl and pat.search(cl):
             found.add(pid)
     return found
 
@@ -1032,7 +1069,7 @@ def _hwnds_for_pids(pids: set[int], include_hidden: bool = True) -> list[Any]:
 
 
 def live_applier(resume: str, mode: str = "minimize", **_k: Any) -> dict[str, Any]:
-    """ShowWindow on hop hwnds whose argv contains --resume {resume}. Never kills.
+    """ShowWindow on hop hwnds whose argv contains --resume/--session-id {resume}. Never kills.
 
     POSIX: no-op (unit tests / daemons). Windows: find hwnds, SW_MINIMIZE or SW_HIDE.
     If no hwnd, ok false error 'no window'. Do not invent pids. restore is bring_up.

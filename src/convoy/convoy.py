@@ -84,7 +84,16 @@ def bind(root: Path, thread: str) -> dict[str, Any]:
     md.write_text(cid + "\n" + key + "\n", encoding="utf-8")
     return {"ok": True, "convoy_id": cid, "thread": key}
 
-def seat(root: Path, to: str, session_id: str, worktree: str | None = None, model: str | None = None, resume: str | None = None) -> dict[str, Any]:
+def seat(
+    root: Path,
+    to: str,
+    session_id: str,
+    worktree: str | None = None,
+    model: str | None = None,
+    resume: str | None = None,
+    title: str | None = None,
+    agent: str | None = None,
+) -> dict[str, Any]:
     if not session_id:
         raise ValueError("refuse empty session_id")
     cid = ensure_id(root)
@@ -92,6 +101,8 @@ def seat(root: Path, to: str, session_id: str, worktree: str | None = None, mode
     thread = read_thread(root) or ""
     resume_val = resume if (isinstance(resume, str) and resume) else session_id
     rkey = make_resume_key(cid, thread, to, wt)
+    title_val = title.strip() if isinstance(title, str) and title.strip() else None
+    agent_val = agent.strip() if isinstance(agent, str) and agent.strip() else None
     row: dict[str, Any] = {
         "convoy_id": cid,
         "to": to,
@@ -99,13 +110,29 @@ def seat(root: Path, to: str, session_id: str, worktree: str | None = None, mode
         "worktree": wt,
         "model": model,
         "resume": resume_val,
+        "title": title_val,
+        "agent": agent_val,
         "resume_key": rkey,
     }
     path = _seats_path(root)
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8") as f:
         f.write(json.dumps(row, separators=(",", ":")) + "\n")
-    register(root, session_id, to, extra={"convoy_id": cid, "worktree": wt, "model": model, "to": to, "resume": resume_val, "resume_key": rkey})
+    register(
+        root,
+        session_id,
+        to,
+        extra={
+            "convoy_id": cid,
+            "worktree": wt,
+            "model": model,
+            "to": to,
+            "resume": resume_val,
+            "title": title_val,
+            "agent": agent_val,
+            "resume_key": rkey,
+        },
+    )
     return row
 
 def list_seats(root: Path, convoy_id: str | None = None, require_session: bool = True) -> list[dict[str, Any]]:

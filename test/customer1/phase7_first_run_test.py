@@ -10,12 +10,26 @@ from convoy.bringup import bring_up, ensure_first_run, ensure_interactive_path, 
 
 
 
-def _native_resume(argv, name, sid):
-    """Bare name or PATH-resolved abs exe. Shape is always [exe, --resume, sid]."""
-    assert len(argv) == 3, argv
+def _native_resume(argv, name, sid, *, model=None, agent=None):
+    """PATH-resolved abs or bare exe; ends with [--resume, sid]."""
     base = os.path.basename(str(argv[0])).lower().removesuffix(".exe")
     assert base == name, (base, name, argv)
-    assert argv[1:] == ["--resume", sid], argv
+    assert "--resume" in argv, argv
+    ridx = argv.index("--resume")
+    assert argv[ridx:] == ["--resume", sid], argv
+    prefix = argv[1:ridx]
+    if model is not None:
+        assert "-m" in prefix, argv
+        midx = prefix.index("-m")
+        assert prefix[midx + 1] == model, argv
+    else:
+        assert "-m" not in prefix, argv
+    if agent is not None:
+        assert "--agent" in prefix, argv
+        aidx = prefix.index("--agent")
+        assert prefix[aidx + 1] == agent, argv
+    else:
+        assert "--agent" not in prefix, argv
 
 def _run(root, *argv):
     buf = io.StringIO()
@@ -217,7 +231,7 @@ class Phase7FirstRun(unittest.TestCase):
         self.assertEqual(data["permissions"]["defaultMode"], "bypassPermissions")
         self.assertFalse(self._settings(self.wt_g).exists())
         _native_resume(by["claude"]["argv"], "claude", "sess-claude")
-        _native_resume(by["grok"]["argv"], "grok", "sess-grok")
+        _native_resume(by["grok"]["argv"], "grok", "sess-grok", model="explicit-grok")
         self.assertTrue(by["claude"]["first_run"]["home_written"])
         self.assertEqual(by["claude"]["first_run"]["settings_home"], str(self._home_settings()))
         self.assertEqual(by["claude"]["first_run"]["settings"], str(self._settings(self.wt_c)))
@@ -256,7 +270,7 @@ class Phase7FirstRun(unittest.TestCase):
         self.assertFalse(by["grok"]["first_run"].get("home_written"))
 
     def test_resume_argv_unchanged_native_shape(self):
-        _native_resume(resume_argv(self.g), "grok", "sess-grok")
+        _native_resume(resume_argv(self.g), "grok", "sess-grok", model="explicit-grok")
         _native_resume(resume_argv(self.c), "claude", "sess-claude")
 
 
