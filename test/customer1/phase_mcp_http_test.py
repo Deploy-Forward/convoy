@@ -175,8 +175,8 @@ class PhaseMcpHttp(unittest.TestCase):
     def test_send_live_can_resume_existing_seat_with_session_id(self):
         attempts: list[dict[str, str | None]] = []
 
-        def native_stub(to, body, instance_id=None, **k):
-            attempts.append({"to": to, "instance_id": instance_id, "cwd": k.get("cwd")})
+        def native_stub(to, body, instance_id=None, resume=None, **k):
+            attempts.append({"to": to, "instance_id": instance_id, "resume": resume, "cwd": k.get("cwd")})
             return {
                 "ok": True,
                 "to": to,
@@ -184,7 +184,7 @@ class PhaseMcpHttp(unittest.TestCase):
                 "model": None,
                 "usage_remaining": None,
                 "body": "ACK",
-                "argv": [to, "--resume", instance_id],
+                "argv": [to, "--resume", resume or instance_id],
             }
 
         without_sid = _tool_payload(_rpc(self.mcp, "tools/call", {"name": "send", "arguments": {"to": "grok", "body": "ping", "live": True}}))
@@ -202,6 +202,94 @@ class PhaseMcpHttp(unittest.TestCase):
         self.assertEqual(resumed["session_id"], "sess-grok")
         self.assertEqual(len(attempts), 1)
         self.assertEqual(attempts[0]["instance_id"], "sess-grok")
+        self.assertEqual(attempts[0]["resume"], "sess-grok")
+
+    def test_send_live_session_id_uses_seat_vendor_resume(self):
+        seat(self.root, "grok", "sess-grok", worktree=str(self.wt_g), resume="vendor-resume-01")
+        attempts: list[dict[str, str | None]] = []
+
+        def native_stub(to, body, instance_id=None, resume=None, **k):
+            attempts.append({"to": to, "instance_id": instance_id, "resume": resume, "cwd": k.get("cwd")})
+            return {
+                "ok": True,
+                "to": to,
+                "session_id": instance_id,
+                "model": None,
+                "usage_remaining": None,
+                "body": "ACK",
+                "argv": [to, "--resume", resume or instance_id],
+            }
+
+        with mock.patch("convoy.mcp_http.native_runner", side_effect=native_stub):
+            resumed = _tool_payload(
+                _rpc(
+                    self.mcp,
+                    "tools/call",
+                    {"name": "send", "arguments": {"to": "grok", "body": "ping", "live": True, "session_id": "sess-grok"}},
+                )
+            )
+        self.assertTrue(resumed["ok"])
+        self.assertEqual(len(attempts), 1)
+        self.assertEqual(attempts[0]["instance_id"], "sess-grok")
+        self.assertEqual(attempts[0]["resume"], "vendor-resume-01")
+
+    def test_send_live_resume_arg_is_vendor_resume_not_instance_id_alias(self):
+        seat(self.root, "grok", "sess-grok", worktree=str(self.wt_g), resume="vendor-resume-02")
+        attempts: list[dict[str, str | None]] = []
+
+        def native_stub(to, body, instance_id=None, resume=None, **k):
+            attempts.append({"to": to, "instance_id": instance_id, "resume": resume, "cwd": k.get("cwd")})
+            return {
+                "ok": True,
+                "to": to,
+                "session_id": instance_id,
+                "model": None,
+                "usage_remaining": None,
+                "body": "ACK",
+                "argv": [to, "--resume", resume or instance_id],
+            }
+
+        with mock.patch("convoy.mcp_http.native_runner", side_effect=native_stub):
+            resumed = _tool_payload(
+                _rpc(
+                    self.mcp,
+                    "tools/call",
+                    {"name": "send", "arguments": {"to": "grok", "body": "ping", "live": True, "resume": "vendor-resume-02"}},
+                )
+            )
+        self.assertTrue(resumed["ok"])
+        self.assertEqual(len(attempts), 1)
+        self.assertEqual(attempts[0]["instance_id"], "sess-grok")
+        self.assertEqual(attempts[0]["resume"], "vendor-resume-02")
+
+    def test_send_live_session_id_accepts_vendor_resume_token(self):
+        seat(self.root, "grok", "sess-grok", worktree=str(self.wt_g), resume="vendor-resume-03")
+        attempts: list[dict[str, str | None]] = []
+
+        def native_stub(to, body, instance_id=None, resume=None, **k):
+            attempts.append({"to": to, "instance_id": instance_id, "resume": resume, "cwd": k.get("cwd")})
+            return {
+                "ok": True,
+                "to": to,
+                "session_id": instance_id,
+                "model": None,
+                "usage_remaining": None,
+                "body": "ACK",
+                "argv": [to, "--resume", resume or instance_id],
+            }
+
+        with mock.patch("convoy.mcp_http.native_runner", side_effect=native_stub):
+            resumed = _tool_payload(
+                _rpc(
+                    self.mcp,
+                    "tools/call",
+                    {"name": "send", "arguments": {"to": "grok", "body": "ping", "live": True, "session_id": "vendor-resume-03"}},
+                )
+            )
+        self.assertTrue(resumed["ok"])
+        self.assertEqual(len(attempts), 1)
+        self.assertEqual(attempts[0]["instance_id"], "sess-grok")
+        self.assertEqual(attempts[0]["resume"], "vendor-resume-03")
 
     def test_send_to_ola_brain_refused_by_name(self):
         with mock.patch("convoy.mcp_http.native_runner") as spawned:
