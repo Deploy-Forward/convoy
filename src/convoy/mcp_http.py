@@ -21,6 +21,7 @@ from .install import install as install_harness
 from .onboard import onboard as run_onboard
 from .context import pack
 from .convoy import list_seats, read_thread
+from .glance import build_glance
 from .gitstate import git_state
 from .layer import feed_since
 from .synapse import fake_runner, native_runner, send_one
@@ -36,11 +37,11 @@ HARNESSES = (
     ("grok", "Grok"),
     ("claude", "Claude"),
     ("codex", "Codex"),
-    ("agy", "agy"),
     ("cursor-agent", "cursor-agent"),
+    ("agy", "agy"),
 )
 
-_TOOL_NAMES = ("roster", "onboard", "terminals", "context", "send", "feed", "bring_up", "open", "hide", "minimize", "background", "install")
+_TOOL_NAMES = ("roster", "glance", "onboard", "terminals", "context", "send", "feed", "bring_up", "open", "hide", "minimize", "background", "install")
 
 
 def _schema(properties: dict[str, Any], required: list[str] | None = None) -> dict[str, Any]:
@@ -55,6 +56,14 @@ TOOLS: list[dict[str, Any]] = [
         "name": "roster",
         "description": "Live harness roster. present/wired is shutil.which on the MCP process PATH, not an already-open desktop terminal. Interactive bash skips .profile so ~/.local/bin (claude, codex) can be installed and still command-not-found; roster/bring_up ungate ~/.bashrc. usage_remaining is JSON null when the harness does not expose a remaining count.",
         "inputSchema": _schema({}),
+    },
+    {
+        "name": "glance",
+        "description": "Read-only usage card with overall BYO harness remaining and optional by-thread seats. Honest values only: usage_remaining is number|object|null.",
+        "inputSchema": _schema({
+            "thread": {"type": "string"},
+            "convoy_id": {"type": "string"},
+        }),
     },
     {
         "name": "onboard",
@@ -277,6 +286,8 @@ def call_tool(root: Path, name: str, arguments: dict[str, Any] | None) -> dict[s
     args = arguments if isinstance(arguments, dict) else {}
     if name == "roster":
         return build_roster(root)
+    if name == "glance":
+        return build_glance(root, thread=_opt_str(args, "thread"), convoy_id=_opt_str(args, "convoy_id"))
     if name == "onboard":
         raw_to = args.get("to")
         to: list[str] = []

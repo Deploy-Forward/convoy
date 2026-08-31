@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 import shutil
@@ -9,20 +10,6 @@ import subprocess
 from typing import Any, Callable
 
 ProbeFn = Callable[[str], dict[str, Any]]
-
-
-def normalize_usage_remaining(value: Any) -> Any:
-    """SPEC clamp: number|object|null only for usage_remaining."""
-    if value is None:
-        return None
-    if isinstance(value, bool):
-        return None
-    if isinstance(value, (int, float)):
-        return value
-    if isinstance(value, dict):
-        return value
-    return None
-
 def _run(cmd: list[str], timeout: int = 15) -> tuple[int, str]:
     kwargs: dict[str, Any] = {
         "stdout": subprocess.PIPE,
@@ -57,47 +44,93 @@ def _run(cmd: list[str], timeout: int = 15) -> tuple[int, str]:
     text = ((out or "") + (err or "")).strip()
     return p.returncode if p.returncode is not None else 1, text
 
-def _parse_claude(raw: str) -> tuple[Any, bool]:
-    text = raw or ""
-    data: Any = None
+
+def normalize_usage_remaining(value: Any) -> Any:
+    """SPEC clamp: number|object|null only for usage_remaining."""
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        if isinstance(value, float) and (math.isnan(value) or math.isinf(value)):
+            return None
+        return value
+    if isinstance(value, dict):
+        return value
+    return None
+
+
+def _jsonish(text: str) -> Any:
+    raw = text or ""
     try:
-        data = json.loads(text)
+        return json.loads(raw)
     except json.JSONDecodeError:
-        start = text.find("{")
-        end = text.rfind("}")
+        start = raw.find("{")
+        end = raw.rfind("}")
         if start >= 0 and end > start:
             try:
-                data = json.loads(text[start:end + 1])
+                return json.loads(raw[start:end + 1])
             except json.JSONDecodeError:
-                data = None
-    pct = None
+                return None
+    return None
+
+
+def _coerce_pct(val: Any) -> int | None:
+    try:
+        pct = int(float(val))
+    except (TypeError, ValueError):
+        return None
+    if 0 <= pct <= 100:
+        return pct
+    return None
+
+
+def _parse_claude_progress(data: Any, text: str) -> tuple[int | None, int | None]:
+    session_pct: int | None = None
+    week_pct: int | None = None
     if isinstance(data, dict):
         for key in ("session_pct", "session_percent", "pct"):
             if key in data:
-                try:
-                    pct = float(data[key])
-                except (TypeError, ValueError):
-                    pct = None
-                break
-        sess = data.get("session") if isinstance(data.get("session"), dict) else None
-        if pct is None and sess is not None:
+                session_pct = _coerce_pct(data.get(key))
+                if session_pct is not None:
+                    break
+        sess = data.get("session")
+        if session_pct is None and isinstance(sess, dict):
             for key in ("pct", "percent", "used"):
                 if key in sess:
-                    try:
-                        pct = float(sess[key])
-                    except (TypeError, ValueError):
-                        pct = None
+                    session_pct = _coerce_pct(sess.get(key))
+                    if session_pct is not None:
+                        break
+        for key in ("week_pct", "week_percent"):
+            if key in data:
+                week_pct = _coerce_pct(data.get(key))
+                if week_pct is not None:
                     break
-        remaining: Any = data
-    else:
-        remaining = None
+        week = data.get("week")
+        if week_pct is None and isinstance(week, dict):
+            for key in ("pct", "percent", "used"):
+                if key in week:
+                    week_pct = _coerce_pct(week.get(key))
+                    if week_pct is not None:
+                        break
+    if text:
         m = re.search(r"Current session:\s*(\d+)%", text, re.I)
         if m:
-            pct = float(m.group(1))
-        elif "100%" in text.lower() and "session" in text.lower():
-            pct = 100.0
-    limited = pct == 100 or pct == 100.0
-    return normalize_usage_remaining(remaining), limited
+            session_pct = _coerce_pct(m.group(1))
+        w = re.search(r"Current week \(all models\):\s*(\d+)%", text, re.I)
+        if w:
+            week_pct = _coerce_pct(w.group(1))
+    return session_pct, week_pct
+
+
+def _parse_claude(raw: str) -> tuple[Any, bool]:
+    text = raw or ""
+    data = _jsonish(text)
+    remaining = normalize_usage_remaining(data)
+    session_pct, _week_pct = _parse_claude_progress(data, text)
+    limited = session_pct == 100 or ("100%" in text.lower() and "session" in text.lower())
+    return remaining, limited
+
 
 def probe(harness: str, runner: ProbeFn | None = None) -> dict[str, Any]:
     if runner is not None:
@@ -109,15 +142,17 @@ def probe(harness: str, runner: ProbeFn | None = None) -> dict[str, Any]:
         bin = shutil.which("claude") or "claude"
         code, raw = _run([bin, "-p", "/usage"], timeout=15)
         remaining, limited = _parse_claude(raw)
-        return {"usage_remaining": normalize_usage_remaining(remaining), "limited": limited, "raw": raw or None, "exit_code": code}
+        return {"usage_remaining": remaining, "limited": limited, "raw": raw or None, "exit_code": code}
     if name == "codex":
         bin = shutil.which("codex") or "codex"
         code, raw = _run([bin, "exec", "/status"], timeout=15)
         low = (raw or "").lower()
         timed_out = code == 124 or low == "probe timeout"
         limited = timed_out or ("out of credits" in low)
-        return {"usage_remaining": None, "limited": limited, "raw": raw or None, "exit_code": code}
+        remaining = None if limited else normalize_usage_remaining(raw)
+        return {"usage_remaining": remaining, "limited": limited, "raw": raw or None, "exit_code": code}
     return {"usage_remaining": None, "limited": False, "raw": None}
+
 
 def surface(harness: str, probed: dict[str, Any] | None = None) -> dict[str, Any]:
     """Compact per-harness usage for seats/chips. Never invent 0. Grok has no meter."""
@@ -125,18 +160,20 @@ def surface(harness: str, probed: dict[str, Any] | None = None) -> dict[str, Any
     p = probed if probed is not None else probe(harness)
     if name == "grok":
         return {"usage_remaining": None, "limited": False}
-    out: dict[str, Any] = {"limited": bool(p.get("limited")), "usage_remaining": None}
+    out: dict[str, Any] = {
+        "limited": bool(p.get("limited")),
+        "usage_remaining": normalize_usage_remaining(p.get("usage_remaining")),
+    }
     raw = p.get("raw")
     if raw is None:
         raw = p.get("usage_remaining")
-    blob = raw if isinstance(raw, str) else json.dumps(raw) if raw is not None else ""
-    m = re.search(r"Current session:\s*(\d+)%", blob, re.I)
-    w = re.search(r"Current week \(all models\):\s*(\d+)%", blob, re.I)
-    if m:
-        out["session_pct"] = int(m.group(1))
-    if w:
-        out["week_pct"] = int(w.group(1))
-    if name == "codex":
-        out["usage_remaining"] = normalize_usage_remaining(p.get("usage_remaining"))
+    text = raw if isinstance(raw, str) else json.dumps(raw) if raw is not None else ""
+    session_pct, week_pct = _parse_claude_progress(out["usage_remaining"], text)
+    if session_pct is not None:
+        out["session_pct"] = session_pct
+    if week_pct is not None:
+        out["week_pct"] = week_pct
+    if name == "grok":
+        out["usage_remaining"] = None
     return out
 
