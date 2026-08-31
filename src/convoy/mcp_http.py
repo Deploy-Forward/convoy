@@ -59,7 +59,7 @@ TOOLS: list[dict[str, Any]] = [
     },
     {
         "name": "glance",
-        "description": "Read-only usage card with overall BYO harness remaining and optional by-thread seats. Honest values only: usage_remaining is number|object|null.",
+        "description": "Read-only usage card with a conductor identifier (`grok-bot`), overall BYO harness remaining, and optional by-thread seats. Honest values only: usage_remaining is number|object|null.",
         "inputSchema": _schema({
             "thread": {"type": "string"},
             "convoy_id": {"type": "string"},
