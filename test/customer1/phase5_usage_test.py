@@ -5,6 +5,49 @@ from convoy.layer import feed_since
 from convoy.synapse import send_one
 from convoy.usage import _parse_claude, normalize_usage_remaining, probe
 
+
+class SendNamedRefuse(unittest.TestCase):
+    def setUp(self):
+        self.root = Path(tempfile.mkdtemp())
+        (self.root / ".ola").mkdir()
+        (self.root / ".ola" / "brief.md").write_text("b")
+
+    def test_send_refuses_wrappers_by_name_on_empty_root(self):
+        spawned = {"n": 0}
+
+        def runner(*a, **k):
+            spawned["n"] += 1
+            return {"ok": True, "to": "ola-brain", "session_id": "nope", "model": None, "usage_remaining": None, "body": "nope"}
+
+        for target in ("ola-brain", "ola_brain.exe", "ultracode-shim", "gemini", "deepseek"):
+            spawned["n"] = 0
+            card = send_one(self.root, target, "nope", runner=runner)
+            self.assertFalse(card["ok"], target)
+            self.assertIn("refuse unknown or wrapped harness", card["error"], target)
+            self.assertNotIn("two agents on one branch", card["error"], target)
+            self.assertEqual(spawned["n"], 0, target)
+
+    def test_send_refuses_wrapper_before_overlap(self):
+        first = send_one(self.root, "grok", "seat-me")
+        self.assertTrue(first["ok"])
+        spawned = {"n": 0}
+
+        def runner(*a, **k):
+            spawned["n"] += 1
+            return {"ok": True, "to": "ola-brain", "session_id": "nope", "model": None, "usage_remaining": None, "body": "nope"}
+
+        card = send_one(self.root, "ola-brain", "nope", runner=runner)
+        self.assertFalse(card["ok"])
+        self.assertIn("refuse unknown or wrapped harness", card["error"])
+        self.assertNotIn("two agents on one branch", card["error"])
+        self.assertEqual(spawned["n"], 0)
+
+    def test_normalize_keeps_object_and_kills_blob(self):
+        self.assertIsNone(normalize_usage_remaining("probe timeout"))
+        self.assertIsNone(normalize_usage_remaining("Total cost: $0.00"))
+        self.assertEqual(normalize_usage_remaining({"session_pct": 7}), {"session_pct": 7})
+        self.assertIsNone(normalize_usage_remaining(False))
+
 class Phase5Usage(unittest.TestCase):
     def setUp(self):
         self.root = Path(tempfile.mkdtemp())
