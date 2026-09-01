@@ -44,6 +44,10 @@ class PhaseInstall(unittest.TestCase):
         card = vendor_card("agy", windows=False)
         self.assertTrue(card["ok"])
         self.assertEqual(card["host"], "antigravity.google")
+        alias = vendor_card("antigravity", windows=False)
+        self.assertTrue(alias["ok"])
+        self.assertEqual(alias["to"], "agy")
+        self.assertEqual(alias["host"], "antigravity.google")
 
     def test_refuse_wrapped_and_unknown(self):
         banned = ["gemini" + "-cli", "grok" + "-cli", "ultracode-shim", "ola-brain", "nope"]

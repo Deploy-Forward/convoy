@@ -7,7 +7,7 @@ Public MCP remains one root: `https://convoy.bot/mcp`. A named thread is a `--ro
 ## Terms
 
 - **Grok Bot**: the conductor in this chat; not a neuron and not a window.
-- **neuron**: one BYO harness session (`grok`, `claude`, `codex`, `cursor-agent`, or `agy`) on a thread.
+- **neuron**: one BYO harness session (`grok`, `claude`, `codex`, `cursor-agent`, `agy`/antigravity, `hermes`, or `pi`) on a thread.
 - **synapse**: a native Convoy `send` into one neuron; one harness, one meter, compact card back.
 - **Convoy**: source of truth (`feed`, seats, `convoy_id`).
 - **thread**: durable circuit keyed by `convoy_id`.
@@ -28,6 +28,8 @@ Convoy keeps a slim pointer/stamp layer while Grok Bot remains conductor. Synaps
 
 Contract: `feed` + seats + `convoy_id`. Unknown values stay JSON `null`; no invented usage/session numbers.
 
+Machine-readable contract: `src/convoy/harness_effort.json` (loaded by MCP-facing code).
+
 ### Keyed effort language (locked)
 
 Effort keys are harness-scoped and must not be merged:
@@ -39,6 +41,7 @@ Effort keys are harness-scoped and must not be merged:
   - Max/Ultra are treated as `more-reasoning` (TUI path), with no Convoy-specific CLI key documented here.
 - **Claude**: `low`, `medium`, `high`, `xhigh`, `max` (`--effort` per Claude CLI docs).
 - **Grok / cursor-agent / agy**: no verified effort CLI in this repo run; keep unknown as `null`.
+- **Hermes / Pi**: harnesses are model-agnostic; effort belongs to the model they drive, so harness-level effort stays `null`.
 
 ### Fully supported neurons (code-true contract)
 
@@ -49,6 +52,8 @@ Effort keys are harness-scoped and must not be merged:
 | `codex` | `codex` | `codex resume <vendor-id?>` (**not** `--resume`) | Writes PATH ungate block; installs `neuron-identity`. No Claude settings writes. | Native CLI on PATH. Live send refuses named resume/session tokens (`no-steal`). |
 | `cursor-agent` | `cursor-agent` | `cursor-agent --resume <vendor-id?>` | Writes PATH ungate block; installs `neuron-identity`. | Native CLI on PATH. Live send refuses named resume/session tokens (`no-steal`). |
 | `agy` | `agy` | `agy --resume <vendor-id?>` | Writes PATH ungate block; installs `neuron-identity`. | Native CLI on PATH. Live send refuses named resume/session tokens (`no-steal`). |
+| `hermes` | `hermes` | `hermes --resume <vendor-id?>` | Writes PATH ungate block; installs `neuron-identity`. | Native CLI on PATH. Live send refuses named resume/session tokens (`no-steal`). |
+| `pi` | `pi` | `pi --resume <vendor-id?>` | Writes PATH ungate block; installs `neuron-identity`. | Native CLI on PATH. Live send refuses named resume/session tokens (`no-steal`). |
 
 Notes tied to code/tests:
 

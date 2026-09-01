@@ -107,7 +107,7 @@ class Glance(unittest.TestCase):
         self.assertIsNone(conductor["on_demand_spent"])
         self.assertIsNone(conductor["on_demand_limit"])
         overall = card["overall"]
-        self.assertEqual(list(overall.keys()), ["grok", "claude", "codex", "cursor-agent", "agy"])
+        self.assertEqual(list(overall.keys()), ["grok", "claude", "codex", "cursor-agent", "agy", "hermes", "pi"])
         self.assertIsNone(overall["grok"]["usage_remaining"])
         self.assertNotEqual(overall["grok"]["usage_remaining"], 0)
         self.assertIsNone(overall["claude"]["usage_remaining"])
