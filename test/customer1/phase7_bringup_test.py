@@ -270,7 +270,8 @@ class Phase7BringUp(unittest.TestCase):
             "worktree": str(self.wt_c),
         }
         argv = resume_argv(row)
-        self.assertEqual(os.path.basename(str(argv[0])).lower().removesuffix(".exe"), "codex")
+        # stem, not removesuffix(".exe"): Windows npm shims resolve to codex.cmd
+        self.assertEqual(Path(str(argv[0])).stem.lower(), "codex")
         self.assertEqual(argv[1:], ["resume", "vendor-codex-uuid"])
         self.assertNotIn("--resume", argv)
 

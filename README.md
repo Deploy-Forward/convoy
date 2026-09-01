@@ -51,5 +51,5 @@ Tiny CLI:
 
 `python -m convoy glance --convoy-id cvy_example --json`
 
-Development: `PYTHONPATH=src python3 test/run.py`  
+Development: `PYTHONPATH=src python3 test/run.py` — discovers `test/customer1` with pattern `*_test.py` (unittest's default `test*.py` pattern misses these files).  
 License: MIT.

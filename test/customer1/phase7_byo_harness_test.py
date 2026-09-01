@@ -38,20 +38,25 @@ class Phase7ByoHarness(unittest.TestCase):
             self.assertTrue(os.access(path, os.X_OK), name)
 
     def _grok_claude(self):
+        # resume is the stored vendor id; a seat with only session_id omits
+        # --resume (phase7_bringup pins that), so panes here carry both.
         return [
-            {"to": "grok", "session_id": "sess-grok", "worktree": str(self.wt_g), "exe": GROK},
-            {"to": "claude", "session_id": "sess-claude", "worktree": str(self.wt_c), "exe": CLAUDE},
+            {"to": "grok", "session_id": "sess-grok", "resume": "sess-grok", "worktree": str(self.wt_g), "exe": GROK},
+            {"to": "claude", "session_id": "sess-claude", "resume": "sess-claude", "worktree": str(self.wt_c), "exe": CLAUDE},
         ]
 
     def test_fakes_print_json_exit_zero_never_ola_brain(self):
         import subprocess
         for name, path in (("grok", GROK), ("claude", CLAUDE), ("wt", WT), ("codex", CODEX)):
-            blob = Path(path).read_text(encoding="utf-8").lower()
-            self.assertNotIn("ola-brain", blob, name)
-            self.assertNotIn("side-chat", blob, name)
-            self.assertNotIn("ultracode-shim", blob, name)
+            # POSIX stubs cannot exec on Windows; the .cmd twins carry the same contract.
+            exe = path + ".cmd" if os.name == "nt" else path
+            for stub in (path, exe):
+                blob = Path(stub).read_text(encoding="utf-8").lower()
+                self.assertNotIn("ola-brain", blob, name)
+                self.assertNotIn("side-chat", blob, name)
+                self.assertNotIn("ultracode-shim", blob, name)
             extra = ["--permission-mode", "bypassPermissions"] if name == "claude" else ["--resume", "sess"]
-            r = subprocess.run([path, *extra], capture_output=True, text=True, check=False)
+            r = subprocess.run([exe, *extra], capture_output=True, text=True, check=False)
             self.assertEqual(r.returncode, 0, r.stderr)
             line = r.stdout.strip().splitlines()[-1]
             data = json.loads(line)
@@ -59,7 +64,8 @@ class Phase7ByoHarness(unittest.TestCase):
             self.assertEqual(data["harness"], name)
             self.assertIn("argv", data)
         # grok stub must not require -p / -c
-        r = subprocess.run([GROK], capture_output=True, text=True, check=False)
+        grok_exe = GROK + ".cmd" if os.name == "nt" else GROK
+        r = subprocess.run([grok_exe], capture_output=True, text=True, check=False)
         self.assertEqual(r.returncode, 0)
         data = json.loads(r.stdout.strip().splitlines()[-1])
         self.assertTrue(data["ok"])
@@ -98,7 +104,9 @@ class Phase7ByoHarness(unittest.TestCase):
         with mock.patch.dict(os.environ, {"PATH": str(FAKES)}):
             got = _absolute_harness("grok")
         self.assertTrue(os.path.isabs(got))
-        self.assertEqual(Path(got).resolve(), Path(GROK).resolve())
+        # Windows which() resolves via PATHEXT to the .cmd twin.
+        want = Path(GROK + ".cmd") if os.name == "nt" else Path(GROK)
+        self.assertEqual(Path(got).resolve(), want.resolve())
         self.assertNotEqual(got, 0)
         self.assertNotEqual(str(got), "0")
         self.assertNotIn("ola-brain", got.lower())
@@ -132,8 +140,8 @@ class Phase7ByoHarness(unittest.TestCase):
 
     def test_two_grok_stubs_different_worktrees_two_panes(self):
         seats = [
-            {"to": "grok", "session_id": "sess-1", "worktree": str(self.wt_g), "exe": GROK},
-            {"to": "grok", "session_id": "sess-2", "worktree": str(self.wt_g2), "exe": GROK},
+            {"to": "grok", "session_id": "sess-1", "resume": "sess-1", "worktree": str(self.wt_g), "exe": GROK},
+            {"to": "grok", "session_id": "sess-2", "resume": "sess-2", "worktree": str(self.wt_g2), "exe": GROK},
         ]
         with mock.patch("convoy.bringup.subprocess.Popen") as popen:
             argv = isolated_wt_argv("customer1", seats, wt=WT)
@@ -151,11 +159,14 @@ class Phase7ByoHarness(unittest.TestCase):
         self.assertNotIn("ola-brain", " ".join(argv).lower())
 
     def test_refuse_ola_brain_as_exe(self):
+        # Abs on the current OS: py3.13+ ntpath.isabs("/x") is False, and the
+        # non-abs raise would fire before the wrapper refusal we pin here.
+        wrapper_exe = r"C:\usr\local\bin\ola-brain.exe" if os.name == "nt" else "/usr/local/bin/ola-brain"
         seats = [{
             "to": "grok",
             "session_id": "sess-x",
             "worktree": str(self.wt_g),
-            "exe": "/usr/local/bin/ola-brain",
+            "exe": wrapper_exe,
         }]
         with self.assertRaises(ValueError) as ctx:
             isolated_wt_argv("customer1", seats, wt=WT)
