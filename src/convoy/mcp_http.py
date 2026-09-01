@@ -55,6 +55,7 @@ _SITE_ASSETS: dict[str, tuple[str, str]] = {
     "/favicon.ico": ("favicon.ico", "image/x-icon"),
     "/favicon-96.png": ("favicon-96.png", "image/png"),
     "/apple-touch-icon.png": ("apple-touch-icon.png", "image/png"),
+    "/og.png": ("og.png", "image/png"),
     "/fonts/work-sans-latin.woff2": ("fonts/work-sans-latin.woff2", "font/woff2"),
     "/fonts/jetbrains-mono-latin.woff2": ("fonts/jetbrains-mono-latin.woff2", "font/woff2"),
     "/fonts/OFL-work-sans.txt": ("fonts/OFL-work-sans.txt", "text/plain; charset=utf-8"),
