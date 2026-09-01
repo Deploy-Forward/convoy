@@ -173,13 +173,21 @@ class PhaseMcpHttp(unittest.TestCase):
         self.assertEqual(ping["result"], {})
 
     def test_favicon_routes_exist(self):
-        for path in ("/favicon.svg", "/favicon.ico"):
+        cases = (
+            ("/favicon.svg", "image/svg+xml"),
+            ("/favicon.ico", "image/x-icon"),
+            ("/favicon-96.png", "image/png"),
+            ("/apple-touch-icon.png", "image/png"),
+        )
+        for path, expected_type in cases:
             req = urllib.request.Request(self.base + path, method="GET")
             with urllib.request.urlopen(req, timeout=5) as r:
-                body = r.read().decode("utf-8")
+                body = r.read()
                 ctype = r.headers.get("Content-Type", "")
-            self.assertIn("<svg", body)
-            self.assertIn("image/svg+xml", ctype)
+            self.assertTrue(body)
+            self.assertTrue(ctype.startswith(expected_type), msg=f"{path} -> {ctype}")
+        with urllib.request.urlopen(self.base + "/favicon.svg", timeout=5) as svg_res:
+            self.assertIn("<svg", svg_res.read().decode("utf-8"))
 
     def test_open_alias_dry(self):
         resp = _rpc(self.mcp, "tools/call", {"name": "open", "arguments": {"dry_run": True}})
