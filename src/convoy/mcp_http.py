@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -68,6 +69,15 @@ HOME_LINE = "convoy.bot · a grok-bot native mcp · one process ↔ one bound th
 HARNESSES = tuple((row["id"], str(row.get("name") or row["id"])) for row in harness_entries(mcp_supported_only=True))
 
 _TOOL_NAMES = ("roster", "glance", "onboard", "terminals", "context", "send", "feed", "stamp", "note", "bring_up", "open", "hide", "minimize", "background", "install")
+
+# N-5 gate: SoT write tools are never exposed on an ungated public process.
+# RPC-layer only — CLI and in-process call_tool stay usable; a gated/loopback
+# deploy opts in via CONVOY_MCP_WRITE_TOOLS=1.
+_WRITE_TOOLS = frozenset({"stamp", "note"})
+
+
+def _write_tools_enabled() -> bool:
+    return os.environ.get("CONVOY_MCP_WRITE_TOOLS", "").strip() == "1"
 
 
 def _schema(properties: dict[str, Any], required: list[str] | None = None) -> dict[str, Any]:
@@ -496,7 +506,8 @@ def handle_rpc(root: Path, msg: dict[str, Any]) -> dict[str, Any] | None:
         if method == "tools/list":
             if is_notification:
                 return None
-            return {"jsonrpc": "2.0", "id": rpc_id, "result": {"tools": TOOLS}}
+            listed = TOOLS if _write_tools_enabled() else [t for t in TOOLS if t["name"] not in _WRITE_TOOLS]
+            return {"jsonrpc": "2.0", "id": rpc_id, "result": {"tools": listed}}
         if method == "tools/call":
             if is_notification:
                 return None
@@ -509,6 +520,9 @@ def handle_rpc(root: Path, msg: dict[str, Any]) -> dict[str, Any] | None:
                     arguments = raw_args
             if name not in {t["name"] for t in TOOLS} and name != "open":
                 payload = {"ok": False, "error": "tool not found: " + name}
+                is_err = True
+            elif name in _WRITE_TOOLS and not _write_tools_enabled():
+                payload = {"ok": False, "error": "write tool disabled on this process: " + name + " (set CONVOY_MCP_WRITE_TOOLS=1 on a gated/loopback deploy)"}
                 is_err = True
             else:
                 payload = call_tool(root, name, arguments)

@@ -164,6 +164,50 @@ class SynapseRunnerProvenance(unittest.TestCase):
         self.assertEqual(runner_kind(ola_runner), "ola")
 
 
+class PublicWriteToolGate(unittest.TestCase):
+    """N-5: the public wire must not expose SoT write tools ungated. Default
+    OFF at the RPC layer only — CLI and in-process call_tool stay usable, so a
+    gated/loopback deploy opts in with CONVOY_MCP_WRITE_TOOLS=1."""
+
+    def setUp(self):
+        self.root = Path(tempfile.mkdtemp())
+
+    def _rpc(self, method, params):
+        return handle_rpc(self.root, {"jsonrpc": "2.0", "id": 1, "method": method, "params": params})
+
+    def test_write_tools_hidden_from_public_tools_list(self):
+        names = [t["name"] for t in self._rpc("tools/list", {})["result"]["tools"]]
+        self.assertNotIn("stamp", names)
+        self.assertNotIn("note", names)
+        self.assertIn("feed", names)
+        self.assertIn("roster", names)
+
+    def test_write_tools_refused_over_rpc_by_default(self):
+        resp = self._rpc("tools/call", {"name": "stamp", "arguments": {"summary": "gated"}})
+        self.assertTrue(resp["result"]["isError"])
+        self.assertIn("disabled", resp["result"]["structuredContent"]["error"])
+        resp = self._rpc("tools/call", {"name": "note", "arguments": {"summary": "gated", "instance_id": "seat-x"}})
+        self.assertTrue(resp["result"]["isError"])
+        self.assertEqual(feed_since(self.root, "1970-01-01T00:00:00.000000Z"), [])
+
+    def test_env_flag_enables_write_tools(self):
+        import os
+        from unittest import mock
+
+        with mock.patch.dict(os.environ, {"CONVOY_MCP_WRITE_TOOLS": "1"}):
+            names = [t["name"] for t in self._rpc("tools/list", {})["result"]["tools"]]
+            self.assertIn("stamp", names)
+            self.assertIn("note", names)
+            resp = self._rpc("tools/call", {"name": "note", "arguments": {"summary": "gated open", "instance_id": "seat-x", "to": "grok-bot"}})
+            self.assertFalse(resp["result"]["isError"])
+        rows = feed_since(self.root, "1970-01-01T00:00:00.000000Z")
+        self.assertEqual(rows[-1]["kind"], "note")
+
+    def test_in_process_call_tool_is_not_gated(self):
+        card = call_tool(self.root, "stamp", {"summary": "in-process conductor line"})
+        self.assertTrue(card["ok"])
+
+
 class ServerBuildId(unittest.TestCase):
     """Deploy drift must be detectable in one call: serverInfo.version carries
     the commit sha when the package sits in a git checkout."""
