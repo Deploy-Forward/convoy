@@ -251,6 +251,28 @@ def send_one(
             "pointers": packed,
             "convoy_id": cid,
         }
+    if not allow_interactive_resume and (resolved_instance_id or resume_token):
+        # No-steal outranks registry resolution: a live send that names any
+        # resume token refuses before lookups can mask it as "not in registry".
+        hook(
+            root,
+            kind="refuse",
+            summary=to + " live resume refused",
+            instance_id=resolved_instance_id,
+            extra={"to": to, "reason": "no-steal-live-resume"},
+        )
+        return {
+            "ok": False,
+            "to": to,
+            "session_id": None,
+            "model": None,
+            "usage_remaining": normalize_usage_remaining(usage.get("usage_remaining")),
+            "refused": True,
+            "error": "live send resume refused: would spawn a second interactive session",
+            "body": "RED: convoy send --live does not steal/resume an active TUI session",
+            "pointers": packed,
+            "convoy_id": cid,
+        }
     seat_row = None
     if resolved_instance_id:
         seat_row = lookup_any(root, resolved_instance_id, to=target_name, worktree=worktree)
@@ -285,26 +307,6 @@ def send_one(
             "to": to,
             "session_id": None,
             "error": "instance_id not in registry",
-            "pointers": packed,
-            "convoy_id": cid,
-        }
-    if not allow_interactive_resume and (resolved_instance_id or resume_token):
-        hook(
-            root,
-            kind="refuse",
-            summary=to + " live resume refused",
-            instance_id=resolved_instance_id,
-            extra={"to": to, "reason": "no-steal-live-resume"},
-        )
-        return {
-            "ok": False,
-            "to": to,
-            "session_id": None,
-            "model": None,
-            "usage_remaining": normalize_usage_remaining(usage.get("usage_remaining")),
-            "refused": True,
-            "error": "live send resume refused: would spawn a second interactive session",
-            "body": "RED: convoy send --live does not steal/resume an active TUI session",
             "pointers": packed,
             "convoy_id": cid,
         }
