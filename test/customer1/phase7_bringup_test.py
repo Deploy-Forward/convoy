@@ -65,8 +65,8 @@ class Phase7BringUp(unittest.TestCase):
         self.thread = "customer1"
         self.cid = ensure_id(self.root)
         bind(self.root, self.thread)
-        self.g = seat(self.root, "grok", "sess-grok", worktree=str(self.wt_g), model="explicit-grok")
-        self.c = seat(self.root, "claude", "sess-claude", worktree=str(self.wt_c), model="Fable 5")
+        self.g = seat(self.root, "grok", "sess-grok", worktree=str(self.wt_g), model="explicit-grok", resume="sess-grok")
+        self.c = seat(self.root, "claude", "sess-claude", worktree=str(self.wt_c), model="Fable 5", resume="sess-claude")
         self.fake_home = Path(tempfile.mkdtemp())
         self._home_patcher = mock.patch("convoy.bringup.Path.home", return_value=self.fake_home)
         self._home_patcher.start()
@@ -145,18 +145,17 @@ class Phase7BringUp(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertNotIn("grok-bot", [w["to"] for w in cli["windows"]])
 
-    def test_missing_session_id_refuses_that_seat(self):
-        with self.assertRaises(ValueError) as ctx:
-            resume_argv({"to": "grok"})
-        self.assertIn("session_id", str(ctx.exception))
+    def test_missing_vendor_resume_omits_resume_flag(self):
+        argv = resume_argv({"to": "grok", "session_id": "seat-only", "model": "explicit-grok"})
+        self.assertNotIn("--resume", argv)
         seats_path = self.root / ".convoy" / "seats.jsonl"
         seats_path.write_text(seats_path.read_text(encoding="utf-8") + json.dumps({"convoy_id": self.cid, "to": "codex", "session_id": "", "worktree": None}) + "\n", encoding="utf-8")
         d = bring_up(self.root)
         by = {w["to"]: w for w in d["windows"]}
         self.assertIn("codex", by)
-        self.assertFalse(by["codex"]["ok"])
-        self.assertFalse(d["ok"])
+        self.assertTrue(by["codex"]["ok"])
         self.assertIsNone(by["codex"]["resume"])
+        self.assertNotIn("--resume", by["codex"]["argv"])
         self.assertTrue(by["grok"]["ok"])
 
     def test_tile_2_and_3_on_1920x1080(self):
@@ -247,6 +246,48 @@ class Phase7BringUp(unittest.TestCase):
         self.assertEqual(d["windows"][0]["resume"], "vendor-uuid-not-invented")
         self.assertEqual(d["windows"][0]["session_id"], "ola-instance")
         self.assertEqual(lookup_resume(root, "t", "grok"), "vendor-uuid-not-invented")
+
+    def test_first_run_seat_omits_resume_until_vendor_id_exists(self):
+        root = Path(tempfile.mkdtemp())
+        ensure_id(root)
+        bind(root, "t")
+        row = seat(root, "claude", "seat-key-not-vendor", worktree=str(self.wt_c))
+        self.assertIsNone(row.get("resume"))
+        argv = resume_argv(row)
+        self.assertEqual(os.path.basename(str(argv[0])).lower().removesuffix(".exe"), "claude")
+        self.assertNotIn("--resume", argv)
+        d = bring_up(root)
+        self.assertTrue(d["ok"])
+        self.assertEqual(len(d["windows"]), 1)
+        self.assertIsNone(d["windows"][0]["resume"])
+        self.assertNotIn("--resume", d["windows"][0]["argv"])
+
+    def test_codex_resume_uses_subcommand_not_flag(self):
+        row = {
+            "to": "codex",
+            "session_id": "seat-codex",
+            "resume": "vendor-codex-uuid",
+            "worktree": str(self.wt_c),
+        }
+        argv = resume_argv(row)
+        self.assertEqual(os.path.basename(str(argv[0])).lower().removesuffix(".exe"), "codex")
+        self.assertEqual(argv[1:], ["resume", "vendor-codex-uuid"])
+        self.assertNotIn("--resume", argv)
+
+    def test_bring_up_uses_latest_seated_neuron_for_same_worktree(self):
+        root = Path(tempfile.mkdtemp())
+        ensure_id(root)
+        bind(root, "t")
+        wt = str(self.wt_g)
+        seat(root, "grok", "sess-old", worktree=wt, resume="vendor-old")
+        seat(root, "grok", "sess-new", worktree=wt, resume="vendor-new")
+        d = bring_up(root)
+        self.assertTrue(d["ok"])
+        self.assertEqual(len(d["windows"]), 1)
+        win = d["windows"][0]
+        self.assertEqual(win["session_id"], "sess-new")
+        self.assertEqual(win["resume"], "vendor-new")
+        self.assertEqual(win["argv"][-2:], ["--resume", "vendor-new"])
 
     def test_dry_run_does_not_mint_session_id(self):
         before = {self.g["session_id"], self.c["session_id"]}

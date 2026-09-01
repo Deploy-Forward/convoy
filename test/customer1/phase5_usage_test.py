@@ -112,13 +112,37 @@ class Phase5Usage(unittest.TestCase):
                     card = native_runner(to, "hello", instance_id="sess-" + to, cwd=str(self.root))
                     self.assertTrue(card["ok"])
                     argv = card["argv"]
-                    self.assertEqual(argv[1:], ["--resume", "sess-" + to])
+                    if to == "codex":
+                        self.assertEqual(argv[1:], ["resume", "sess-codex"])
+                    else:
+                        self.assertEqual(argv[1:], ["--resume", "sess-" + to])
                     joined = " ".join(argv).lower()
                     self.assertIn(to, Path(argv[0]).name.lower())
                     self.assertNotIn("ola-brain", joined)
                     self.assertNotIn("ola_brain", joined)
                     self.assertNotIn("side-chat", joined)
         self.assertEqual(len(calls), 3)
+
+    def test_live_send_resume_refuses_no_spawn(self):
+        spawned = {"n": 0}
+
+        def runner(*_a, **_k):
+            spawned["n"] += 1
+            return {"ok": True, "to": "claude", "session_id": "should-not-run", "model": None, "usage_remaining": None, "body": "bad"}
+
+        card = send_one(
+            self.root,
+            "claude",
+            "hello",
+            instance_id="vendor-uuid",
+            runner=runner,
+            allow_interactive_resume=False,
+            probe_fn=lambda _to: {"usage_remaining": None, "limited": False, "raw": None},
+        )
+        self.assertFalse(card["ok"])
+        self.assertTrue(card.get("refused"))
+        self.assertEqual(spawned["n"], 0)
+        self.assertIn("second interactive session", card["error"])
 
     def test_send_refuses_ola_brain_before_overlap_checks(self):
         spawned = {"n": 0}

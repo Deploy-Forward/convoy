@@ -98,7 +98,7 @@ TOOLS: list[dict[str, Any]] = [
     },
     {
         "name": "send",
-        "description": "headless hop; does not pop a TUI. Hop one compact card to a harness. Default runner is fake. live=true execs native harness CLI on PATH (no ola-brain wrap). Optional session_id/resume hops an existing seat. Never live_runner / CREATE_NEW_CONSOLE. Refuses limited without waiting.",
+        "description": "Headless synapse; does not pop a TUI. Sends one compact card to a harness. Default runner is fake. live=true execs native harness CLI on PATH (no ola-brain wrap). Live resumed send is currently refused to avoid spawning a second interactive --resume process. Never live_runner / CREATE_NEW_CONSOLE. Refuses limited without waiting.",
         "inputSchema": _schema(
             {
                 "to": {"type": "string"},
@@ -325,6 +325,7 @@ def call_tool(root: Path, name: str, arguments: dict[str, Any] | None) -> dict[s
             label=_opt_str(args, "label"),
             runner=runner,
             worktree=_opt_str(args, "worktree"),
+            allow_interactive_resume=not live,
         )
         model = _opt_str(args, "model")
         if model is not None and card.get("model") is None:
