@@ -64,6 +64,7 @@ def main(argv: list[str] | None = None) -> int:
     se.add_argument("--resume", help="vendor session_id for --resume; default session_id")
     se.add_argument("--title", help="optional pane title to restore on bring-up")
     se.add_argument("--agent", help="optional agent file path used for native resume")
+    se.add_argument("--effort", help="declared effort for this seat (real-or-null; Convoy never sets vendor effort flags)")
 
     sl = sub.add_parser("seats")
     sl.add_argument("--convoy-id")
@@ -172,6 +173,7 @@ def main(argv: list[str] | None = None) -> int:
             resume=args.resume,
             title=args.title,
             agent=args.agent,
+            effort=args.effort,
         )
         print(json.dumps(row))
         return 0

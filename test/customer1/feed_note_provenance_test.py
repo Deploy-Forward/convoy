@@ -164,6 +164,61 @@ class SynapseRunnerProvenance(unittest.TestCase):
         self.assertEqual(runner_kind(ola_runner), "ola")
 
 
+class ChipSeatFields(unittest.TestCase):
+    """Conductor chip contract: harness/model/effort/session%/vendor-id/
+    worktree renderable from feed + glance reads, no jsonl archaeology.
+    effort is stored on the seat row (real-or-null, Convoy never sets vendor
+    effort flags); glance by-thread seat cards surface effort and resume."""
+
+    def setUp(self):
+        self.root = Path(tempfile.mkdtemp())
+
+    def _glance_seat(self):
+        from convoy.glance import build_by_thread
+
+        def fake_probe(_h):
+            return {"usage_remaining": None, "limited": False, "raw": None}
+
+        card = build_by_thread(self.root, probe_fn=fake_probe, which_fn=lambda _n: None)
+        return card["seats"][0]
+
+    def test_seat_stores_effort_and_glance_surfaces_chip_fields(self):
+        from convoy.convoy import ensure_id, seat
+
+        ensure_id(self.root)
+        seat(
+            self.root,
+            "claude",
+            "fable-seat",
+            worktree=r"C:\wt\fable",
+            model="claude-fable-5",
+            resume="7909b37a-c27d-4468-a3df-475cf3d48652",
+            effort="high",
+        )
+        row = self._glance_seat()
+        self.assertEqual(row["model"], "claude-fable-5")
+        self.assertEqual(row["effort"], "high")
+        self.assertEqual(row["resume"], "7909b37a-c27d-4468-a3df-475cf3d48652")
+        self.assertEqual(row["worktree"], r"C:\wt\fable")
+
+    def test_unknown_effort_and_resume_stay_off_the_card(self):
+        from convoy.convoy import ensure_id, seat
+
+        ensure_id(self.root)
+        seat(self.root, "claude", "bare-seat")
+        row = self._glance_seat()
+        self.assertNotIn("effort", row)
+        self.assertNotIn("resume", row)
+
+    def test_cli_seat_effort_flag(self):
+        _run_cli(self.root, "init")
+        rc, card = _run_cli(
+            self.root, "seat", "--to", "claude", "--session-id", "s1", "--effort", "high"
+        )
+        self.assertEqual(rc, 0)
+        self.assertEqual(card["effort"], "high")
+
+
 class PublicWriteToolGate(unittest.TestCase):
     """N-5: the public wire must not expose SoT write tools ungated. Default
     OFF at the RPC layer only — CLI and in-process call_tool stay usable, so a
