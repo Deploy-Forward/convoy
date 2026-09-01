@@ -6,6 +6,7 @@ from typing import Any, Iterable
 
 from .bringup import ensure_first_run, ensure_interactive_path
 from .convoy import bind, ensure_id, read_id, read_thread
+from .harness_contract import canonical_harness_id, harness_entries
 from .install import HARNESSES, _which
 from .usage import normalize_usage_remaining, probe
 
@@ -16,6 +17,8 @@ REFUSED_HARNESSES = frozenset({
     "ultracode-shim",
     "ola-brain",
 })
+SUPPORTED_HARNESSES = tuple(row["id"] for row in harness_entries(mcp_supported_only=True))
+SUPPORTED_SET = frozenset(SUPPORTED_HARNESSES)
 
 
 def _dedupe(values: list[str]) -> list[str]:
@@ -46,10 +49,14 @@ def _normalize_harnesses(harnesses: Iterable[str]) -> tuple[list[str], list[str]
             if hid in REFUSED_HARNESSES:
                 refused.append(hid)
                 continue
-            if hid not in HARNESSES:
+            canon = canonical_harness_id(hid)
+            if canon in REFUSED_HARNESSES:
+                refused.append(hid)
+                continue
+            if canon not in SUPPORTED_SET:
                 unknown.append(hid)
                 continue
-            named.append(hid)
+            named.append(canon)
     return _dedupe(named), _dedupe(unknown), _dedupe(refused)
 
 
@@ -88,7 +95,9 @@ def _thread_bind(root: Path, thread: str | None) -> tuple[str | None, str | None
     return convoy_id, bound, status
 
 
-def _install_hint(hid: str) -> dict[str, Any]:
+def _install_hint(hid: str) -> dict[str, Any] | None:
+    if hid not in HARNESSES:
+        return None
     spec = HARNESSES[hid]
     return {
         "tool": "install",
@@ -147,7 +156,9 @@ def _harness_card(hid: str, target_root: Path, run_first_run: bool) -> dict[str,
     if run_first_run:
         out["first_run"] = _first_run_card(hid, target_root)
     if not present:
-        out["install"] = _install_hint(hid)
+        hint = _install_hint(hid)
+        if hint is not None:
+            out["install"] = hint
     return out
 
 
@@ -163,13 +174,13 @@ def onboard(
         return {
             "ok": False,
             "error": "name at least one harness you already have",
-            "allowed": list(HARNESSES.keys()),
+            "allowed": list(SUPPORTED_HARNESSES),
         }
     if unknown or refused:
         return {
             "ok": False,
             "error": "refuse unknown or wrapped harness",
-            "allowed": list(HARNESSES.keys()),
+            "allowed": list(SUPPORTED_HARNESSES),
             "unknown": unknown,
             "refused": refused,
         }

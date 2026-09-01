@@ -14,4 +14,4 @@ license = { text = "MIT" }
 where = ["src"]
 
 [tool.setuptools.package-data]
-convoy = ["harness_skills/**"]
+convoy = ["harness_skills/**", "harness_effort.json"]

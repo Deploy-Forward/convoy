@@ -5,7 +5,7 @@ Grok Bot is the conductor for repository work. Convoy is the singular source of 
 | Term | Means | Does not mean |
 | --- | --- | --- |
 | **Grok Bot** | Conductor. One chat, own memory. Orchestrates neurons. | A neuron. A terminal window. A harness CLI session. |
-| **neuron** | One `grok` / `claude` / `codex` / `cursor-agent` / `agy` session on a thread. | A second conductor. |
+| **neuron** | One `grok` / `claude` / `codex` / `cursor-agent` / `agy`(antigravity) / `hermes` / `pi` session on a thread. | A second conductor. |
 | **synapse** | Native Convoy `send` into one neuron (not `ola-brain side-chat`). | Ownership of another neuron's session, branch, or window. |
 | **thread** | Durable circuit keyed by `convoy_id`; seats on that circuit share state. | One circuit per neuron. |
 | **named thread** | A `--root` binding for that convoy circuit. | A second MCP URL. |
@@ -20,7 +20,7 @@ Product wording retires **hop** in favor of **neuron/synapse/thread**.
 
 These keys are locked for docs and conductor language:
 
-- `neuron.harness`: `grok | claude | codex | cursor-agent | agy`
+- `neuron.harness`: `grok | claude | codex | cursor-agent | agy | hermes | pi`
 - `thread.convoy_id`: durable `cvy_*`
 - `thread.key`: named thread bound at `--root`
 - `seat.session_id`: Convoy seat identifier (registry/seats key)
@@ -40,6 +40,8 @@ Do not collapse Codex and Claude into one enum.
 | `grok` | `high` observed; else `null` | No documented Grok effort CLI was verified in this repo run. | Keep unknown values as `null`. |
 | `cursor-agent` | `null` | No effort control is documented in Convoy tree. | Keep `null`. |
 | `agy` | `null` | No effort control is documented in Convoy tree. | Keep `null`. |
+| `hermes` | `null` (model-driven) | Harness is model-agnostic; effort belongs to the model being driven. | Keep `null` at harness level. |
+| `pi` | `null` (model-driven) | Harness is model-agnostic; effort belongs to the model being driven. | Keep `null` at harness level. |
 
 `extra-high` is the product key for Codex `xhigh`. `more-reasoning` is the TUI-only bucket where operators observed Max/Ultra prompts; no Convoy CLI key is documented for those.
 
@@ -50,6 +52,10 @@ Codex TUI menu text lock (model `gpt-5.6-sol`, "Select Reasoning Level"):
 3. `high` — "Greater reasoning depth"
 4. `extra-high` — menu item "Extra high reasoning depth" (vendor value `xhigh`)
 5. `more-reasoning` — menu path where Max/Ultra are exposed and consume limits faster
+
+`high` and `xhigh` are effort *types* in the shared contract. Codex product key `extra-high` maps to the `xhigh` vendor value and is intentionally distinct from Claude `--effort xhigh` syntax.
+
+Machine-readable source of truth: `src/convoy/harness_effort.json` (loaded by Convoy code paths such as MCP roster/glance/onboard).
 
 ### Live Codex TUI conflict (documented behavior)
 
