@@ -91,7 +91,7 @@ class PhaseMcpHttp(unittest.TestCase):
         blob = json.dumps(payload)
         self.assertNotIn("unknown", blob)
         ids = {a["id"] for a in agents}
-        for hid in ("grok", "claude", "codex", "agy", "cursor-agent"):
+        for hid in ("grok", "claude", "codex", "cursor-agent", "agy", "hermes", "pi"):
             self.assertIn(hid, ids)
         for a in agents:
             self.assertIsInstance(a["present"], bool)
@@ -102,6 +102,9 @@ class PhaseMcpHttp(unittest.TestCase):
                 self.assertIsNone(a["auth"])
                 self.assertIsNone(a["models"])
         self.assertIn("path", payload)
+        self.assertIn("contract", payload)
+        self.assertTrue(str(payload["contract"]["path"]).endswith("harness_effort.json"))
+        self.assertEqual(payload["contract"]["schema_version"], "2026-09-01")
         self.assertTrue(payload["path"]["path_ok"])
         # WT inherits user PATH on Windows; bashrc ungate is POSIX-only
         want_host = "windows-user" if os.name == "nt" else "bash-interactive"
@@ -176,7 +179,7 @@ class PhaseMcpHttp(unittest.TestCase):
         self.assertIsNone(conductor["resets_at"])
         self.assertIsNone(conductor["on_demand_spent"])
         self.assertIsNone(conductor["on_demand_limit"])
-        self.assertEqual(list(payload["overall"].keys()), ["grok", "claude", "codex", "cursor-agent", "agy"])
+        self.assertEqual(list(payload["overall"].keys()), ["grok", "claude", "codex", "cursor-agent", "agy", "hermes", "pi"])
         self.assertNotIn("grok-bot", payload["overall"])
 
     def test_roster_claude_blob_usage_normalized_to_null(self):

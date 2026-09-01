@@ -35,12 +35,20 @@ _NATIVE_BIN = {
     "grok.exe": "grok",
     "claude": "claude",
     "claude.exe": "claude",
+    "claude-code": "claude",
     "codex": "codex",
     "codex.exe": "codex",
     "cursor-agent": "cursor-agent",
     "cursor-agent.exe": "cursor-agent",
+    "cursor_agent": "cursor-agent",
     "agy": "agy",
     "agy.exe": "agy",
+    "antigravity": "agy",
+    "antigravity-cli": "agy",
+    "hermes": "hermes",
+    "hermes.exe": "hermes",
+    "pi": "pi",
+    "pi.exe": "pi",
 }
 
 

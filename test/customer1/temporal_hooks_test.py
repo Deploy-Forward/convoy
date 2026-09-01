@@ -10,11 +10,11 @@ class TemporalHooks(unittest.TestCase):
     def test_hook_stamps_and_since_windows(self):
         root = Path(tempfile.mkdtemp())
         early = hook(root, "note", "old", instance_id="i-old")
-        later = hook(root, "synapse", "new hop", instance_id="i-new")
+        later = hook(root, "synapse", "new synapse", instance_id="i-new")
         self.assertIn("ts", later)
         self.assertEqual(later["kind"], "synapse")
         self.assertEqual(later["instance_id"], "i-new")
-        self.assertEqual(later["summary"], "new hop")
+        self.assertEqual(later["summary"], "new synapse")
         window = feed_since(root, later["ts"])
         ids = [r["instance_id"] for r in window]
         self.assertIn("i-new", ids)
@@ -40,7 +40,7 @@ class TemporalHooks(unittest.TestCase):
 
     def test_feed_reads_utf8_bom(self):
         root = Path(tempfile.mkdtemp())
-        hook(root, "synapse", "bom hop", instance_id="i-bom")
+        hook(root, "synapse", "bom synapse", instance_id="i-bom")
         path = root / ".convoy" / "feed.jsonl"
         raw = path.read_bytes()
         path.write_bytes(b"\xef\xbb\xbf" + raw)

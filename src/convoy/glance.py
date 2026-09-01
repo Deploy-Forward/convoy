@@ -16,6 +16,13 @@ from pathlib import Path
 from typing import Any, Callable
 
 from .convoy import CONDUCTOR, list_seats, read_id, read_thread
+from .harness_contract import (
+    canonical_harness_id,
+    harness_entries,
+    harness_exec,
+    usage_probe_key,
+    usage_remaining_null_until_live_probe,
+)
 from .gitstate import git_state
 from .layer import feed_since
 from .usage import normalize_usage_remaining, probe, surface
@@ -23,7 +30,7 @@ from .usage import normalize_usage_remaining, probe, surface
 ProbeFn = Callable[[str], dict[str, Any]]
 WhichFn = Callable[[str], str | None]
 
-HARNESSES = ("grok", "claude", "codex", "cursor-agent", "agy")
+HARNESSES = tuple(row["id"] for row in harness_entries(mcp_supported_only=True))
 _CONDUCTORS = frozenset({"grok-bot", "grok_bot"})
 _EPOCH = "1970-01-01T00:00:00.000000Z"
 
@@ -41,9 +48,11 @@ def _badge(present: bool, limited: bool) -> str:
 
 
 def _probe_view(harness: str, probe_fn: ProbeFn) -> dict[str, Any]:
-    probed = probe_fn(harness)
+    probed = probe_fn(usage_probe_key(harness))
     compact = surface(harness, probed)
     usage_remaining = normalize_usage_remaining(compact.get("usage_remaining"))
+    if usage_remaining == 0 and probed.get("raw") is None and usage_remaining_null_until_live_probe(harness):
+        usage_remaining = None
     row: dict[str, Any] = {
         "limited": bool(compact.get("limited")),
         "usage_remaining": usage_remaining,
@@ -108,7 +117,7 @@ def build_overall(root: Path, probe_fn: ProbeFn | None = None, which_fn: WhichFn
     wf = which_fn or shutil.which
     rows: dict[str, Any] = {}
     for harness in HARNESSES:
-        present = wf(harness) is not None
+        present = wf(harness_exec(harness)) is not None
         probe_row = {"limited": False, "usage_remaining": None}
         if present:
             probe_row = _probe_view(harness, fn)
@@ -179,10 +188,10 @@ def build_by_thread(
     synapse = _synapse_index(root)
     view_seats: list[dict[str, Any]] = []
     for seat in seats:
-        harness = str(seat.get("to") or "").strip().lower()
+        harness = canonical_harness_id(seat.get("to"))
         if not harness or _is_conductor(harness):
             continue
-        present = wf(harness) is not None
+        present = wf(harness_exec(harness)) is not None
         if present and harness not in probe_cache:
             probe_cache[harness] = _probe_view(harness, fn)
         probe_row = probe_cache.get(harness, {"limited": False, "usage_remaining": None})

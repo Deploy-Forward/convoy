@@ -68,12 +68,20 @@ _BIN = {
     "grok.exe": "grok",
     "claude": "claude",
     "claude.exe": "claude",
+    "claude-code": "claude",
     "codex": "codex",
     "codex.exe": "codex",
     "agy": "agy",
     "agy.exe": "agy",
+    "antigravity": "agy",
+    "antigravity-cli": "agy",
+    "hermes": "hermes",
+    "hermes.exe": "hermes",
+    "pi": "pi",
+    "pi.exe": "pi",
     "cursor-agent": "cursor-agent",
     "cursor-agent.exe": "cursor-agent",
+    "cursor_agent": "cursor-agent",
 }
 
 
@@ -174,11 +182,11 @@ def _pane_dedup_key(seat: dict[str, Any]) -> str:
 
 
 def _pane_seats(seats: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """One pane per hop seat. Conductor is never a window. Empty to skipped.
+    """One pane per seated neuron. Conductor is never a window. Empty to skipped.
 
     Dedup key: worktree if set, else resume_key, else session_id, else to.
     Same seat twice is collapsed (same worktree+to, or same resume_key/session_id).
-    Two grok hops on different worktrees both appear. Not one pane per harness name.
+    Two grok neurons on different worktrees both appear. Not one pane per harness name.
     """
     seen: set[str] = set()
     out_rev: list[dict[str, Any]] = []
@@ -602,7 +610,7 @@ def _with_claude_live_flags(argv: list[str], to: Any) -> list[str]:
 
 
 def isolated_wt_argv(thread: str | int, seats: list[dict[str, Any]], *, wt: str | None = None) -> list[str]:
-    """Pure Windows Terminal argv for n hop seats. Does not spawn.
+    """Pure Windows Terminal argv for n seated neurons. Does not spawn.
 
     Live GREEN on WT 1.24.11911.0 (Aether 2026-08-29 TDD):
       --window new  nt --title T -d DIR EXE ...  ;  split-pane -V ...
@@ -918,7 +926,7 @@ def _window_for(root: Path, seat: dict[str, Any], rect: dict[str, int] | None, c
 
 
 def bring_up(root: Path, convoy_id: str | None = None, thread: str | None = None, runner: Runner | None = None, tiler: Tiler | None = None) -> dict[str, Any]:
-    """Resume hop seats in ONE isolated wt.exe window. Conductor grok-bot is not a window.
+    """Resume seated neurons in ONE isolated wt.exe window. Conductor grok-bot is not a window.
 
     Default runner is None (dry / no-op). Dry-run still calls ensure_first_run and
     must not Popen wt. Pass live_runner only for a real TUI pop (one isolated_wt_argv).
@@ -1180,7 +1188,7 @@ def _hwnds_for_pids(pids: set[int], include_hidden: bool = True) -> list[Any]:
 
 
 def live_applier(resume: str, mode: str = "minimize", **_k: Any) -> dict[str, Any]:
-    """ShowWindow on hop hwnds whose argv contains --resume/--session-id {resume}. Never kills.
+    """ShowWindow on neuron hwnds whose argv contains --resume/--session-id {resume}. Never kills.
 
     POSIX: no-op (unit tests / daemons). Windows: find hwnds, SW_MINIMIZE or SW_HIDE.
     If no hwnd, ok false error 'no window'. Do not invent pids. restore is bring_up.
@@ -1215,7 +1223,7 @@ def hide_windows(
     mode: str = "minimize",
     applier: Applier | None = None,
 ) -> dict[str, Any]:
-    """Minimize or hide hop TUI windows. Sessions keep running. Never taskkill.
+    """Minimize or hide neuron TUI windows. Sessions keep running. Never taskkill.
 
     Default applier is None (dry / no-op). Pass live_applier only for real ShowWindow.
     Unit tests must pass a mock applier; never ShowWindow in tests.
