@@ -1,4 +1,5 @@
 import json
+import os
 import sys
 import tempfile
 import threading
@@ -78,7 +79,12 @@ class PhaseMcpHttp(unittest.TestCase):
             self.assertIn(want, names)
 
     def test_roster_present_bools_usage_remaining_null_not_zero(self):
-        resp = _rpc(self.mcp, "tools/call", {"name": "roster", "arguments": {}})
+        def fake_probe(_harness):
+            return {"usage_remaining": None, "limited": False, "raw": None}
+
+        # stub probes: real vendor CLIs are slow enough to time out the RPC
+        with mock.patch("convoy.mcp_http.probe", side_effect=fake_probe):
+            resp = _rpc(self.mcp, "tools/call", {"name": "roster", "arguments": {}})
         payload = _tool_payload(resp)
         agents = payload.get("agents") if isinstance(payload, dict) else payload
         self.assertTrue(agents)
@@ -97,7 +103,9 @@ class PhaseMcpHttp(unittest.TestCase):
                 self.assertIsNone(a["models"])
         self.assertIn("path", payload)
         self.assertTrue(payload["path"]["path_ok"])
-        self.assertEqual(payload["path"]["path_host"], "bash-interactive")
+        # WT inherits user PATH on Windows; bashrc ungate is POSIX-only
+        want_host = "windows-user" if os.name == "nt" else "bash-interactive"
+        self.assertEqual(payload["path"]["path_host"], want_host)
         desc = None
         for tool in _rpc(self.mcp, "tools/list")["result"]["tools"]:
             if tool["name"] == "roster":
@@ -154,7 +162,12 @@ class PhaseMcpHttp(unittest.TestCase):
         self.assertEqual(resumes["grok"], "sess-grok")
 
     def test_glance_includes_conductor_contract_and_keeps_harness_rows(self):
-        payload = _tool_payload(_rpc(self.mcp, "tools/call", {"name": "glance", "arguments": {}}))
+        def fake_probe(_harness):
+            return {"usage_remaining": None, "limited": False, "raw": None}
+
+        # stub probes: real vendor CLIs are slow enough to time out the RPC
+        with mock.patch("convoy.glance.probe", side_effect=fake_probe):
+            payload = _tool_payload(_rpc(self.mcp, "tools/call", {"name": "glance", "arguments": {}}))
         conductor = payload["conductor"]
         self.assertEqual(conductor["to"], "grok-bot")
         self.assertEqual(conductor["badge"], "Live")
