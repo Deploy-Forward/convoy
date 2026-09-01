@@ -25,6 +25,7 @@ def main(argv: list[str] | None = None) -> int:
     h.add_argument("kind")
     h.add_argument("summary")
     h.add_argument("--instance-id")
+    h.add_argument("--to", help="addressee: a seat instance_id or grok-bot")
 
     f = sub.add_parser("feed")
     f.add_argument("--since", required=True)
@@ -121,7 +122,12 @@ def main(argv: list[str] | None = None) -> int:
     root = Path(args.root).resolve()
 
     if args.cmd == "hook":
-        print(json.dumps(hook(root, args.kind, args.summary, instance_id=args.instance_id)))
+        try:
+            row = hook(root, args.kind, args.summary, instance_id=args.instance_id, to=args.to)
+        except ValueError as e:
+            print(json.dumps({"ok": False, "error": str(e)}))
+            return 1
+        print(json.dumps(row))
         return 0
     if args.cmd == "feed":
         rows = feed_since(root, args.since)
