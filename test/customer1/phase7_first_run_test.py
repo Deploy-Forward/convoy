@@ -187,7 +187,7 @@ class Phase7FirstRun(unittest.TestCase):
         err = str(card.get("error") or "").lower()
         self.assertTrue("home" in err)
 
-    def test_ensure_first_run_grok_codex_noop(self):
+    def test_ensure_first_run_grok_codex_identity_not_claude_settings(self):
         for to in ("grok", "codex"):
             wt = Path(tempfile.mkdtemp())
             card = ensure_first_run({"to": to, "worktree": str(wt)})
@@ -210,6 +210,13 @@ class Phase7FirstRun(unittest.TestCase):
             else:
                 self.assertEqual(card.get("path_host"), "bash-interactive")
                 self.assertEqual(card.get("path_bashrc"), str(self.fake_home / ".bashrc"))
+            self.assertTrue(card.get("identity_written"))
+            grok_skill = wt / ".grok" / "skills" / "neuron-identity" / "SKILL.md"
+            claude_skill = wt / ".claude" / "skills" / "neuron-identity" / "SKILL.md"
+            self.assertTrue(grok_skill.is_file())
+            self.assertTrue(claude_skill.is_file())
+            self.assertTrue((wt / "AGENTS.md").is_file())
+            self.assertIn(str(grok_skill), card.get("identity_paths") or [])
 
     def test_ensure_interactive_path_writes_bashrc_when_profile_only(self):
         profile = self.fake_home / ".profile"

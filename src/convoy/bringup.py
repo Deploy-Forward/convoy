@@ -22,8 +22,9 @@ Claude sessions on the machine bypass). Still write the project settings
 bypassPermissions) as a record. Also persist ~/.claude.json
 projects[worktree].hasTrustDialogAccepted=true for both slash spellings
 of the worktree path. Never write ~/.claude if worktree IS the home dir.
-Grok/codex no-op. Not a user paste. Not a TUI guide.
-Persona is role.md.
+Grok/codex: no Claude settings write. First-run still installs
+harness self-identity skills into the worktree. Not a user paste.
+Not a TUI guide. Persona is role.md.
 
 Hypothesis: Claude Code accepts the same `--resume` flag as grok (native resume).
 Not grok `-p` (headless), not grok `-c` (continue latest cwd), not `--output-format`.
@@ -44,6 +45,7 @@ import subprocess
 from pathlib import Path
 from typing import Any, Callable
 
+from .identity import install_neuron_identity
 from .convoy import (
     CONDUCTOR,
     list_seats,
@@ -480,7 +482,9 @@ def ensure_first_run(seat: dict[str, Any]) -> dict[str, Any]:
     User ~/.claude.json: set projects[worktree].hasTrustDialogAccepted=true
     for both slash spellings of the worktree key.
     Never write ~/.claude if worktree IS the home dir.
-    Grok/codex: no-op. Persona is role.md, not CLI.
+    Grok/codex: no Claude settings write. All harnesses with a non-home
+    worktree get neuron-identity skills (.grok/skills + .claude/skills +
+    AGENTS.md pointer). Persona is role.md, not CLI.
     Never ola-brain, side-chat, grok -p/-c, --append-system-prompt.
     """
     to = str((seat or {}).get("to") or "").strip()
@@ -500,12 +504,30 @@ def ensure_first_run(seat: dict[str, Any]) -> dict[str, Any]:
         "path_bashrc": None,
         "path_ok": False,
         "path_host": None,
+        "identity_written": False,
+        "identity_paths": [],
+        "identity_agents": None,
     }
     path_card = ensure_interactive_path()
     out["path_written"] = bool(path_card.get("path_written"))
     out["path_bashrc"] = path_card.get("path_bashrc")
     out["path_ok"] = bool(path_card.get("path_ok"))
     out["path_host"] = path_card.get("path_host")
+    has_wt = (isinstance(wt, str) and wt.strip()) or isinstance(wt, Path)
+    home_worktree = False
+    if has_wt:
+        wt_path = Path(wt)
+        try:
+            home_worktree = wt_path.resolve() == Path.home().resolve()
+        except Exception:
+            home_worktree = False
+        if not home_worktree:
+            ident = install_neuron_identity(wt_path)
+            out["identity_written"] = bool(ident.get("written"))
+            out["identity_paths"] = list(ident.get("paths") or [])
+            out["identity_agents"] = ident.get("agents")
+            if ident.get("error"):
+                out["identity_error"] = ident["error"]
     if not _is_claude(to):
         return out
     if not (isinstance(wt, str) and wt.strip()) and not isinstance(wt, Path):
