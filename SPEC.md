@@ -31,6 +31,17 @@ This block is authoritative for Grok Bot MCP layering and native-send DoD. If ol
 - Product wording retires "hop" in current product sentences; historical logs below may still quote it.
 - Harness self-identity: first-run installs `neuron-identity` skills into the seat worktree so a launched model knows it is a neuron on a `cvy_id`.
 
+### Feed contract v2 (2026-09-01)
+
+One MCP endpoint. What is versioned is the feed contract, not the URL — a named thread stays a `--root` / `cvy_id` binding.
+
+- `schema_version: 2` rides feed envelopes (MCP `feed`, CLI `feed --since`, the `attach` card). Not a second feed format: `.convoy/feed.jsonl` stays the single `layer.py`-written file, v1 rows keep flowing, and readers skip kinds they do not know.
+- Kinds are additive. v2 defines:
+  - `conductor` — ONE compact line stamped by the conductor (MCP tool `stamp`, CLI `python -m convoy stamp`). Front-matter shape: `agent` / `model` / `effort` real-or-null, optional `instance_id` (the conductor agent id) and `transcript` (a pointer to where the bubble lives, never its bytes). Summary clamps to one line of ≤ 500 chars; a clamp marks `truncated: true`. The Grok Bot bubble history is not a Convoy object; neurons never receive it.
+  - `synapse` — unchanged.
+  - `refuse` — the feed row now carries the full `ask` card (`action: bring_up`, `handoff: .ola/*handoff*`, text), so a sibling pulling `feed --since` sees the remedy without having been the caller.
+- Pack stays pointers. Unknown stays JSON `null`. Neurons pull the thread (`feed --since`); nothing in v2 mints a sibling session or steals a TUI.
+
 ### Locked layer statement
 
 > Grok Bot is the opposite layer from Herdr and CNVS. This Grok Bot chat is the conductor. MCP is how the conductor attaches (`roster`, `onboard`, `send`, `feed`, `context`, `bring_up`/`open`, `terminals`; tree also has `install` and `hide`). Convoy is the SoT: one visible thread, one `cvy_id`, one tied repo, seats/neuron sessions that stay isolated. Default `send` is headless on purpose. `bring_up` is the terminal view, isolated n-pane, and only uses vendor resume ids. Same-branch overlap is refused. Pointers in, compact card out.
