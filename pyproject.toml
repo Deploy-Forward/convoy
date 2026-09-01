@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "convoy"
 version = "0.1.0"
-description = "Grok Bot MCP + hop CLI for Deploy-Forward/convoy"
+description = "Grok Bot MCP + neuron CLI for Deploy-Forward/convoy"
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
