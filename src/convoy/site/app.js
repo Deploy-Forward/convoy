@@ -1,4 +1,5 @@
 (function () {
+  document.documentElement.classList.add("js");
   const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
   const revealNodes = Array.from(document.querySelectorAll("[data-reveal]"));
 
@@ -16,12 +17,25 @@
     node.classList.add("is-inview");
   }
 
+  function isInitiallyVisible(node) {
+    const rect = node.getBoundingClientRect();
+    return rect.top < window.innerHeight && rect.bottom > 0;
+  }
+
   function bootReveal() {
-    document.body.classList.add("is-ready");
-    if (reducedMotion || !("IntersectionObserver" in window)) {
+    if (!revealNodes.length || reducedMotion || !("IntersectionObserver" in window)) {
       revealNodes.forEach(activateReveal);
       return;
     }
+
+    for (const node of revealNodes) {
+      if (isInitiallyVisible(node)) {
+        activateReveal(node);
+      }
+    }
+
+    document.body.classList.add("reveal-ready");
+
     const observer = new IntersectionObserver(
       (entries) => {
         for (const entry of entries) {
@@ -31,9 +45,13 @@
           }
         }
       },
-      { threshold: 0.16, rootMargin: "0px 0px -8% 0px" }
+      { threshold: 0, rootMargin: "0px 0px 0px 0px" }
     );
-    revealNodes.forEach((node) => observer.observe(node));
+    revealNodes.forEach((node) => {
+      if (!node.classList.contains("is-inview")) {
+        observer.observe(node);
+      }
+    });
   }
 
   function bootPointerFollow() {
@@ -94,15 +112,8 @@
     });
   }
 
-  if (document.fonts && document.fonts.ready) {
-    document.fonts.ready.then(() => {
-      bootReveal();
-      bootPointerFollow();
-    });
-  } else {
-    window.requestAnimationFrame(() => {
-      bootReveal();
-      bootPointerFollow();
-    });
-  }
+  window.requestAnimationFrame(() => {
+    bootReveal();
+    bootPointerFollow();
+  });
 })();
