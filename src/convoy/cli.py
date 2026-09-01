@@ -12,7 +12,7 @@ from .onboard import onboard as run_onboard
 from .context import pack
 from .convoy import attach, bind, ensure_id, list_seats, read_id, read_lead, seat, set_lead, CONDUCTOR
 from .glance import build_glance, run_tray
-from .layer import feed_since, hook
+from .layer import SCHEMA_VERSION, conductor_stamp, feed_since, hook
 from .synapse import fake_runner, native_runner, send_many, send_one
 from .usage import probe
 
@@ -28,6 +28,14 @@ def main(argv: list[str] | None = None) -> int:
 
     f = sub.add_parser("feed")
     f.add_argument("--since", required=True)
+
+    st = sub.add_parser("stamp")
+    st.add_argument("summary")
+    st.add_argument("--agent")
+    st.add_argument("--model")
+    st.add_argument("--effort")
+    st.add_argument("--instance-id")
+    st.add_argument("--transcript", help="pointer to the conductor transcript, never its bytes")
 
     c = sub.add_parser("context")
     c.add_argument("--instance-id")
@@ -116,7 +124,24 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(hook(root, args.kind, args.summary, instance_id=args.instance_id)))
         return 0
     if args.cmd == "feed":
-        print(json.dumps(feed_since(root, args.since)))
+        rows = feed_since(root, args.since)
+        print(json.dumps({"schema_version": SCHEMA_VERSION, "since": args.since, "events": rows}))
+        return 0
+    if args.cmd == "stamp":
+        try:
+            row = conductor_stamp(
+                root,
+                args.summary,
+                agent=args.agent,
+                model=args.model,
+                effort=args.effort,
+                instance_id=args.instance_id,
+                transcript=args.transcript,
+            )
+        except ValueError as e:
+            print(json.dumps({"ok": False, "error": str(e)}))
+            return 1
+        print(json.dumps(row))
         return 0
     if args.cmd == "context":
         print(json.dumps(pack(root, instance_id=args.instance_id)))

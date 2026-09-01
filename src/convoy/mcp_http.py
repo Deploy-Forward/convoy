@@ -23,7 +23,7 @@ from .context import pack
 from .convoy import list_seats, read_thread
 from .glance import build_glance
 from .gitstate import git_state
-from .layer import feed_since
+from .layer import SCHEMA_VERSION, conductor_stamp, feed_since
 from .synapse import fake_runner, native_runner, send_one
 from .usage import normalize_usage_remaining, probe
 
@@ -41,7 +41,7 @@ HARNESSES = (
     ("agy", "agy"),
 )
 
-_TOOL_NAMES = ("roster", "glance", "onboard", "terminals", "context", "send", "feed", "bring_up", "open", "hide", "minimize", "background", "install")
+_TOOL_NAMES = ("roster", "glance", "onboard", "terminals", "context", "send", "feed", "stamp", "bring_up", "open", "hide", "minimize", "background", "install")
 
 
 def _schema(properties: dict[str, Any], required: list[str] | None = None) -> dict[str, Any]:
@@ -115,10 +115,25 @@ TOOLS: list[dict[str, Any]] = [
     },
     {
         "name": "feed",
-        "description": "Layer events since ts. Default last 24h. Not vendor resume.",
+        "description": "Layer events since ts (feed contract v2: schema_version + additive kinds — conductor stamps, synapse, refuse+ask). Default last 24h. Not vendor resume; readers skip unknown kinds.",
         "inputSchema": _schema({
             "since": {"type": "string", "description": "ISO UTC lower bound. Default last 24h."},
         }),
+    },
+    {
+        "name": "stamp",
+        "description": "Conductor stamp: ONE compact line into the thread feed (kind=conductor) so neurons can feed --since this chat's decisions. Not a transcript mirror — summary is clamped to one line; transcript is a pointer, never bytes; unknown agent/model/effort stay JSON null.",
+        "inputSchema": _schema(
+            {
+                "summary": {"type": "string", "description": "Compact one-line decision/stamp"},
+                "agent": {"type": "string"},
+                "model": {"type": "string"},
+                "effort": {"type": "string"},
+                "instance_id": {"type": "string"},
+                "transcript": {"type": "string", "description": "Pointer to the conductor transcript, never its bytes"},
+            },
+            required=["summary"],
+        ),
     },
     {
         "name": "bring_up",
@@ -334,7 +349,21 @@ def call_tool(root: Path, name: str, arguments: dict[str, Any] | None) -> dict[s
     if name == "feed":
         since = _opt_str(args, "since") or _default_since()
         rows = feed_since(root, since)
-        return {"ok": True, "since": since, "events": rows}
+        return {"ok": True, "schema_version": SCHEMA_VERSION, "since": since, "events": rows}
+    if name == "stamp":
+        try:
+            row = conductor_stamp(
+                root,
+                str(args.get("summary") or ""),
+                agent=_opt_str(args, "agent"),
+                model=_opt_str(args, "model"),
+                effort=_opt_str(args, "effort"),
+                instance_id=_opt_str(args, "instance_id"),
+                transcript=_opt_str(args, "transcript"),
+            )
+        except ValueError as e:
+            return {"ok": False, "error": str(e)}
+        return {"ok": True, "schema_version": SCHEMA_VERSION, **row}
     if name in ("bring_up", "open"):
         dry = _opt_bool(args, "dry_run", True)
         runner = None if dry else live_runner

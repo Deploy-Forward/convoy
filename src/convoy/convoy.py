@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from .context import pack
-from .layer import feed_since, hook
+from .layer import SCHEMA_VERSION, feed_since, hook
 from .registry import register
 from .usage import probe, surface
 
@@ -265,6 +265,7 @@ def attach(root: Path, convoy_id: str | None = None, probe_fn=None) -> dict[str,
     return {
         "ok": True,
         "convoy_id": cid,
+        "schema_version": SCHEMA_VERSION,
         "seats": seats,
         "pointers": pack(root),
         "thread": thread,
