@@ -31,6 +31,7 @@ Contract: feed + seats + `convoy_id`. Unknown values stay JSON `null`; no invent
 - Windows bring-up uses isolated WT only: `wt --window new`, one tab, split panes (`; split-pane -V/-H`), argv-list tokenization, no `-w 0`, no `--` before harness exe.
 - First-run Claude trust is explicit: project settings + home `~/.claude/settings.json` skip key + `~/.claude.json` `projects[worktree].hasTrustDialogAccepted=true` (both slash spellings).
 - `convoy send --live` is headless and **does not steal/resume** an active interactive neuron. If a live seat already exists, resumed live send is refused (RED) rather than spawning a second interactive `--resume` process.
+- First-run installs a `neuron-identity` harness skill into the seat worktree so the launched model knows it is a neuron on that `cvy_id`, not Grok Bot.
 
 ## How it works
 
