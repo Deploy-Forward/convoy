@@ -1,49 +1,46 @@
 # Convoy
 
-Convoy is the shared project memory for Grok Bot: attach one MCP endpoint, route work to your existing CLIs, and keep every hop grounded in the same thread state.
+Convoy is shared project memory for Grok Bot: attach one MCP endpoint, route work to your existing CLIs, and keep every neuron grounded in one durable thread state.
 
 ## Terms
 
-- **Grok Bot**: the conductor in this chat; it orchestrates, is chip-less, and is not a hop or a window.
-- **Hop**: a BYO harness CLI session (`grok`, `claude`, `codex`, `cursor-agent`, or `agy`); not a new Grok Bot.
-- **Synapse**: the hop that executes the CLI; one harness, one `session_id`, one meter, compact card back.
-- **Convoy**: the singular source of truth any agent taps: feed, seats, `convoy_id`.
-- **Thread**: one Convoy thread per Grok Bot conductor; hops on a thread share it. Sharing a thread key stomps the same checkout.
-- **`convoy_id` (`cvy_...`)**: durable id for that thread.
-- **grok-bot-local vs grok-bot-cloud**: where a hop runs (user PC vs Grok Bot computer), not a second source of truth.
+- **Grok Bot**: the conductor in this chat; not a neuron and not a window.
+- **Neuron**: one BYO harness session (`grok`, `claude`, `codex`, `cursor-agent`, or `agy`) on a thread.
+- **Synapse**: a native Convoy `send` into one neuron; one harness, one meter, compact card back.
+- **Convoy**: source of truth (`feed`, seats, `convoy_id`).
+- **Thread**: durable circuit keyed by `convoy_id`.
+- **Named thread**: a `--root` binding (not a second MCP URL).
+- **grok-bot-local vs grok-bot-cloud**: where a neuron runs (user PC vs cloud agent), not a second source of truth.
+
+Product wording retires **hop** in favor of **neuron/synapse/thread**.
 
 ## The problem
 
-One harness chat works for one conversation, but it is a weak system of record for a real project. Context windows bloat, meter state jumps around, and a second agent cannot reliably tap the same working state without copy/paste drift.
+Single-harness chat is weak project memory: context windows bloat, meter state drifts, and another agent cannot safely rehydrate shared state without copy/paste loss.
 
-Teams then try to fix this by wrapping one vendor CLI inside another. That adds indirection instead of shared truth: more ceremony, less portability, and no durable pointer layer that other agents can safely rehydrate from.
-
-There is also a collision problem: when two conductors share one thread key, they are steering the same checkout. Without one source of truth for seats and thread identity, that stomp risk is invisible until it hurts.
+Wrapper stacks (one vendor CLI inside another) add indirection and contention instead of shared truth.
 
 ## The solution
 
-Convoy keeps a skinny shared log of pointers and seat state, while Grok Bot stays the conductor. Work hops out as a synapse onto a BYO vendor CLI on that CLI's own meter, then returns as a compact card any agent can read.
+Convoy keeps a slim pointer/stamp layer while Grok Bot remains conductor. Synapses run on native vendor CLIs, return compact cards, and keep session ownership separated.
 
-The contract is simple: feed + seats + `convoy_id`. Any agent can rehydrate from those pointers without transcript scraping or invented usage math.
+Contract: feed + seats + `convoy_id`. Unknown values stay JSON `null`; no invented usage/session numbers.
 
-Convoy is BYO harness and wrapper-free: native vendor CLIs only; wrappers are refused.
+## Current lock notes
 
-`glance` is two layers: overall remaining by harness (live probes only; Grok remaining is JSON `null`, never `0` and never leftover-dollar fiction) and by thread id (which seats sit on that `cvy_...`). The public MCP owns this data contract.
+- Windows bring-up uses isolated WT only: `wt --window new`, one tab, split panes (`; split-pane -V/-H`), argv-list tokenization, no `-w 0`, no `--` before harness exe.
+- First-run Claude trust is explicit: project settings + home `~/.claude/settings.json` skip key + `~/.claude.json` `projects[worktree].hasTrustDialogAccepted=true` (both slash spellings).
+- `convoy send --live` is headless and **does not steal/resume** an active interactive neuron. If a live seat already exists, resumed live send is refused (RED) rather than spawning a second interactive `--resume` process.
 
 ## How it works
 
-Attach `https://convoy.bot/mcp`, run `onboard` to name the harnesses you already have, let Convoy verify PATH truth (and point missing ones at install), check `roster`, then `send` work as a headless synapse (`live=true` uses the native CLI on PATH with vendor `--resume`, not a wrap). Read `feed` or `context` for pointers (not file dumps), and optionally use `bring_up` or `open` for a visible tiled TUI on a named thread; visible bring-up uses an isolated Windows Terminal window and never injects into the focused session. Use `glance` when you want quick meter and thread state.
+1. Attach `https://convoy.bot/mcp`.
+2. Run `onboard` with named harnesses.
+3. Use `send` for a synapse and `feed`/`context` for pointers.
+4. Use `bring_up` / `open` only when you want visible TUIs for seated neurons.
+5. Use `glance` for quick overall + by-thread state.
 
-## End-to-end example
-
-1. Attach MCP endpoint: `https://convoy.bot/mcp`.
-2. Onboard existing harnesses: `onboard` with `to=["grok","claude"]` and `thread="payments"`.
-3. Send a synapse: `send` with `to="claude"`, `body="Summarize open payment retry bugs and propose a fix plan."`, `live=true`.
-4. Example hop card shape: `{"ok":true,"to":"claude","session_id":"sess_claude_9f2b3a","argv":["claude","--resume","sess_claude_9f2b3a"],"pointers":{"worktree":"/workspace/.convoy/wt/payments"},"convoy_id":"cvy_7m4q2p9x"}`.
-5. Read updates with `feed` using `since="2026-08-31T00:00:00Z"`.
-6. Run `glance` by thread id: `glance convoy_id="cvy_7m4q2p9x"`.
-
-Tiny CLI equivalent:
+Tiny CLI:
 
 `python -m convoy onboard --to grok --to claude --thread payments`
 
@@ -51,7 +48,7 @@ Tiny CLI equivalent:
 
 `python -m convoy feed --since 2026-08-31T00:00:00Z`
 
-`python -m convoy glance --convoy-id cvy_7m4q2p9x --json`
+`python -m convoy glance --convoy-id cvy_example --json`
 
 Development: `PYTHONPATH=src python3 test/run.py`  
 License: MIT.

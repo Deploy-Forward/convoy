@@ -1,6 +1,7 @@
 import io, json, sys, tempfile, time, unittest
 from contextlib import redirect_stdout
 from pathlib import Path
+from unittest import mock
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 from convoy.cli import main
 from convoy.convoy import attach, bind, ensure_id, list_seats, read_id, read_thread, seat
@@ -194,6 +195,23 @@ class Phase7Attach(unittest.TestCase):
         self.assertFalse(d["ok"])
         self.assertIsNone(d["session_id"])
         self.assertNotEqual(d.get("session_id"), "spawned-grok")
+
+    def test_cli_send_live_instance_id_refuses_second_interactive_resume(self):
+        _run(self.root, "init")
+        seat(self.root, "grok", "sess-grok", worktree=str(self.wt_g), resume="vendor-grok-uuid")
+        spawned = {"n": 0}
+
+        def should_not_run(*_a, **_k):
+            spawned["n"] += 1
+            return {"ok": True, "to": "grok", "session_id": "bad", "model": None, "usage_remaining": None, "body": "bad"}
+
+        with mock.patch("convoy.cli.native_runner", side_effect=should_not_run):
+            rc, d = _run(self.root, "send", "--live", "--to", "grok", "--instance-id", "sess-grok", "ping")
+        self.assertNotEqual(rc, 0)
+        self.assertFalse(d["ok"])
+        self.assertTrue(d.get("refused"))
+        self.assertIn("second interactive session", d.get("error", ""))
+        self.assertEqual(spawned["n"], 0)
 
     def test_dry_run_session_id_null(self):
         _run(self.root, "init")

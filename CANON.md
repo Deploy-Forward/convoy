@@ -1,21 +1,25 @@
 # Canonical names
 
-Grok Bot is a project manager for repositories (and thus projects). Convoy is the singular source of truth any agent can tap. Grok Bot orchestrates.
+Grok Bot is the conductor for repository work. Convoy is the singular source of truth any agent can tap (`feed`, seats, `convoy_id`).
 
 | Term | Means | Does not mean |
 | --- | --- | --- |
-| **Grok Bot** | Conductor. One chat, own memory. Chip-less. Orchestrates hops. | A hop. A window. A grok CLI session. |
-| **hop** | BYO harness session: `grok`, `claude`, or `codex` CLI. | A new Grok Bot. |
-| **Convoy** | Source of truth: feed, seats, `convoy_id`. Any agent rehydrates from it. | A harness. A conductor. |
-| **synapse** | One hop: Convoy executes one BYO harness CLI on one instance/meter and gets a compact card back. | Ownership of another synapse's session, branch, or the Grok Bot main window. |
-| **hop talk** | Cross-harness talk goes through Convoy `send` + `feed` on one `convoy_id`. | Herdr PTY paste bus. CNVS canvas chat flow. |
-| **onboard** | First run after MCP attach: the human names harnesses they already have, and Convoy reports PATH truthfully. | Convoy inventing a roster, auto-installing wrappers, or auto-login. |
-| **thread** | One Convoy thread per Grok Bot conductor. Hops on that thread share it. | One thread per hop. |
-| **grok-bot-local** | Hop host: the user's PC (Windows Terminal, their logged-in CLIs). | A second source of truth. |
-| **grok-bot-cloud** | Hop host: Grok Bot's computer (git, headless hops, no WT). | Nested Grok Bots. A cloned TUI `--resume`. |
+| **Grok Bot** | Conductor. One chat, own memory. Orchestrates neurons. | A neuron. A terminal window. A harness CLI session. |
+| **neuron** | One `grok` / `claude` / `codex` / `cursor-agent` session on a thread. | A second conductor. |
+| **synapse** | Native Convoy `send` into one neuron (not `ola-brain side-chat`). | Ownership of another neuron's session, branch, or window. |
+| **thread** | Durable circuit keyed by `convoy_id`; seats on that circuit share state. | One circuit per neuron. |
+| **named thread** | A `--root` binding for that convoy circuit. | A second MCP URL. |
+| **Convoy** | Source of truth: feed, seats, `convoy_id`, thread pointers. | A harness binary or a model wrapper. |
+| **onboard** | First run after MCP attach: user names installed harnesses; Convoy reports PATH truthfully. | Auto-installed wrappers, invented roster entries, or auto-login. |
+| **grok-bot-local** | Neuron host: user PC (WT + logged-in CLIs). | A second source of truth. |
+| **grok-bot-cloud** | Neuron host: cloud agent machine (git/headless flows). | Nested Grok Bots or cloned TUI sessions. |
 
-Do not spawn extra Grok Bot agents unless the user explicitly asks. A new conductor needs its own Convoy thread key or it stomps the same checkout. Vendor `--resume` stays on the host that created it. Git history is what travels.
+Product wording retires **hop** in favor of **neuron/synapse/thread**.
 
-`glance` includes a `conductor` card (`to: "grok-bot"`) as the Grok Bot weekly usage identifier; OSS leaves unknown values as JSON `null` until a live probe exists.
+Do not spawn extra Grok Bot conductors unless explicitly requested. A new conductor needs a distinct thread key or it stomps the same checkout. Vendor resume ids stay on the host that created them.
+
+`glance` includes a `conductor` card (`to: "grok-bot"`). Unknown values remain JSON `null` until a live probe exists.
 
 `roster.present` is the MCP/agent process PATH. Interactive desktop terminals are a different PATH (bash skips `.profile`). Convoy first-run writes `~/.bashrc` so `claude`/`grok`/`codex` resolve in the next shell. Already-open terminals still need `source ~/.bashrc`.
+
+Follow-up pointer: harness self-identity skills/plugins land in the next PR, not this one.

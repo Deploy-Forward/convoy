@@ -222,19 +222,39 @@ def main(argv: list[str] | None = None) -> int:
         return serve(root, host=args.host, port=args.port)
     if args.cmd == "send":
         runner = native_runner if args.live else fake_runner
+        allow_interactive_resume = not bool(args.live)
         wts = args.worktree
         if wts and len(wts) != len(args.to):
             print("need one --worktree per --to", file=sys.stderr)
             return 2
         if len(args.to) == 1:
             wt = wts[0] if wts else None
-            card = send_one(root, args.to[0], args.body, instance_id=args.instance_id, label=args.label, runner=runner, dry_run=args.dry_run, worktree=wt)
+            card = send_one(
+                root,
+                args.to[0],
+                args.body,
+                instance_id=args.instance_id,
+                label=args.label,
+                runner=runner,
+                dry_run=args.dry_run,
+                worktree=wt,
+                allow_interactive_resume=allow_interactive_resume,
+            )
             print(json.dumps(card))
             if args.dry_run and card.get("session_id"):
                 print("error: dry-run minted a session_id", file=sys.stderr)
                 return 2
             return 0 if card.get("ok") else 1
-        cards = send_many(root, args.to, args.body, runner=runner, worktrees=wts, label=args.label, dry_run=args.dry_run)
+        cards = send_many(
+            root,
+            args.to,
+            args.body,
+            runner=runner,
+            worktrees=wts,
+            label=args.label,
+            dry_run=args.dry_run,
+            allow_interactive_resume=allow_interactive_resume,
+        )
         print(json.dumps(cards))
         if args.dry_run and any(c.get("session_id") for c in cards):
             print("error: dry-run minted a session_id", file=sys.stderr)

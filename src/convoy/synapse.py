@@ -135,7 +135,10 @@ def native_runner(
     cmd = [exe]
     rid = resume if isinstance(resume, str) and resume.strip() else instance_id
     if isinstance(rid, str) and rid.strip():
-        cmd.extend(["--resume", rid.strip()])
+        if harness == "codex":
+            cmd.extend(["resume", rid.strip()])
+        else:
+            cmd.extend(["--resume", rid.strip()])
     try:
         r = subprocess.run(
             cmd,
@@ -178,7 +181,19 @@ def native_runner(
     }
 
 
-def send_one(root: Path, to: str, body: str, instance_id: str | None = None, label: str | None = None, runner: Runner | None = None, dry_run: bool = False, worktree: str | None = None, probe_fn=None, resume: str | None = None) -> dict[str, Any]:
+def send_one(
+    root: Path,
+    to: str,
+    body: str,
+    instance_id: str | None = None,
+    label: str | None = None,
+    runner: Runner | None = None,
+    dry_run: bool = False,
+    worktree: str | None = None,
+    probe_fn=None,
+    resume: str | None = None,
+    allow_interactive_resume: bool = True,
+) -> dict[str, Any]:
     cwd_root = Path(worktree).resolve() if worktree else Path(root).resolve()
     cid = read_id(root)
     target_name = str(to or "").strip()
@@ -273,6 +288,26 @@ def send_one(root: Path, to: str, body: str, instance_id: str | None = None, lab
             "pointers": packed,
             "convoy_id": cid,
         }
+    if not allow_interactive_resume and (resolved_instance_id or resume_token):
+        hook(
+            root,
+            kind="refuse",
+            summary=to + " live resume refused",
+            instance_id=resolved_instance_id,
+            extra={"to": to, "reason": "no-steal-live-resume"},
+        )
+        return {
+            "ok": False,
+            "to": to,
+            "session_id": None,
+            "model": None,
+            "usage_remaining": normalize_usage_remaining(usage.get("usage_remaining")),
+            "refused": True,
+            "error": "live send resume refused: would spawn a second interactive session",
+            "body": "RED: convoy send --live does not steal/resume an active TUI session",
+            "pointers": packed,
+            "convoy_id": cid,
+        }
     if not resolved_instance_id and not resume_token:
         cid = read_id(root)
         if cid:
@@ -322,7 +357,17 @@ def send_one(root: Path, to: str, body: str, instance_id: str | None = None, lab
     card["convoy_id"] = cid
     return card
 
-def send_many(root: Path, targets: list[str], body: str, runner: Runner | None = None, worktrees: list[str] | None = None, label: str | None = None, dry_run: bool = False, probe_fn=None) -> list[dict[str, Any]]:
+def send_many(
+    root: Path,
+    targets: list[str],
+    body: str,
+    runner: Runner | None = None,
+    worktrees: list[str] | None = None,
+    label: str | None = None,
+    dry_run: bool = False,
+    probe_fn=None,
+    allow_interactive_resume: bool = True,
+) -> list[dict[str, Any]]:
     if len(targets) < 1:
         raise ValueError("need at least one --to")
     wts: list[str | None] = list(worktrees) if worktrees else [None] * len(targets)
@@ -331,7 +376,17 @@ def send_many(root: Path, targets: list[str], body: str, runner: Runner | None =
     cards: list[dict[str, Any] | None] = [None] * len(targets)
     def job(i: int, to: str, wt: str | None):
         lbl = (str(label) + "-" + to) if label and len(targets) > 1 else label
-        return i, send_one(root, to, body, label=lbl, runner=runner, dry_run=dry_run, worktree=wt, probe_fn=probe_fn)
+        return i, send_one(
+            root,
+            to,
+            body,
+            label=lbl,
+            runner=runner,
+            dry_run=dry_run,
+            worktree=wt,
+            probe_fn=probe_fn,
+            allow_interactive_resume=allow_interactive_resume,
+        )
     with ThreadPoolExecutor(max_workers=len(targets)) as pool:
         futs = [pool.submit(job, i, t, wts[i]) for i, t in enumerate(targets)]
         for fut in as_completed(futs):
