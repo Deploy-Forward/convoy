@@ -4,6 +4,7 @@ import sys
 import tempfile
 import threading
 import unittest
+import urllib.error
 import urllib.request
 from pathlib import Path
 from unittest import mock
@@ -154,8 +155,31 @@ class PhaseMcpHttp(unittest.TestCase):
             body = r.read().decode("utf-8")
             ctype = r.headers.get("Content-Type", "")
         self.assertIn("convoy.bot", body)
-        self.assertIn("grok-bot native mcp", body)
-        self.assertTrue(ctype.startswith("text/html") or ctype.startswith("text/plain"))
+        self.assertIn(HOME_LINE, body)
+        self.assertIn("<!doctype html>", body.lower())
+        self.assertTrue(ctype.startswith("text/html"))
+
+    def test_get_mcp_is_post_only(self):
+        req = urllib.request.Request(self.mcp, method="GET")
+        with self.assertRaises(urllib.error.HTTPError) as ctx:
+            urllib.request.urlopen(req, timeout=5)
+        self.assertEqual(ctx.exception.code, 405)
+        self.assertIn("POST JSON-RPC to /mcp", ctx.exception.read().decode("utf-8"))
+        self.assertEqual(ctx.exception.headers.get("Allow"), "POST, OPTIONS")
+
+    def test_post_mcp_still_works(self):
+        ping = _rpc(self.mcp, "ping")
+        self.assertEqual(ping["jsonrpc"], "2.0")
+        self.assertEqual(ping["result"], {})
+
+    def test_favicon_routes_exist(self):
+        for path in ("/favicon.svg", "/favicon.ico"):
+            req = urllib.request.Request(self.base + path, method="GET")
+            with urllib.request.urlopen(req, timeout=5) as r:
+                body = r.read().decode("utf-8")
+                ctype = r.headers.get("Content-Type", "")
+            self.assertIn("<svg", body)
+            self.assertIn("image/svg+xml", ctype)
 
     def test_open_alias_dry(self):
         resp = _rpc(self.mcp, "tools/call", {"name": "open", "arguments": {"dry_run": True}})

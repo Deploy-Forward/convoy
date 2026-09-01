@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>convoy.bot | Deploy Forward</title>
+  <meta name="description" content="Convoy keeps one visible thread while you dispatch work to other harnesses through a single MCP endpoint.">
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="alternate icon" href="/favicon.ico">
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <header class="topbar">
+    <div class="shell topbar-inner">
+      <a class="brand" href="/" aria-label="convoy.bot home">
+        <img src="/favicon.svg" width="28" height="28" alt="">
+        <span class="brand-stack">
+          <span class="wordmark">convoy.bot</span>
+          <span class="brand-credit">Deploy Forward</span>
+        </span>
+      </a>
+      <nav class="chrome-nav" aria-label="Primary">
+        <a class="chip" href="https://convoy.bot/mcp">Attach MCP</a>
+        <a class="chip chip-solid" href="https://github.com/Deploy-Forward/convoy">GitHub</a>
+      </nav>
+    </div>
+  </header>
+
+  <main id="main">
+    <section class="hero shell">
+      <div class="hero-atmosphere" aria-hidden="true"></div>
+      <p class="hero-kicker mono" data-reveal data-reveal-delay="0">One conductor, many harnesses</p>
+      <h1 data-reveal data-reveal-delay="1">Stay in one thread.<br>Send work to other harnesses without merging sessions.</h1>
+      <p class="lede" data-reveal data-reveal-delay="2">
+        Convoy is the source of truth for a bound thread and <code>cvy_id</code>.
+        Grok Bot conducts. Each harness keeps its own native identity and meter.
+      </p>
+      <div class="hero-actions" data-reveal data-reveal-delay="3">
+        <button class="chip chip-solid" id="copy-attach" type="button" data-copy-text="https://convoy.bot/mcp">Copy attach URL</button>
+        <a class="chip" href="https://github.com/Deploy-Forward/convoy">Open repository</a>
+      </div>
+      <div class="attach-card" data-reveal data-reveal-delay="4">
+        <p class="mono cap">Attach endpoint</p>
+        <pre id="attach-snippet" class="mono">https://convoy.bot/mcp</pre>
+        <p class="status" id="copy-status" role="status" aria-live="polite"></p>
+      </div>
+    </section>
+
+    <section class="shell section">
+      <h2 data-reveal>How it works</h2>
+      <ol class="step-grid">
+        <li class="pane" data-reveal>
+          <p class="mono cap">01 · Attach</p>
+          <p>Connect your client to <code>https://convoy.bot/mcp</code> and initialize one convoy thread.</p>
+        </li>
+        <li class="pane" data-reveal>
+          <p class="mono cap">02 · Onboard / roster</p>
+          <p>Declare which harnesses you already run. Convoy reports PATH and availability honestly.</p>
+        </li>
+        <li class="pane" data-reveal>
+          <p class="mono cap">03 · Send</p>
+          <p>Dispatch headless synapses to a chosen harness and receive compact cards back in your main thread.</p>
+        </li>
+        <li class="pane" data-reveal>
+          <p class="mono cap">04 · Bring up</p>
+          <p>Open terminals only when you want them. Default MCP flow remains headless and controlled.</p>
+        </li>
+      </ol>
+    </section>
+
+    <section class="shell section">
+      <h2 data-reveal>Objects</h2>
+      <div class="objects">
+        <article class="pane" data-reveal>
+          <h3 class="mono">thread</h3>
+          <p>The durable circuit. One visible working thread bound to one convoy context.</p>
+        </article>
+        <article class="pane" data-reveal>
+          <h3 class="mono">cvy_id</h3>
+          <p>The convoy identifier that ties seats, pointers, and feed events to the same source of truth.</p>
+        </article>
+        <article class="pane" data-reveal>
+          <h3 class="mono">neuron / harness</h3>
+          <p>One native harness session (grok, claude, codex, cursor-agent, agy). Grok Bot is the conductor, not a neuron.</p>
+        </article>
+        <article class="pane" data-reveal>
+          <h3 class="mono">synapse</h3>
+          <p>One send into one harness that returns a compact result card, stamped back to the shared feed.</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="shell section honesty">
+      <h2 data-reveal>Honesty contract</h2>
+      <ul class="honesty-list">
+        <li data-reveal>Bring your own harness login. Convoy does not wrap model vendors.</li>
+        <li data-reveal>MCP attach is live at <code>/mcp</code>; POST is the active JSON-RPC transport.</li>
+        <li data-reveal>Live resumed send is intentionally refused today to avoid hijacking an existing interactive session.</li>
+        <li data-reveal>No invented usage numbers, sessions, or synthetic model identities.</li>
+      </ul>
+    </section>
+  </main>
+
+  <section class="ticker-wrap" aria-label="Convoy facts">
+    <div class="ticker" role="presentation">
+      <div class="ticker-track mono">
+        <span>convoy.bot</span>
+        <span>attach: https://convoy.bot/mcp</span>
+        <span>convoy.bot · a grok-bot native mcp · one process ↔ one bound thread</span>
+        <span>one process ↔ one bound thread</span>
+        <span>BYO harness · no wraps</span>
+        <span>Grok Bot is conductor</span>
+        <span>convoy.bot</span>
+        <span>attach: https://convoy.bot/mcp</span>
+        <span>convoy.bot · a grok-bot native mcp · one process ↔ one bound thread</span>
+        <span>one process ↔ one bound thread</span>
+        <span>BYO harness · no wraps</span>
+        <span>Grok Bot is conductor</span>
+      </div>
+    </div>
+  </section>
+
+  <footer class="shell footer">
+    <p class="mono">Deploy Forward</p>
+    <a href="https://github.com/Deploy-Forward/convoy">GitHub</a>
+    <a href="https://convoy.bot/mcp">https://convoy.bot/mcp</a>
+  </footer>
+
+  <script src="/app.js" defer></script>
+</body>
+</html>
