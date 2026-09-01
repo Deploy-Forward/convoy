@@ -53,12 +53,10 @@ _SITE_ASSETS: dict[str, tuple[str, str]] = {
     "/app.js": ("app.js", "text/javascript; charset=utf-8"),
     "/favicon.svg": ("favicon.svg", "image/svg+xml; charset=utf-8"),
     "/favicon.ico": ("favicon.svg", "image/svg+xml; charset=utf-8"),
-    "/fonts/work-sans-latin-400.woff2": ("fonts/work-sans-latin-400.woff2", "font/woff2"),
-    "/fonts/work-sans-latin-500.woff2": ("fonts/work-sans-latin-500.woff2", "font/woff2"),
-    "/fonts/work-sans-latin-600.woff2": ("fonts/work-sans-latin-600.woff2", "font/woff2"),
-    "/fonts/work-sans-latin-700.woff2": ("fonts/work-sans-latin-700.woff2", "font/woff2"),
-    "/fonts/jetbrains-mono-latin-400.woff2": ("fonts/jetbrains-mono-latin-400.woff2", "font/woff2"),
-    "/fonts/jetbrains-mono-latin-700.woff2": ("fonts/jetbrains-mono-latin-700.woff2", "font/woff2"),
+    "/fonts/work-sans-latin.woff2": ("fonts/work-sans-latin.woff2", "font/woff2"),
+    "/fonts/jetbrains-mono-latin.woff2": ("fonts/jetbrains-mono-latin.woff2", "font/woff2"),
+    "/fonts/OFL-work-sans.txt": ("fonts/OFL-work-sans.txt", "text/plain; charset=utf-8"),
+    "/fonts/OFL-jetbrains-mono.txt": ("fonts/OFL-jetbrains-mono.txt", "text/plain; charset=utf-8"),
 }
 
 
