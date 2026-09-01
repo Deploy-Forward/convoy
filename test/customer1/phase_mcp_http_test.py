@@ -157,6 +157,8 @@ class PhaseMcpHttp(unittest.TestCase):
         self.assertIn("convoy.bot", body)
         self.assertIn(HOME_LINE, body)
         self.assertIn("<!doctype html>", body.lower())
+        self.assertIn('property="og:image" content="https://convoy.bot/og.png"', body)
+        self.assertIn('name="twitter:card" content="summary_large_image"', body)
         self.assertTrue(ctype.startswith("text/html"))
 
     def test_get_mcp_is_post_only(self):
@@ -178,6 +180,7 @@ class PhaseMcpHttp(unittest.TestCase):
             ("/favicon.ico", "image/x-icon"),
             ("/favicon-96.png", "image/png"),
             ("/apple-touch-icon.png", "image/png"),
+            ("/og.png", "image/png"),
         )
         for path, expected_type in cases:
             req = urllib.request.Request(self.base + path, method="GET")

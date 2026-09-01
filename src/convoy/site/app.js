@@ -54,43 +54,6 @@
     });
   }
 
-  function bootPointerFollow() {
-    const hero = document.querySelector(".hero");
-    const mock = document.querySelector(".hero-mock");
-    if (!hero || !mock || reducedMotion) {
-      return;
-    }
-    const canHover = window.matchMedia("(hover: hover) and (pointer: fine)").matches;
-    if (!canHover) {
-      return;
-    }
-    let raf = 0;
-    let mx = 0;
-    let my = 0;
-    const update = () => {
-      raf = 0;
-      mock.style.setProperty("--mock-x", `${mx}px`);
-      mock.style.setProperty("--mock-y", `${my}px`);
-    };
-    hero.addEventListener("pointermove", (event) => {
-      const rect = hero.getBoundingClientRect();
-      const dx = (event.clientX - rect.left) / rect.width - 0.5;
-      const dy = (event.clientY - rect.top) / rect.height - 0.5;
-      mx = Math.max(-4, Math.min(4, dx * 8));
-      my = Math.max(-3, Math.min(3, dy * 6));
-      if (!raf) {
-        raf = window.requestAnimationFrame(update);
-      }
-    });
-    hero.addEventListener("pointerleave", () => {
-      mx = 0;
-      my = 0;
-      if (!raf) {
-        raf = window.requestAnimationFrame(update);
-      }
-    });
-  }
-
   const copyButton = document.getElementById("copy-attach");
   const status = document.getElementById("copy-status");
   if (copyButton) {
@@ -114,6 +77,5 @@
 
   window.requestAnimationFrame(() => {
     bootReveal();
-    bootPointerFollow();
   });
 })();
