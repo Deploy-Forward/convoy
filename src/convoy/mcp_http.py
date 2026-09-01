@@ -17,6 +17,15 @@ from typing import Any
 from urllib.parse import urlparse
 
 from .bringup import bring_up, ensure_interactive_path, hide_windows, live_applier, live_runner, terminals
+from .harness_contract import (
+    canonical_harness_id,
+    contract_path,
+    harness_entries,
+    harness_exec,
+    load_harness_contract,
+    usage_probe_key,
+    usage_remaining_null_until_live_probe,
+)
 from .install import install as install_harness
 from .onboard import onboard as run_onboard
 from .context import pack
@@ -33,13 +42,7 @@ SERVER_NAME = "convoy"
 SERVER_VERSION = "0.1.0"
 HOME_LINE = "convoy.bot · a grok-bot native mcp · one process ↔ one bound thread"
 
-HARNESSES = (
-    ("grok", "Grok"),
-    ("claude", "Claude"),
-    ("codex", "Codex"),
-    ("cursor-agent", "cursor-agent"),
-    ("agy", "agy"),
-)
+HARNESSES = tuple((row["id"], str(row.get("name") or row["id"])) for row in harness_entries(mcp_supported_only=True))
 
 _TOOL_NAMES = ("roster", "glance", "onboard", "terminals", "context", "send", "feed", "bring_up", "open", "hide", "minimize", "background", "install")
 
@@ -67,13 +70,13 @@ TOOLS: list[dict[str, Any]] = [
     },
     {
         "name": "onboard",
-        "description": "First-run after MCP attach: user names harnesses they already have. Checks PATH honestly per named harness only; no silent additions. Refuses wrappers (gemini-cli, grok-cli, ultracode-shim, ola-brain). Optional thread + checkout_root bind without stomping an existing different thread. Missing harnesses point to install opt-in; no installer fetch here.",
+        "description": "First-run after MCP attach: user names harnesses they already have. Checks PATH honestly per named harness only; no silent additions. Refuses wrappers (gemini-cli, grok-cli, ultracode-shim, ola-brain). Optional thread + checkout_root bind without stomping an existing different thread. Missing harnesses point to install opt-in when a vendor installer is cataloged; no installer fetch here.",
         "inputSchema": _schema(
             {
                 "to": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "Named harness ids you already have (grok, claude, codex, cursor-agent, agy)",
+                    "description": "Named harness ids you already have (grok, claude, codex, cursor-agent, agy/antigravity, hermes, pi)",
                 },
                 "thread": {"type": "string"},
                 "checkout_root": {"type": "string"},
@@ -122,7 +125,7 @@ TOOLS: list[dict[str, Any]] = [
     },
     {
         "name": "bring_up",
-        "description": "Resume hop seats visible. dry_run defaults true so a public URL cannot pop windows. Pass dry_run false to spawn.",
+        "description": "Resume seated neurons visibly. dry_run defaults true so a public URL cannot pop windows. Pass dry_run false to spawn.",
         "inputSchema": _schema({
             "convoy_id": {"type": "string"},
             "thread": {"type": "string"},
@@ -140,7 +143,7 @@ TOOLS: list[dict[str, Any]] = [
     },
     {
         "name": "hide",
-        "description": "Minimize or hide hop TUI windows. Sessions keep running. Does not kill grok.exe/claude.exe/Grok Bot.exe. dry_run defaults true so a public URL cannot change windows. Pass dry_run false to apply. mode=minimize (default, SW_MINIMIZE) or hide (SW_HIDE). restore is bring_up.",
+        "description": "Minimize or hide neuron TUI windows. Sessions keep running. Does not kill grok.exe/claude.exe/Grok Bot.exe. dry_run defaults true so a public URL cannot change windows. Pass dry_run false to apply. mode=minimize (default, SW_MINIMIZE) or hide (SW_HIDE). restore is bring_up.",
         "inputSchema": _schema({
             "convoy_id": {"type": "string"},
             "thread": {"type": "string"},
@@ -170,10 +173,10 @@ TOOLS: list[dict[str, Any]] = [
     },
     {
         "name": "install",
-        "description": "Opt-in vendor harness download. dry_run defaults true. Live needs opt_in true. Only x.ai, claude.ai, chatgpt.com, cursor.com, antigravity.google. Never a wrap. affiliate is always JSON null.",
+        "description": "Opt-in vendor harness download. dry_run defaults true. Live needs opt_in true. Only x.ai, claude.ai, chatgpt.com, cursor.com, antigravity.google. Never a wrap. Some MCP-supported harnesses are BYO-only and may not have a cataloged installer. affiliate is always JSON null.",
         "inputSchema": _schema(
             {
-                "to": {"type": "string", "description": "grok, claude, codex, cursor-agent, or agy"},
+                "to": {"type": "string", "description": "grok, claude, codex, cursor-agent, agy/antigravity, hermes, or pi"},
                 "dry_run": {"type": "boolean", "default": True},
                 "opt_in": {"type": "boolean", "default": False},
             },
@@ -194,9 +197,18 @@ def _null_if_blank(val: Any) -> Any:
 def _seat_for(seats: list[dict[str, Any]], hid: str) -> dict[str, Any] | None:
     found = None
     for s in seats:
-        if str(s.get("to") or "").strip().lower() == hid:
+        if canonical_harness_id(s.get("to")) == hid:
             found = s
     return found
+
+
+def _roster_contract_view() -> dict[str, Any]:
+    contract = load_harness_contract()
+    return {
+        "path": contract_path(),
+        "schema_version": contract.get("schema_version"),
+        "effort_types": contract.get("effort_types"),
+    }
 
 
 def build_roster(root: Path) -> dict[str, Any]:
@@ -210,7 +222,8 @@ def build_roster(root: Path) -> dict[str, Any]:
     thread = read_thread(root)
     agents: list[dict[str, Any]] = []
     for hid, name in HARNESSES:
-        path = shutil.which(hid)
+        exe = harness_exec(hid)
+        path = shutil.which(exe)
         present = path is not None
         wired = bool(present)
         usage_remaining = None
@@ -218,9 +231,9 @@ def build_roster(root: Path) -> dict[str, Any]:
         auth = None
         models = None
         if present:
-            probed = probe(hid)
+            probed = probe(usage_probe_key(hid))
             usage_remaining = normalize_usage_remaining(probed.get("usage_remaining"))
-            if usage_remaining == 0 and probed.get("raw") is None and hid in ("grok", "agy", "cursor-agent"):
+            if usage_remaining == 0 and probed.get("raw") is None and usage_remaining_null_until_live_probe(hid):
                 # never invent 0 when the harness does not expose a remaining count
                 usage_remaining = None
             if probed.get("limited"):
@@ -254,7 +267,7 @@ def build_roster(root: Path) -> dict[str, Any]:
             "branch": branch,
             "pr": pr,
         })
-    return {"ok": True, "agents": agents, "path": path_card}
+    return {"ok": True, "agents": agents, "path": path_card, "contract": _roster_contract_view()}
 
 
 def _default_since() -> str:

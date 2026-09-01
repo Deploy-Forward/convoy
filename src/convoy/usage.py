@@ -10,6 +10,12 @@ import subprocess
 from typing import Any, Callable
 
 ProbeFn = Callable[[str], dict[str, Any]]
+_ALIASES = {
+    "antigravity": "agy",
+    "antigravity-cli": "agy",
+    "claude-code": "claude",
+    "cursor_agent": "cursor-agent",
+}
 def _run(cmd: list[str], timeout: int = 15) -> tuple[int, str]:
     kwargs: dict[str, Any] = {
         "stdout": subprocess.PIPE,
@@ -136,6 +142,7 @@ def probe(harness: str, runner: ProbeFn | None = None) -> dict[str, Any]:
     if runner is not None:
         return runner(harness)
     name = (harness or "").strip().lower()
+    name = _ALIASES.get(name, name)
     if name in ("grok-bot", "grok_bot"):
         # Public OSS contract: conductor probe hook exists, but has no live
         # Cursor billing scraper in this repository yet.

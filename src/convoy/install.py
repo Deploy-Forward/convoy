@@ -63,6 +63,12 @@ _REFUSE = frozenset({
     "claude-grok",
     "claude-grok-4-6",
 })
+_ALIASES = {
+    "antigravity": "agy",
+    "antigravity-cli": "agy",
+    "claude-code": "claude",
+    "cursor_agent": "cursor-agent",
+}
 
 
 def _host_ok(url: str, host: str) -> bool:
@@ -85,7 +91,8 @@ def _which(to: str) -> str | None:
 
 
 def vendor_card(to: str, *, windows: bool | None = None) -> dict[str, Any]:
-    key = str(to or "").strip().lower()
+    raw = str(to or "").strip().lower()
+    key = _ALIASES.get(raw, raw)
     if key in _REFUSE or key not in HARNESSES:
         return {
             "ok": False,

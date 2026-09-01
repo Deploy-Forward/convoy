@@ -1,0 +1,163 @@
+{
+  "schema_version": "2026-09-01",
+  "extensible": true,
+  "effort_types": {
+    "low": {
+      "kind": "reasoning-depth"
+    },
+    "medium": {
+      "kind": "reasoning-depth"
+    },
+    "high": {
+      "kind": "reasoning-depth"
+    },
+    "xhigh": {
+      "kind": "reasoning-depth"
+    },
+    "extra-high": {
+      "kind": "product-key",
+      "vendor_equivalent": "xhigh",
+      "scope": "codex"
+    },
+    "max": {
+      "kind": "reasoning-depth"
+    },
+    "more-reasoning": {
+      "kind": "menu-bucket",
+      "scope": "codex"
+    }
+  },
+  "harnesses": [
+    {
+      "id": "grok",
+      "name": "Grok",
+      "aliases": [
+        "grok.exe"
+      ],
+      "exec": "grok",
+      "mcp_supported": true,
+      "usage_probe": "grok",
+      "usage_remaining_null_until_live_probe": true,
+      "effort": {
+        "mode": "harness-scoped",
+        "keys": [
+          "high"
+        ]
+      }
+    },
+    {
+      "id": "claude",
+      "name": "Claude Code",
+      "aliases": [
+        "claude-code",
+        "claude.exe"
+      ],
+      "exec": "claude",
+      "mcp_supported": true,
+      "usage_probe": "claude",
+      "usage_remaining_null_until_live_probe": false,
+      "effort": {
+        "mode": "harness-scoped",
+        "keys": [
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max"
+        ]
+      }
+    },
+    {
+      "id": "codex",
+      "name": "Codex",
+      "aliases": [
+        "codex.exe"
+      ],
+      "exec": "codex",
+      "mcp_supported": true,
+      "usage_probe": "codex",
+      "usage_remaining_null_until_live_probe": false,
+      "effort": {
+        "mode": "harness-scoped",
+        "keys": [
+          "low",
+          "medium",
+          "high",
+          "extra-high",
+          "more-reasoning"
+        ],
+        "vendor_key": "model_reasoning_effort",
+        "vendor_values": [
+          "minimal",
+          "low",
+          "medium",
+          "high",
+          "xhigh"
+        ]
+      }
+    },
+    {
+      "id": "cursor-agent",
+      "name": "Cursor-Agent",
+      "aliases": [
+        "cursor_agent",
+        "cursor-agent.exe"
+      ],
+      "exec": "cursor-agent",
+      "mcp_supported": true,
+      "usage_probe": "cursor-agent",
+      "usage_remaining_null_until_live_probe": true,
+      "effort": {
+        "mode": "unknown",
+        "keys": null
+      }
+    },
+    {
+      "id": "agy",
+      "name": "Antigravity (CLI)",
+      "aliases": [
+        "antigravity",
+        "antigravity-cli",
+        "agy.exe"
+      ],
+      "exec": "agy",
+      "mcp_supported": true,
+      "usage_probe": "agy",
+      "usage_remaining_null_until_live_probe": true,
+      "effort": {
+        "mode": "unknown",
+        "keys": null
+      }
+    },
+    {
+      "id": "hermes",
+      "name": "Hermes",
+      "aliases": [
+        "hermes.exe"
+      ],
+      "exec": "hermes",
+      "mcp_supported": true,
+      "usage_probe": "hermes",
+      "usage_remaining_null_until_live_probe": true,
+      "effort": {
+        "mode": "model-driven",
+        "keys": null
+      }
+    },
+    {
+      "id": "pi",
+      "name": "Pi",
+      "aliases": [
+        "pi.exe"
+      ],
+      "exec": "pi",
+      "mcp_supported": true,
+      "usage_probe": "pi",
+      "usage_remaining_null_until_live_probe": true,
+      "effort": {
+        "mode": "model-driven",
+        "keys": null
+      }
+    }
+  ]
+}
