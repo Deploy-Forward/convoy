@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>convoy.bot | grok-bot native MCP</title>
-  <meta name="description" content="Convoy is a grok-bot native open source MCP for one visible thread and one bound convoy context.">
+  <title>convoy.bot | shared project memory for Grok Bot</title>
+  <meta name="description" content="Convoy is shared project memory for Grok Bot: one MCP root, durable thread state, native neurons, and honest compact cards.">
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
   <link rel="icon" href="/favicon.ico" sizes="any">
   <link rel="icon" href="/favicon-96.png" type="image/png" sizes="96x96">
@@ -14,9 +14,9 @@
 <body>
   <a class="skip-link" href="#main">Skip to content</a>
   <header class="topbar">
-    <div class="shell topbar-inner">
-      <div class="brand">
-        <a class="brand-home" href="/" aria-label="convoy.bot home">
+    <div class="shell header-shell">
+      <div class="header-lockup">
+        <a class="lockup-mark" href="/" aria-label="convoy.bot home">
           <svg class="brand-mark" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Deploy Forward">
             <rect width="128" height="128" rx="26" fill="#1d4ed8"/>
             <rect x="22" y="22" width="15" height="15" fill="#ffffff"/>
@@ -25,11 +25,11 @@
             <rect x="91" y="91" width="15" height="15" fill="#ffffff"/>
             <rect x="46" y="46" width="36" height="36" fill="#ffffff"/>
           </svg>
-          <span class="brand-stack">
-            <span class="wordmark">convoy.bot</span>
-          </span>
         </a>
-        <a class="brand-credit" href="https://deployforward.dev">Deploy Forward</a>
+        <div class="lockup-text">
+          <a class="lockup-wordmark mono" href="/">convoy.bot</a>
+          <a class="lockup-house" href="https://deployforward.dev">Deploy Forward</a>
+        </div>
       </div>
       <nav class="top-links mono" aria-label="Primary">
         <a href="#how">How</a>
@@ -44,22 +44,21 @@
       <div class="hero-atmosphere" aria-hidden="true"></div>
       <div class="shell hero-grid">
         <div class="hero-copy">
-          <p class="hero-kicker mono" data-reveal>Convoy</p>
-          <h1 class="hero-mark mono" data-reveal>convoy.bot</h1>
-          <h2 class="hero-line" data-reveal>
-            Stay in one thread. <span class="marker">Send</span> work to other harnesses,
-            then <span class="marker">bring_up</span> terminals only when you need them.
-          </h2>
+          <p class="hero-kicker mono" data-reveal>shared project memory for Grok Bot</p>
+          <h1 class="hero-line" data-reveal>
+            One thread. <span class="marker">Send</span> work to native neurons.
+            Use <span class="marker">bring_up</span> only when you want terminals.
+          </h1>
           <p class="lede" data-reveal>
-            Convoy is the source of truth for one visible thread and one <code>cvy_id</code>.
-            Grok Bot is the conductor. Harness sessions stay native.
+            Convoy keeps one MCP root at <code>https://convoy.bot/mcp</code>, routes work to your existing CLIs,
+            and grounds every neuron in one durable thread state.
           </p>
           <p class="native-line" data-reveal>
             A <code>grok-bot</code> native open source MCP. Not a wrapper, not a third-party add-on.
           </p>
           <p class="family-line" data-reveal>
-            Another open source product from <a href="https://deployforward.dev">Deploy Forward</a>,
-            sibling to the tracker at <a href="https://deployforward.dev">deployforward.dev</a>.
+            Another open source product from <a href="https://deployforward.dev">Deploy Forward</a>.
+            Convoy is MIT and sibling to the tracker at <a href="https://deployforward.dev">deployforward.dev</a>.
           </p>
           <div class="hero-actions" data-reveal>
             <button class="btn btn-primary" id="copy-attach" type="button" data-copy-text="https://convoy.bot/mcp">
@@ -71,21 +70,21 @@
           <p class="status" id="copy-status" role="status" aria-live="polite"></p>
         </div>
 
-        <aside class="hero-mock" data-reveal aria-label="Convoy mock panel">
+        <aside class="hero-mock" data-reveal aria-label="Convoy flow">
           <div class="mock-head">
-            <p class="mono cap">active thread</p>
-            <p class="mono">customer1</p>
+            <p class="mono cap">one MCP root</p>
+            <p class="mono">/mcp</p>
           </div>
           <div class="mock-card">
-            <p class="mono cap">attach endpoint</p>
-            <code>POST /mcp · JSON-RPC</code>
-            <p class="mono mock-url">https://convoy.bot/mcp</p>
+            <p class="mono cap">contract</p>
+            <code>feed + seats + convoy_id</code>
+            <p class="mono mock-url">unknown values are JSON null</p>
           </div>
           <ul class="mock-list">
-            <li><span class="mono">01</span> onboard / roster</li>
-            <li><span class="mono">02</span> send (headless)</li>
-            <li><span class="mono">03</span> feed + compact card</li>
-            <li><span class="mono">04</span> bring_up on demand</li>
+            <li><span class="mono">01</span> attach one MCP root</li>
+            <li><span class="mono">02</span> onboard / roster (PATH truth)</li>
+            <li><span class="mono">03</span> send headless synapse card</li>
+            <li><span class="mono">04</span> bring_up for visible TUIs</li>
           </ul>
         </aside>
       </div>
@@ -97,19 +96,19 @@
         <ol class="step-grid">
           <li class="pane card-hover" data-reveal>
             <p class="mono cap">01 · Attach</p>
-            <p>Connect your client to <code>https://convoy.bot/mcp</code> and initialize one convoy thread.</p>
+            <p>Attach one MCP: <code>https://convoy.bot/mcp</code>. A named thread is a <code>--root</code> binding, not a second MCP URL.</p>
           </li>
           <li class="pane card-hover" data-reveal>
             <p class="mono cap">02 · Onboard / roster</p>
-            <p>Declare which harnesses you already run. Convoy reports PATH and availability honestly.</p>
+            <p>Name the harnesses you already have. Convoy reports PATH truth and does not invent a roster.</p>
           </li>
           <li class="pane card-hover" data-reveal>
-            <p class="mono cap">03 · Send</p>
-            <p>Dispatch headless synapses to a chosen harness and receive compact cards back in your main thread.</p>
+            <p class="mono cap">03 · Send / feed / context</p>
+            <p><code>send</code> is headless synapse flow: pointers in, compact card out. <code>feed</code> and <code>context</code> are stamps and pointers, not vendor transcripts.</p>
           </li>
           <li class="pane card-hover" data-reveal>
-            <p class="mono cap">04 · Bring up</p>
-            <p>Open terminals only when you want them. Default MCP flow remains headless and controlled.</p>
+            <p class="mono cap">04 · bring_up / open</p>
+            <p>For visible TUIs, use <code>bring_up</code> or <code>open</code>: one isolated Windows Terminal window per named thread with split panes. Grok Bot is not a window.</p>
           </li>
         </ol>
       </div>
@@ -118,22 +117,22 @@
     <section class="ruled-block">
       <div class="shell section">
         <h2 data-reveal>Objects</h2>
-        <div class="objects">
+        <div class="objects-grid">
           <article class="pane card-hover" data-reveal>
             <h3 class="mono">thread</h3>
-            <p>The durable circuit. One visible working thread bound to one convoy context.</p>
+            <p>Durable circuit keyed by <code>convoy_id</code>. One visible thread stays authoritative.</p>
           </article>
           <article class="pane card-hover" data-reveal>
-            <h3 class="mono">cvy_id</h3>
-            <p>The convoy identifier that ties seats, pointers, and feed events to the same source of truth.</p>
-          </article>
-          <article class="pane card-hover" data-reveal>
-            <h3 class="mono">neuron / harness</h3>
-            <p>One native harness session (grok, claude, codex, cursor-agent, agy). Grok Bot is the conductor, not a neuron.</p>
+            <h3 class="mono">neuron</h3>
+            <p>BYO native CLIs: grok, claude, codex, cursor-agent, agy, hermes, pi.</p>
           </article>
           <article class="pane card-hover" data-reveal>
             <h3 class="mono">synapse</h3>
-            <p>One send into one harness that returns a compact result card, stamped back to the shared feed.</p>
+            <p>One native <code>send</code> into one neuron. Live send refuses stealing an interactive <code>--resume</code> flow (<code>no-steal</code>).</p>
+          </article>
+          <article class="pane card-hover" data-reveal>
+            <h3 class="mono">convoy contract</h3>
+            <p><code>feed</code> + seats + <code>convoy_id</code>. Unknown values remain JSON <code>null</code>; no invented usage or session numbers.</p>
           </article>
         </div>
       </div>
@@ -141,12 +140,11 @@
 
     <section class="ruled-block">
       <div class="shell section honesty">
-        <h2 data-reveal>Honesty contract</h2>
+        <h2 data-reveal>Honesty</h2>
         <ul class="honesty-list">
-          <li data-reveal>Bring your own harness login. Convoy does not wrap model vendors.</li>
-          <li data-reveal>MCP attach is live at <code>/mcp</code>; POST is the active JSON-RPC transport.</li>
-          <li data-reveal>Live resumed send is intentionally refused today to avoid hijacking an existing interactive session.</li>
-          <li data-reveal>No invented usage numbers, sessions, or synthetic model identities.</li>
+          <li data-reveal>Public MCP stays attach-first. Core tools are stable; in-tree extras like <code>hide</code> and <code>install</code> can lag on a deployed process.</li>
+          <li data-reveal>BYO harness only, no wraps. Convoy is not <code>ola-brain</code> or UltraCode-Shim as the product surface.</li>
+          <li data-reveal>Native live send is not overclaimed here; use <code>bring_up</code> when you need visible interactive sessions.</li>
         </ul>
       </div>
     </section>
