@@ -1,6 +1,6 @@
 # Convoy
 
-**Repo:** `deploy-forward/convoy` (Grok Bot HTTP MCP + hop CLI)
+**Repo:** `deploy-forward/convoy` (Grok Bot HTTP MCP + neuron CLI)
 **Sibling:** `deploy-forward/deploy-forward` (`npx deploy-forward`, tracker, board)
 **Native platform:** `Deploy-Forward/platform` (NOT this MCP)
 **Sites:** https://convoy.bot (Grok Bot MCP + frontmatter, tweet this) · https://convoy.deployforward.dev (launch product, not live yet, not the tweet)
@@ -21,9 +21,19 @@ Bring your own harness. Do not bring your own API key into Claude Code. Named re
 
 This block is authoritative for Grok Bot MCP layering and native-send DoD. If older notes below disagree, this block wins until they are rewritten.
 
+### Terminology lock (2026-09-01)
+
+- Grok Bot = conductor.
+- neuron = one grok/claude/codex/cursor-agent session on a thread.
+- synapse = native `send` into that neuron (not `ola-brain side-chat`).
+- thread = durable circuit (`convoy_id`).
+- named thread = `--root` binding, not a second MCP URL.
+- Product wording retires "hop" in current product sentences; historical logs below may still quote it.
+- Harness self-identity skills/plugins are a follow-up PR and are intentionally out of scope here.
+
 ### Locked layer statement
 
-> Grok Bot is the opposite layer from Herdr and CNVS. This Grok Bot chat is the conductor. MCP is how the conductor attaches (`roster`, `onboard`, `send`, `feed`, `context`, `bring_up`/`open`, `terminals`; tree also has `install` and `hide`). Convoy is the SoT: one visible thread, one `cvy_id`, one tied repo, seats that hop without merging native sessions. Default `send` is headless on purpose. `bring_up` is the terminal view, hashed `--resume`, isolated n-pane. Same-branch overlap is refused. Pointers in, compact card out.
+> Grok Bot is the opposite layer from Herdr and CNVS. This Grok Bot chat is the conductor. MCP is how the conductor attaches (`roster`, `onboard`, `send`, `feed`, `context`, `bring_up`/`open`, `terminals`; tree also has `install` and `hide`). Convoy is the SoT: one visible thread, one `cvy_id`, one tied repo, seats/neuron sessions that stay isolated. Default `send` is headless on purpose. `bring_up` is the terminal view, isolated n-pane, and only uses vendor resume ids. Same-branch overlap is refused. Pointers in, compact card out.
 >
 > Bring your own harness. Do not wrap the model. Named refuse: UltraCode-Shim, ola-brain as the product, grok `-p`/`-c`, wrapping Grok as `claude-grok-4-6`.
 
@@ -63,8 +73,9 @@ OSS/public vs closed/platform lock:
 
 ### Current code honesty (tree-verified)
 
-- `src/convoy/mcp_http.py` `call_tool("send", ...)` sets `runner = ola_runner if live else fake_runner`.
-- `src/convoy/synapse.py` `ola_runner` executes `ola-brain side-chat send`.
+- `src/convoy/mcp_http.py` `call_tool("send", ...)` sets `runner = native_runner if live else fake_runner`.
+- `src/convoy/synapse.py` `native_runner` executes vendor binaries on PATH; wrapper names are refused.
+- `src/convoy/synapse.py` refuses live resumed send (`session_id`/`resume`) to avoid spawning a second interactive `--resume` process (documented RED no-steal lock).
 - `src/convoy/mcp_http.py` `TOOLS` includes `onboard`, `hide`, and `install` (plus aliases), but a deployed process can still expose the 7-tool snapshot (`roster`, `send`, `feed`, `context`, `bring_up`, `open`, `terminals`).
 - `src/convoy/bringup.py` and `src/convoy/install.py` refuse wrapper names (`ola-brain`, `side-chat`, `UltraCode-Shim`) for those tool paths.
 
@@ -77,7 +88,7 @@ Status: **RED** until live functions pass on `https://convoy.bot/mcp` without sh
 #### Successful functions (today)
 
 - **PARTIAL GREEN:** attach/`roster`/`context`/`feed` at MCP layer are attachable.
-- **RED:** native live `send` is not done while `live=true` routes through `ola_runner` (`ola-brain side-chat send`).
+- **RED (locked):** live resumed `send` is intentionally refused for now; Convoy must not spawn a second interactive `harness --resume <id>` process that contends with an already-live neuron.
 - **GREEN (scope guard):** `bring_up` and `install` refusal paths already reject wrapper targets.
 
 Until item (1) exists in code, items (2) and (3) cannot be GREEN. Fake dual-send is not talk. `ola_runner` success on one machine is not stranger-attachable proof.
@@ -123,11 +134,11 @@ Phase gate note: this is the remaining MCP-attach/send hole inside Phase 7. Do n
 
 | Product | Repo | What it is | What it is not |
 |---|---|---|---|
-| Convoy MCP + hop CLI | `deploy-forward/convoy` | HTTP MCP tools (`roster`, `onboard`, `terminals`, `context`, `send`, `feed`) plus a Python hop CLI that stamps a layer and fires harness CLIs | Not the native Composer `turn.send`. Not `npx deploy-forward` itself. |
+| Convoy MCP + neuron CLI | `deploy-forward/convoy` | HTTP MCP tools (`roster`, `onboard`, `terminals`, `context`, `send`, `feed`) plus a Python neuron CLI that stamps a layer and fires harness CLIs | Not the native Composer `turn.send`. Not `npx deploy-forward` itself. |
 | Installer / tracker / board | `deploy-forward/deploy-forward` | `npx deploy-forward --convoy --tracker --board`. White-glove attach. Tracking and the public board. | Not the MCP process. Board requires tracker. |
 | Native platform | `Deploy-Forward/platform` | Skinny Convoy thread/layer inside Composer. Native `turn.send`. | Not this HTTP MCP. Do not land MCP code there. |
 
-Customer 1 talks to Grok Bot. Grok Bot hops through Convoy. The hop lands on a harness the human already signed into. Three products, one thread.
+Customer 1 talks to Grok Bot. Grok Bot opens synapses through Convoy. Each synapse lands on a harness the human already signed into. Three products, one thread.
 
 ---
 
@@ -135,15 +146,15 @@ Customer 1 talks to Grok Bot. Grok Bot hops through Convoy. The hop lands on a h
 
 | Object | Lives where | Shape | Owns | Does not own |
 |---|---|---|---|---|
-| **Thread** | The human conversation (this Grok Bot chat, or any customer thread). Front matter is in the chat, never invented. | Message to/From, Thread path, Skill on disk. The conversation is the durable unit. | The human's questions, compact cards coming back, the decision to hop. | Vendor session_ids. Packed stdin. Full transcripts. |
-| **Layer** | `.convoy/feed.jsonl` under a checkout root. On Aether customer 1: `C:\Users\marco\ola\da-integration\.convoy\feed.jsonl`. | JSONL of `{ts, kind, instance_id, summary, ...extra}`. Sliding window via `feed_since`. | Event time. Pointers (thread.md, role.md, `.ola/brief.md`, newest handoff, instance_id, worktree, branch, pr). Who hopped, when. | Bytes of a vendor transcript. `hook-context` / `precompact` / `session-end` from ola-brain. Vendor `--resume`. |
-| **Synapse** | One hop: Convoy execs one harness CLI, one instance, one meter. Card comes back compact. | `{ok, to, session_id, model, usage_remaining, body, ...}`. Hook row stamped on send/refuse/spawn. | That harness's native session_id. That harness's cwd/worktree. That harness's remaining quota (or JSON `null`). | Another synapse's session. Another synapse's branch. The Grok Bot main context window. |
+| **Thread** | The human conversation (this Grok Bot chat, or any customer thread). Front matter is in the chat, never invented. | Message to/From, Thread path, Skill on disk. The conversation is the durable unit. | The human's questions, compact cards coming back, the decision to open a synapse. | Vendor session_ids. Packed stdin. Full transcripts. |
+| **Layer** | `.convoy/feed.jsonl` under a checkout root. On Aether customer 1: `C:\Users\marco\ola\da-integration\.convoy\feed.jsonl`. | JSONL of `{ts, kind, instance_id, summary, ...extra}`. Sliding window via `feed_since`. | Event time. Pointers (thread.md, role.md, `.ola/brief.md`, newest handoff, instance_id, worktree, branch, pr). Which neuron was touched, when. | Bytes of a vendor transcript. `hook-context` / `precompact` / `session-end` from ola-brain. Vendor `--resume`. |
+| **Synapse** | One native send: Convoy execs one harness CLI, one instance, one meter. Card comes back compact. | `{ok, to, session_id, model, usage_remaining, body, ...}`. Hook row stamped on send/refuse/spawn. | That harness's native session_id. That harness's cwd/worktree. That harness's remaining quota (or JSON `null`). | Another synapse's session. Another synapse's branch. The Grok Bot main context window. |
 
 Rules that follow from the table:
 
 - Two synapses never share a vendor session.
 - The layer is pointers and stamps, not packed bytes in stdin.
-- Turn 2+ of a hop resumes **that instance's** `session_id` only.
+- Turn 2+ of a neuron resumes **that instance's** vendor session id only.
 - Unknown fields are JSON `null`. Never invent `main`, never invent a token count, never invent a session id.
 
 ---
@@ -156,7 +167,7 @@ Transport: HTTP MCP at `https://convoy.bot/mcp` (or a user daemon reachable from
 
 2026-08-28 wire snapshot (customer 1): Shell on Aether-Deployed `machineId` `64a3fdd5-2c54-4038-8984-019382b68a78` running `C:\.grok\Invoke-AgentChannel.ps1` and `C:\.grok\ConvoyLayer.ps1` wrapping `ola-brain.exe`. MCP catalog had no Convoy plugin at that time. Status then: **RED** for HTTP MCP, **GREEN** for PC CLI hop.
 
-The copy of `ConvoyLayer.ps1` in this tree (`/workspace/convoy/ConvoyLayer.ps1`) is the same contract: `hook`, `feed-since`, `send-dry`. Live hops on Aether still go through ola-brain. Default `python -m convoy send` uses a fake runner. Pass `--live` to exec ola-brain. HTTP MCP server code is in `src/convoy/mcp_http.py` (`python -m convoy mcp --root ROOT --port 8788`). Do not treat this paragraph as current attach status; use the canonical split above.
+The copy of `ConvoyLayer.ps1` in this tree (`/workspace/convoy/ConvoyLayer.ps1`) is the same contract: `hook`, `feed-since`, `send-dry`. In this repo, default `python -m convoy send` uses a fake runner and `--live` uses native vendor binaries on PATH. Live resumed send is currently refused (RED no-steal lock) to avoid launching a second interactive resume process. HTTP MCP server code is in `src/convoy/mcp_http.py` (`python -m convoy mcp --root ROOT --port 8788`). Do not treat this paragraph as current attach status; use the canonical split above.
 
 ### Required MCP tools and JSON cards
 
@@ -275,7 +286,7 @@ Not file contents. Not a vendor transcript. Not stdin bytes.
 
 #### `send`
 
-Args: `to=harness|instance_id`, `body`, optional `model` / `label` / `worktree`. Returns a compact card. Refuses if unavailable (limited quota, missing binary, same-branch pair with no worktree). Does not wait 120s on a known-limited harness. Default hop is headless: `send` never pops a TUI and never calls `live_runner` / `CREATE_NEW_CONSOLE`.
+Args: `to=harness|instance_id`, `body`, optional `model` / `label` / `worktree`. Returns a compact card. Refuses if unavailable (limited quota, missing binary, same-branch pair with no worktree). Does not wait 120s on a known-limited harness. Default synapse is headless: `send` never pops a TUI and never calls `live_runner` / `CREATE_NEW_CONSOLE`. Live resumed send is currently refused (RED no-steal lock) rather than spawning a second interactive `harness --resume`.
 
 #### `feed`
 
@@ -283,7 +294,7 @@ Events since `ts`. Default last window, not unbounded vendor `--resume`. Maps to
 
 #### `bring_up` (alias `open`)
 
-Args: `thread=` or `convoy_id=`. Resumes every hop seat for that thread **visible** (`headless=false`) with that harness's own CLI `--resume` (not ola-brain, not grok `-p`/`-c`). Returns a windows card:
+Args: `thread=` or `convoy_id=`. Opens every seated neuron for that thread **visible** (`headless=false`) with native harness argv (`grok/claude --resume <vendor-id>`, `codex resume <vendor-id>`). If no vendor id exists yet, first-run omits resume flags. Returns a windows card:
 
 | Field | Type | Meaning |
 |---|---|---|
@@ -296,7 +307,7 @@ Args: `thread=` or `convoy_id=`. Resumes every hop seat for that thread **visibl
 
 Each window: `to`, `session_id`, `resume` (vendor id passed to `--resume`; never null if ok; never invented), `resume_key` (`cvr_` + sha256(convoy_id + "\0" + thread + "\0" + to).hexdigest()[:16]; hash is the map key, resume is the harness argument), `worktree`, `rect` `{x,y,w,h}`, plus CLI extras `argv`, `ok`. Lookup by thread+to returns the same resume. No PTY dump. Historical 2026-08-28 snapshot marked HTTP MCP RED; use canonical lock for current status. CLI: `python -m convoy bring-up` / `open` `[convoy_id] [--thread T] [--dry-run]`.
 
-First-run Claude bypass warning is ungated by `bring_up` / `ensure_first_run`. Anthropic ignores `skipDangerousModePermissionPrompt` in project `{worktree}/.claude/settings.json` — that key only works in the **user** file `~/.claude/settings.json`. Merge `skipDangerousModePermissionPrompt: true` into `~/.claude/settings.json` (create `~/.claude/` if missing; merge, do not clobber other keys). Do **not** set `permissions.defaultMode` on the user global file (that would make ALL Claude sessions on the machine bypass). Still write the project copy (`skipDangerousModePermissionPrompt: true`, `permissions.defaultMode: bypassPermissions`) as a record. Never write `~/.claude` if the worktree **is** the home dir. Grok/codex no-op on Claude settings. Not a user paste. Not a step-by-step TUI guide. User once-gates only: attach `https://convoy.bot/mcp`, and vendor CLI login. `roster.present` is `shutil.which` on the MCP process PATH, not an already-open desktop terminal. Interactive bash skips `.profile`, so `~/.local/bin` (claude, codex) can be installed and still `command not found` while grok (`.bashrc`) works. `roster` and `bring_up` / `ensure_first_run` call `ensure_interactive_path`, which writes an idempotent `# >>> convoy harness PATH >>>` block into `~/.bashrc` (`$HOME/.local/bin` and `$HOME/.grok/bin`). No-op on Windows (WT inherits user PATH). Does not source a foreign PID; already-open terminals still need `source ~/.bashrc` or a new shell. Roster JSON includes `path` (`path_ok`, `path_written`, `path_bashrc`, `path_host`). Folder trust, Claude Bypass Permissions, `role.md` persona, isolated WT tiling, and agent-driven verify are Convoy's job. Dry-run still calls `ensure_first_run` (cards show `first_run.prepared`, `home_written`, `settings_home`; `settings` stays the project path) and must not Popen `wt`. Claude live argv keeps `--permission-mode bypassPermissions` and `--allow-dangerously-skip-permissions`. Persona is `role.md` in the worktree, not CLI `--append-system-prompt`.
+First-run Claude bypass warning is ungated by `bring_up` / `ensure_first_run`. Anthropic ignores `skipDangerousModePermissionPrompt` in project `{worktree}/.claude/settings.json` — that key only works in the **user** file `~/.claude/settings.json`. Merge `skipDangerousModePermissionPrompt: true` into `~/.claude/settings.json` (create `~/.claude/` if missing; merge, do not clobber other keys). Do **not** set `permissions.defaultMode` on the user global file (that would make ALL Claude sessions on the machine bypass). Still write the project copy (`skipDangerousModePermissionPrompt: true`, `permissions.defaultMode: bypassPermissions`) as a record. Also merge `~/.claude.json` `projects[worktree].hasTrustDialogAccepted = true` for both slash spellings of the worktree path. Never write `~/.claude` if the worktree **is** the home dir. Grok/codex no-op on Claude settings. Not a user paste. Not a step-by-step TUI guide. User once-gates only: attach `https://convoy.bot/mcp`, and vendor CLI login. `roster.present` is `shutil.which` on the MCP process PATH, not an already-open desktop terminal. Interactive bash skips `.profile`, so `~/.local/bin` (claude, codex) can be installed and still `command not found` while grok (`.bashrc`) works. `roster` and `bring_up` / `ensure_first_run` call `ensure_interactive_path`, which writes an idempotent `# >>> convoy harness PATH >>>` block into `~/.bashrc` (`$HOME/.local/bin` and `$HOME/.grok/bin`). No-op on Windows (WT inherits user PATH). Does not source a foreign PID; already-open terminals still need `source ~/.bashrc` or a new shell. Roster JSON includes `path` (`path_ok`, `path_written`, `path_bashrc`, `path_host`). Folder trust, Claude Bypass Permissions, `role.md` persona, isolated WT tiling, and agent-driven verify are Convoy's job. Dry-run still calls `ensure_first_run` (cards show `first_run.prepared`, `home_written`, `settings_home`, `trust_written`; `settings` stays the project path) and must not Popen `wt`. Claude live argv keeps `--permission-mode bypassPermissions` and `--allow-dangerously-skip-permissions`. Persona is `role.md` in the worktree, not CLI `--append-system-prompt`.
 
 
 
@@ -310,7 +321,7 @@ Unit GREEN: `test/customer1/phase_install_test.py`.
 
 #### `hide` (aliases `minimize`, `background`)
 
-Default hop (`send`) is headless: it never pops a TUI and never calls `live_runner` / `CREATE_NEW_CONSOLE`. `bring_up` / `open` is the only show command (HTTP `dry_run` still defaults true so a public URL cannot pop windows; CLI `bring-up` without `--dry-run` uses `live_runner`, which Popen's **one** `wt.exe` whose ArgumentList is `isolated_wt_argv` — FileName is wt, not in the list; `--window new`; first command `nt`; n=2 one `-V`; n=3 `-V` then `-H`; absolute exe positional after `-d DIR`; never `--` before the exe; never `-w 0`; never per-seat `CREATE_NEW_CONSOLE` + `MoveWindow`; never `WM_CLOSE`). Isolated spawn is a new WINDOW not a new PROCESS. Dry-run still calls `ensure_first_run` and must not Popen `wt`. Never ola-brain / side-chat / UltraCode-Shim. `hide` / `minimize` / `background` minimize hop windows (Win32 `SW_MINIMIZE` = 6; optional `mode=hide` is `SW_HIDE` = 0). Sessions keep running. Not `taskkill`. Never kills `grok.exe` / `claude.exe` / `Grok Bot.exe`. Conductor grok-bot is not a window. `restore` is `bring_up`, not this tool. HTTP MCP attach is still RED.
+Default synapse (`send`) is headless: it never pops a TUI and never calls `live_runner` / `CREATE_NEW_CONSOLE`. `bring_up` / `open` is the only show command (HTTP `dry_run` still defaults true so a public URL cannot pop windows; CLI `bring-up` without `--dry-run` uses `live_runner`, which Popen's **one** `wt.exe` whose ArgumentList is `isolated_wt_argv` — FileName is wt, not in the list; `--window new`; first command `nt`; n=2 one `-V`; n=3 `-V` then `-H`; absolute exe positional after `-d DIR`; never `--` before the exe; never `-w 0`; never per-seat `CREATE_NEW_CONSOLE` + `MoveWindow`; never `WM_CLOSE`). Isolated spawn is a new WINDOW not a new PROCESS. Dry-run still calls `ensure_first_run` and must not Popen `wt`. Never ola-brain / side-chat / UltraCode-Shim. `hide` / `minimize` / `background` minimize neuron windows (Win32 `SW_MINIMIZE` = 6; optional `mode=hide` is `SW_HIDE` = 0). Sessions keep running. Not `taskkill`. Never kills `grok.exe` / `claude.exe` / `Grok Bot.exe`. Conductor grok-bot is not a window. `restore` is `bring_up`, not this tool. HTTP MCP attach is still RED.
 
 ### Front matter in this chat, never invented
 
@@ -742,7 +753,7 @@ Knowledge layer = `context.pack` pointers (`thread.md`, `role.md`, brief, handof
 - **RED live (parent):** bind this Grok Bot thread, two attach stamps, `feed --since`, resume hop body. Not done on Aether in this fold.
 - **RED live resume hop:** `send --live --instance-id grok-session-phase6bgrok PHASE7_ATTACH` kept that session_id (no sibling mint) but `ok` false, TimeoutExpired 120s. ola-brain invoked `grok.EXE -p ... -c` (continue latest in cwd), not a successful turn body. Hostile. Bring-up must not use grok `-p` or `-c`.
 - **GREEN unit (this fold, 2026-08-29):** `test/customer1/phase7_bringup_test.py`. `resume_argv` is native `[grok, --resume, session_id]` / `[claude, --resume, session_id]`, cwd=worktree. Not ola-brain, not `side-chat`, not grok `-p`/`-c`/`--output-format`. Dry-run `bring-up` / `open` returns two windows, distinct tile rects on 1920x1080, conductor grok-bot is not a window, `resume` equals registered `session_id` (never minted). `resume_key = "cvr_" + sha256(convoy_id + "\0" + thread + "\0" + to).hexdigest()[:16]`; same convoy_id+thread+to → same key; different thread → different key. Lookup by thread+to returns the same resume. Missing session_id refuses that seat. MCP JSON cards exist in CLI (`bring_up` / `terminals`); attach/read can be partial GREEN, native `send` remains RED.
-- **GREEN unit (2026-08-29 first-run ungate):** `test/customer1/phase7_first_run_test.py`. Anthropic ignores project `skipDangerousModePermissionPrompt`; user-level `~/.claude/settings.json` is required for that one key (do not set user-global `defaultMode`). `ensure_first_run` writes thread `{worktree}/.claude/settings.json` (`skipDangerousModePermissionPrompt` + `permissions.defaultMode: bypassPermissions`) and merges `skipDangerousModePermissionPrompt: true` into `~/.claude/settings.json` (create dir if missing; merge existing home keys). Refuses if worktree is home. Grok/codex no-op (no home write). Dry-run `bring_up` still calls it (`first_run.prepared`, `home_written`, `settings_home`) and does not Popen `wt`. Live Claude argv adds `--allow-dangerously-skip-permissions` (no duplicate) plus `--permission-mode bypassPermissions`. `isolated_wt_argv` is a pure argv builder. Live GREEN on WT 1.24.11911.0 (Aether 2026-08-29): `--window new`, first command `nt`, n=3 one `-V` then one `-H`, absolute exe positional after `-d DIR` (never `--` before the exe; that pops GUI Help), never `-w 0`, never `-w <thread-name>` (Help), literal `;`. No live WT spawn in unit tests.
+- **GREEN unit (2026-08-29 first-run ungate):** `test/customer1/phase7_first_run_test.py`. Anthropic ignores project `skipDangerousModePermissionPrompt`; user-level `~/.claude/settings.json` is required for that one key (do not set user-global `defaultMode`). `ensure_first_run` writes thread `{worktree}/.claude/settings.json` (`skipDangerousModePermissionPrompt` + `permissions.defaultMode: bypassPermissions`), merges `skipDangerousModePermissionPrompt: true` into `~/.claude/settings.json` (create dir if missing; merge existing home keys), and persists `~/.claude.json` `projects[worktree].hasTrustDialogAccepted=true` for slash/backslash worktree keys. Refuses if worktree is home. Grok/codex no-op (no home write). Dry-run `bring_up` still calls it (`first_run.prepared`, `home_written`, `settings_home`, `trust_written`) and does not Popen `wt`. Live Claude argv adds `--allow-dangerously-skip-permissions` (no duplicate) plus `--permission-mode bypassPermissions`. `isolated_wt_argv` is a pure argv builder. Live GREEN on WT 1.24.11911.0 (Aether 2026-08-29): `--window new`, first command `nt`, n=3 one `-V` then one `-H`, absolute exe positional after `-d DIR` (never `--` before the exe; that pops GUI Help), never `-w 0`, never `-w <thread-name>` (Help), literal `;`. No live WT spawn in unit tests.
 - **GREEN unit (2026-08-29 isolated live_runner wire):** `bring_up` + `live_runner` spawn **one** `wt.exe` per named thread. Argv matches `isolated_wt_argv`. Never per-seat `CREATE_NEW_CONSOLE`, never `MoveWindow`, never `WM_CLOSE` (close-on-fail TDD killed Marco's 7-tab `C:\` session because `--window new` shares one `WindowsTerminal.exe` process). Duplicate-launch guard: do not add the same seat twice (same worktree+to, or same resume_key/session_id). Not one pane per harness name — two grok hops on different worktrees (wt-grok-1 vs wt-grok-2) are two panes (n=3 claude+grok+grok: `--window new`, `nt`, `; split-pane -V`, `; split-pane -H`). Grok Bot conductor is never a window. Titles `{to}-{i}`.
 - Unit tests BYO fake abs binaries under `test/fakes/`; never vendor login; live WT is Windows-only.
 
@@ -817,7 +828,7 @@ def send_one(root, to, body, instance_id=None, dry_run=False, **kw):
 - CLI: `init`, `id`, `bind --thread KEY`, `seat --to H --session-id S [--worktree P] [--model M] [--resume R]`, `seats [--convoy-id ID]`, `attach [convoy_id]`, `bring-up`/`open` `[convoy_id] [--thread T] [--dry-run]`, `terminals`.
 - `send_one` guard: harness name, seat already exists under this convoy, no `instance_id` → refuse spawn. Dry-run still cannot mint a session_id. Cards include `convoy_id` from `read_id(root)` (JSON null if none).
 - Successful `attach` calls Phase 2 `hook(kind="attach")` and returns `thread`, `ts`, `since` (prior attach ts or null), `feed` (`feed_since` when since set, else `[]`). Failed attach does not stamp. Pointers = `pack(root)` only.
-- `src/convoy/bringup.py`: `resume_argv(seat)` → `[grok|--resume|<id>]` / `[claude|--resume|<id>]` (cwd=worktree, no spawn in unit tests). `ensure_first_run` writes thread `.claude/settings.json` and merges user-level `skipDangerousModePermissionPrompt` into `~/.claude/settings.json` (not user-global `defaultMode`; refuse if worktree is home). `isolated_wt_argv` builds WT argv (`--window new`, no `--` before exe; Claude live `--permission-mode bypassPermissions` and `--allow-dangerously-skip-permissions`; no spawn). `bring_up` with a runner fires **one** `isolated_wt_argv` via `live_runner` (Popen FileName=wt, ArgumentList=argv[1:]; never per-seat `CREATE_NEW_CONSOLE` / `MoveWindow` / `WM_CLOSE`). Default runner no-op; dry-run still ungates first-run. `tile_rects` still on window cards. `terminals` metadata, no PTY. ola-brain / side-chat / UltraCode-Shim is not in argv and not an MCP tool name.
+- `src/convoy/bringup.py`: `resume_argv(seat)` emits native argv (`grok/claude --resume <id>`, `codex resume <id>`, and no resume flag when vendor id is unknown on first-run). `ensure_first_run` writes thread `.claude/settings.json`, merges user-level `skipDangerousModePermissionPrompt` into `~/.claude/settings.json`, and marks `~/.claude.json` trust (`projects[worktree].hasTrustDialogAccepted=true` for both slash spellings). `isolated_wt_argv` builds WT argv (`--window new`, no `--` before exe; Claude live `--permission-mode bypassPermissions` and `--allow-dangerously-skip-permissions`; no spawn). `bring_up` with a runner fires **one** `isolated_wt_argv` via `live_runner` (Popen FileName=wt, ArgumentList=argv[1:]; never per-seat `CREATE_NEW_CONSOLE` / `MoveWindow` / `WM_CLOSE`). Default runner no-op; dry-run still ungates first-run. `tile_rects` still on window cards. `terminals` metadata, no PTY. ola-brain / side-chat / UltraCode-Shim is not in argv and not an MCP tool name.
 
 ### Definition of done
 

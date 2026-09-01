@@ -99,7 +99,7 @@ def seat(
     cid = ensure_id(root)
     wt = str(worktree) if worktree is not None else None
     thread = read_thread(root) or ""
-    resume_val = resume if (isinstance(resume, str) and resume) else session_id
+    resume_val = resume.strip() if isinstance(resume, str) and resume.strip() else None
     rkey = make_resume_key(cid, thread, to, wt)
     title_val = title.strip() if isinstance(title, str) and title.strip() else None
     agent_val = agent.strip() if isinstance(agent, str) and agent.strip() else None
@@ -171,19 +171,19 @@ def lookup_resume(root: Path, thread: str, to: str, worktree: str | None = None)
     if worktree is not None:
         for row in seats:
             if row.get("resume_key") == key and row.get("to") == to:
-                r = row.get("resume") or row.get("vendor_session_id") or row.get("session_id")
+                r = row.get("resume") or row.get("vendor_session_id")
                 if isinstance(r, str) and r:
                     return r
         return None
     for row in seats:
         if row.get("resume_key") == key and row.get("to") == to:
-            r = row.get("resume") or row.get("vendor_session_id") or row.get("session_id")
+            r = row.get("resume") or row.get("vendor_session_id")
             if isinstance(r, str) and r:
                 return r
     # Legacy fallback when seats are keyed per-worktree.
     for row in reversed(seats):
         if row.get("to") == to:
-            r = row.get("resume") or row.get("vendor_session_id") or row.get("session_id")
+            r = row.get("resume") or row.get("vendor_session_id")
             if isinstance(r, str) and r:
                 return r
     return None

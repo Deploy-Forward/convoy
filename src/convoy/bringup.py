@@ -4,7 +4,7 @@ Grok Bot (conductor grok-bot) has no harness chip and is not a window.
 A named thread is ONE wt.exe spawn via isolated_wt_argv (Start-Process FilePath=wt.exe,
 ArgumentList string[]; FileName is wt, not in the list). Never per-seat CREATE_NEW_CONSOLE
 + MoveWindow. Never WM_CLOSE (isolated spawn is a new WINDOW not a new PROCESS).
-Lead/hop seats resume with that harness's own CLI:
+Lead neurons resume with that harness's own CLI:
 
     grok --resume <session_id>     cwd=worktree
     claude --resume <session_id>   cwd=worktree
@@ -19,8 +19,10 @@ into ~/.claude/settings.json (create ~/.claude/ if missing). Do not set
 permissions.defaultMode on the user global file (that would make ALL
 Claude sessions on the machine bypass). Still write the project settings
 (skipDangerousModePermissionPrompt + permissions.defaultMode
-bypassPermissions) as a record. Never write ~/.claude if worktree IS
-the home dir. Grok/codex no-op. Not a user paste. Not a TUI guide.
+bypassPermissions) as a record. Also persist ~/.claude.json
+projects[worktree].hasTrustDialogAccepted=true for both slash spellings
+of the worktree path. Never write ~/.claude if worktree IS the home dir.
+Grok/codex no-op. Not a user paste. Not a TUI guide.
 Persona is role.md.
 
 Hypothesis: Claude Code accepts the same `--resume` flag as grok (native resume).
@@ -176,8 +178,9 @@ def _pane_seats(seats: list[dict[str, Any]]) -> list[dict[str, Any]]:
     Two grok hops on different worktrees both appear. Not one pane per harness name.
     """
     seen: set[str] = set()
-    out: list[dict[str, Any]] = []
-    for s in seats or []:
+    out_rev: list[dict[str, Any]] = []
+    # Newer seats win for the same pane key (worktree/resume/session).
+    for s in reversed(seats or []):
         to = str((s or {}).get("to") or "").strip()
         if is_conductor(to):
             continue
@@ -187,8 +190,8 @@ def _pane_seats(seats: list[dict[str, Any]]) -> list[dict[str, Any]]:
         if not key or key in seen:
             continue
         seen.add(key)
-        out.append(s)
-    return out
+        out_rev.append(s)
+    return list(reversed(out_rev))
 
 
 def _prepare_wt_seat(seat: dict[str, Any]) -> dict[str, Any]:
@@ -252,8 +255,8 @@ def is_conductor(to: Any) -> bool:
 
 
 def resume_target(seat: dict[str, Any]) -> str | None:
-    """Vendor id passed to --resume. Never invent. Prefer extra vendor/resume fields."""
-    for key in ("vendor_session_id", "resume", "session_id"):
+    """Vendor id passed to --resume/resume subcommand. Never invent."""
+    for key in ("vendor_session_id", "resume"):
         val = seat.get(key)
         if isinstance(val, str) and val.strip():
             return val.strip()
@@ -261,18 +264,19 @@ def resume_target(seat: dict[str, Any]) -> str | None:
 
 
 def resume_argv(seat: dict[str, Any]) -> list[str]:
-    """Argv we WOULD exec. No spawn. Native harness --resume only.
+    """Argv we WOULD exec. No spawn. Native harness resume only.
 
     FileName is shutil.which absolute path when found, else the bare harness name.
     Grok keeps seat identity flags:
         [exe, '-m', MODEL?, '--agent', PATH?, '--resume', sid]
+    Codex resume shape:
+        [exe, 'resume', sid]
     Other harnesses:
         [exe, '--resume', sid]
+    First-run seat with no vendor UUID: no resume token is passed.
     Never -d, never `--` separator, never -p/-c, never ola-brain, never side-chat, never wt.
     """
     sid = resume_target(seat)
-    if not sid:
-        raise ValueError("refuse empty session_id")
     to = str(seat.get("to") or "").strip()
     if is_conductor(to):
         raise ValueError("conductor grok-bot is not a window")
@@ -287,8 +291,12 @@ def resume_argv(seat: dict[str, Any]) -> list[str]:
         agent = seat.get("agent")
         if isinstance(agent, str) and agent.strip():
             argv.extend(["--agent", agent.strip()])
-    # Visible TUI. Do not add prompts, -p, -c, --output-format, ola-brain, side-chat, -d, `--`.
-    argv.extend(["--resume", sid])
+    # First-run seat: no vendor UUID yet. Do not pass --resume.
+    if sid:
+        if _harness_bin(to) == "codex":
+            argv.extend(["resume", sid])
+        else:
+            argv.extend(["--resume", sid])
     return argv
 
 
@@ -329,6 +337,31 @@ def _claude_home_settings_path() -> Path:
     return Path.home() / ".claude" / "settings.json"
 
 
+def _claude_home_state_path() -> Path:
+    return Path.home() / ".claude.json"
+
+
+def _is_windows_like_path(text: str) -> bool:
+    return bool(re.match(r"^[A-Za-z]:[\\/]", text or ""))
+
+
+def _project_path_variants(worktree: Path) -> list[str]:
+    """Path spellings for ~/.claude.json projects keys (slashes + backslashes)."""
+    try:
+        base = str(worktree.resolve())
+    except Exception:
+        base = str(worktree)
+    variants = [base]
+    if _is_windows_like_path(base) or "\\" in base:
+        slash = base.replace("\\", "/")
+        back = base.replace("/", "\\")
+        if slash not in variants:
+            variants.append(slash)
+        if back not in variants:
+            variants.append(back)
+    return variants
+
+
 def _is_home_claude_settings(path: Path) -> bool:
     """True if path is the user's global ~/.claude/settings.json.
 
@@ -357,6 +390,24 @@ def _read_json_dict(path: Path) -> dict[str, Any]:
 def _write_json_dict(path: Path, data: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+
+
+def _write_claude_trust_projects(worktree: Path) -> Path:
+    """Persist hasTrustDialogAccepted for both slash spellings of worktree."""
+    state_path = _claude_home_state_path()
+    data = _read_json_dict(state_path)
+    projects = data.get("projects")
+    if not isinstance(projects, dict):
+        projects = {}
+    for key in _project_path_variants(worktree):
+        node = projects.get(key)
+        if not isinstance(node, dict):
+            node = {}
+        node["hasTrustDialogAccepted"] = True
+        projects[key] = node
+    data["projects"] = projects
+    _write_json_dict(state_path, data)
+    return state_path
 
 
 CONVOY_PATH_BEGIN = "# >>> convoy harness PATH >>>"
@@ -426,6 +477,8 @@ def ensure_first_run(seat: dict[str, Any]) -> dict[str, Any]:
     User ~/.claude/settings.json: merge ONLY skipDangerousModePermissionPrompt
     true (required — Anthropic reads this file for the dialog). Do not set
     permissions.defaultMode on the user global file. Create ~/.claude/ if missing.
+    User ~/.claude.json: set projects[worktree].hasTrustDialogAccepted=true
+    for both slash spellings of the worktree key.
     Never write ~/.claude if worktree IS the home dir.
     Grok/codex: no-op. Persona is role.md, not CLI.
     Never ola-brain, side-chat, grok -p/-c, --append-system-prompt.
@@ -441,6 +494,8 @@ def ensure_first_run(seat: dict[str, Any]) -> dict[str, Any]:
         "settings": None,
         "home_written": False,
         "settings_home": None,
+        "trust_written": False,
+        "trust_settings_home": None,
         "path_written": False,
         "path_bashrc": None,
         "path_ok": False,
@@ -490,6 +545,9 @@ def ensure_first_run(seat: dict[str, Any]) -> dict[str, Any]:
         _write_json_dict(home_path, home_data)
         out["home_written"] = True
         out["settings_home"] = str(home_path)
+        trust_path = _write_claude_trust_projects(wt_path)
+        out["trust_written"] = True
+        out["trust_settings_home"] = str(trust_path)
         return out
     except Exception as e:
         out["ok"] = False
@@ -839,12 +897,11 @@ def bring_up(root: Path, convoy_id: str | None = None, thread: str | None = None
             "settings": fr.get("settings"),
             "home_written": bool(fr.get("home_written")),
             "settings_home": fr.get("settings_home"),
+            "trust_written": bool(fr.get("trust_written")),
+            "trust_settings_home": fr.get("trust_settings_home"),
         }
         if fr.get("error"):
             win["first_run"]["error"] = fr["error"]
-        if win.get("ok") and not win.get("resume"):
-            win["ok"] = False
-            win["error"] = "refuse empty session_id"
         windows.append(win)
     if runner is not None:
         ready: list[dict[str, Any]] = []

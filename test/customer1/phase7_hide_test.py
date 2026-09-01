@@ -37,8 +37,8 @@ class Phase7Hide(unittest.TestCase):
         self.thread = "customer1"
         self.cid = ensure_id(self.root)
         bind(self.root, self.thread)
-        self.g = seat(self.root, "grok", "sess-grok", worktree=str(self.wt_g), model="explicit-grok")
-        self.c = seat(self.root, "claude", "sess-claude", worktree=str(self.wt_c), model="Fable 5")
+        self.g = seat(self.root, "grok", "sess-grok", worktree=str(self.wt_g), model="explicit-grok", resume="sess-grok")
+        self.c = seat(self.root, "claude", "sess-claude", worktree=str(self.wt_c), model="Fable 5", resume="sess-claude")
 
     def test_hide_mock_applier_records_minimize_no_mint(self):
         recorded = []
@@ -118,7 +118,7 @@ class Phase7Hide(unittest.TestCase):
             self.assertIn(want, names)
         send = next(t for t in TOOLS if t["name"] == "send")
         desc = send["description"]
-        self.assertIn("headless hop; does not pop a TUI", desc)
+        self.assertIn("Headless synapse; does not pop a TUI", desc)
         low = desc.lower()
         self.assertNotIn("visible tui", low)
         self.assertNotIn("pop windows", low)

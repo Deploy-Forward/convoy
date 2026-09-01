@@ -45,8 +45,8 @@ class PhaseMcpHttp(unittest.TestCase):
         self.thread = "customer1"
         self.cid = ensure_id(self.root)
         bind(self.root, self.thread)
-        self.g = seat(self.root, "grok", "sess-grok", worktree=str(self.wt_g), model="explicit-grok")
-        self.c = seat(self.root, "claude", "sess-claude", worktree=str(self.wt_c), model="Fable 5")
+        self.g = seat(self.root, "grok", "sess-grok", worktree=str(self.wt_g), model="explicit-grok", resume="sess-grok")
+        self.c = seat(self.root, "claude", "sess-claude", worktree=str(self.wt_c), model="Fable 5", resume="sess-claude")
         self.fake_home = Path(tempfile.mkdtemp())
         self._home_patcher = mock.patch("convoy.bringup.Path.home", return_value=self.fake_home)
         self._home_patcher.start()
@@ -185,7 +185,7 @@ class PhaseMcpHttp(unittest.TestCase):
         by = {a["id"]: a for a in payload["agents"]}
         self.assertIsNone(by["claude"]["usage_remaining"])
 
-    def test_send_live_can_resume_existing_seat_with_session_id(self):
+    def test_send_live_refuses_second_interactive_resume_with_session_id(self):
         attempts: list[dict[str, str | None]] = []
 
         def native_stub(to, body, instance_id=None, resume=None, **k):
@@ -211,13 +211,12 @@ class PhaseMcpHttp(unittest.TestCase):
                     {"name": "send", "arguments": {"to": "grok", "body": "ping", "live": True, "session_id": "sess-grok"}},
                 )
             )
-        self.assertTrue(resumed["ok"])
-        self.assertEqual(resumed["session_id"], "sess-grok")
-        self.assertEqual(len(attempts), 1)
-        self.assertEqual(attempts[0]["instance_id"], "sess-grok")
-        self.assertEqual(attempts[0]["resume"], "sess-grok")
+        self.assertFalse(resumed["ok"])
+        self.assertTrue(resumed.get("refused"))
+        self.assertIn("second interactive session", resumed["error"])
+        self.assertEqual(len(attempts), 0)
 
-    def test_send_live_session_id_uses_seat_vendor_resume(self):
+    def test_send_live_session_id_does_not_spawn_vendor_resume_process(self):
         seat(self.root, "grok", "sess-grok", worktree=str(self.wt_g), resume="vendor-resume-01")
         attempts: list[dict[str, str | None]] = []
 
@@ -241,12 +240,11 @@ class PhaseMcpHttp(unittest.TestCase):
                     {"name": "send", "arguments": {"to": "grok", "body": "ping", "live": True, "session_id": "sess-grok"}},
                 )
             )
-        self.assertTrue(resumed["ok"])
-        self.assertEqual(len(attempts), 1)
-        self.assertEqual(attempts[0]["instance_id"], "sess-grok")
-        self.assertEqual(attempts[0]["resume"], "vendor-resume-01")
+        self.assertFalse(resumed["ok"])
+        self.assertTrue(resumed.get("refused"))
+        self.assertEqual(len(attempts), 0)
 
-    def test_send_live_resume_arg_is_vendor_resume_not_instance_id_alias(self):
+    def test_send_live_resume_arg_is_refused_without_spawning(self):
         seat(self.root, "grok", "sess-grok", worktree=str(self.wt_g), resume="vendor-resume-02")
         attempts: list[dict[str, str | None]] = []
 
@@ -270,12 +268,11 @@ class PhaseMcpHttp(unittest.TestCase):
                     {"name": "send", "arguments": {"to": "grok", "body": "ping", "live": True, "resume": "vendor-resume-02"}},
                 )
             )
-        self.assertTrue(resumed["ok"])
-        self.assertEqual(len(attempts), 1)
-        self.assertEqual(attempts[0]["instance_id"], "sess-grok")
-        self.assertEqual(attempts[0]["resume"], "vendor-resume-02")
+        self.assertFalse(resumed["ok"])
+        self.assertTrue(resumed.get("refused"))
+        self.assertEqual(len(attempts), 0)
 
-    def test_send_live_session_id_accepts_vendor_resume_token(self):
+    def test_send_live_vendor_resume_token_refused_without_spawning(self):
         seat(self.root, "grok", "sess-grok", worktree=str(self.wt_g), resume="vendor-resume-03")
         attempts: list[dict[str, str | None]] = []
 
@@ -299,10 +296,9 @@ class PhaseMcpHttp(unittest.TestCase):
                     {"name": "send", "arguments": {"to": "grok", "body": "ping", "live": True, "session_id": "vendor-resume-03"}},
                 )
             )
-        self.assertTrue(resumed["ok"])
-        self.assertEqual(len(attempts), 1)
-        self.assertEqual(attempts[0]["instance_id"], "sess-grok")
-        self.assertEqual(attempts[0]["resume"], "vendor-resume-03")
+        self.assertFalse(resumed["ok"])
+        self.assertTrue(resumed.get("refused"))
+        self.assertEqual(len(attempts), 0)
 
     def test_send_to_ola_brain_refused_by_name(self):
         with mock.patch("convoy.mcp_http.native_runner") as spawned:

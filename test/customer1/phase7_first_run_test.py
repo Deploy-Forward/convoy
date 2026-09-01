@@ -53,8 +53,8 @@ class Phase7FirstRun(unittest.TestCase):
         self.thread = "customer1"
         self.cid = ensure_id(self.root)
         bind(self.root, self.thread)
-        self.g = seat(self.root, "grok", "sess-grok", worktree=str(self.wt_g), model="explicit-grok")
-        self.c = seat(self.root, "claude", "sess-claude", worktree=str(self.wt_c), model="Fable 5")
+        self.g = seat(self.root, "grok", "sess-grok", worktree=str(self.wt_g), model="explicit-grok", resume="sess-grok")
+        self.c = seat(self.root, "claude", "sess-claude", worktree=str(self.wt_c), model="Fable 5", resume="sess-claude")
         # Snapshot real home BEFORE patching Path.home (classmethod is process-global).
         self.real_home = Path(os.path.expanduser("~"))
         self.real_home_settings = self.real_home / ".claude" / "settings.json"
@@ -98,11 +98,17 @@ class Phase7FirstRun(unittest.TestCase):
         self.assertTrue(card.get("home_written"))
         home_path = self._home_settings()
         self.assertEqual(card.get("settings_home"), str(home_path))
+        self.assertTrue(card.get("trust_written"))
+        self.assertEqual(card.get("trust_settings_home"), str(self.fake_home / ".claude.json"))
         self.assertTrue(home_path.is_file())
         home = json.loads(home_path.read_text(encoding="utf-8"))
         self.assertIs(home["skipDangerousModePermissionPrompt"], True)
         self.assertNotIn("defaultMode", home.get("permissions") or {})
         self.assertNotIn("permissions", home)
+        state = json.loads((self.fake_home / ".claude.json").read_text(encoding="utf-8"))
+        projects = state.get("projects") or {}
+        self.assertIn(str(wt.resolve()), projects)
+        self.assertIs(projects[str(wt.resolve())]["hasTrustDialogAccepted"], True)
 
     def test_ensure_first_run_merges_existing_keys(self):
         wt = Path(tempfile.mkdtemp())
@@ -145,6 +151,8 @@ class Phase7FirstRun(unittest.TestCase):
         self.assertTrue(card.get("home_written"))
         self.assertEqual(card.get("settings_home"), str(home_path))
         self.assertEqual(card.get("settings"), str(self._settings(wt)))
+        self.assertTrue(card.get("trust_written"))
+        self.assertEqual(card.get("trust_settings_home"), str(self.fake_home / ".claude.json"))
         home = json.loads(home_path.read_text(encoding="utf-8"))
         self.assertIs(home["skipDangerousModePermissionPrompt"], True)
         self.assertEqual(home["env"], {"KEEP": "yes"})
@@ -153,13 +161,28 @@ class Phase7FirstRun(unittest.TestCase):
         self.assertNotIn("defaultMode", home.get("permissions") or {})
         self.assertFalse((wt.parent / ".claude" / "settings.json").exists())
 
+    def test_ensure_first_run_writes_trust_for_both_windows_slash_spellings(self):
+        wt = Path(tempfile.mkdtemp())
+        variants = [r"C:\Users\marco\ola\da-integration", "C:/Users/marco/ola/da-integration"]
+        with mock.patch("convoy.bringup._project_path_variants", return_value=variants):
+            card = ensure_first_run({"to": "claude", "worktree": str(wt)})
+        self.assertTrue(card.get("ok"))
+        state = json.loads((self.fake_home / ".claude.json").read_text(encoding="utf-8"))
+        projects = state.get("projects") or {}
+        self.assertIn(variants[0], projects)
+        self.assertIn(variants[1], projects)
+        self.assertIs(projects[variants[0]]["hasTrustDialogAccepted"], True)
+        self.assertIs(projects[variants[1]]["hasTrustDialogAccepted"], True)
+
     def test_ensure_first_run_refuses_when_worktree_is_home(self):
         card = ensure_first_run({"to": "claude", "worktree": str(self.fake_home)})
         self.assertFalse(card.get("ok"))
         self.assertFalse(card.get("prepared"))
         self.assertFalse(card.get("wrote"))
         self.assertFalse(card.get("home_written"))
+        self.assertFalse(card.get("trust_written"))
         self.assertIsNone(card.get("settings_home"))
+        self.assertIsNone(card.get("trust_settings_home"))
         self.assertFalse(self._home_settings().exists())
         err = str(card.get("error") or "").lower()
         self.assertTrue("home" in err)
@@ -175,6 +198,8 @@ class Phase7FirstRun(unittest.TestCase):
             self.assertIsNone(card.get("settings"))
             self.assertFalse(card.get("home_written"))
             self.assertIsNone(card.get("settings_home"))
+            self.assertFalse(card.get("trust_written"))
+            self.assertIsNone(card.get("trust_settings_home"))
             self.assertFalse(self._home_settings().exists())
             self.assertFalse((self.fake_home / ".claude").exists())
             self.assertTrue(card.get("path_ok"))
@@ -235,8 +260,12 @@ class Phase7FirstRun(unittest.TestCase):
         self.assertTrue(by["claude"]["first_run"]["home_written"])
         self.assertEqual(by["claude"]["first_run"]["settings_home"], str(self._home_settings()))
         self.assertEqual(by["claude"]["first_run"]["settings"], str(self._settings(self.wt_c)))
+        self.assertTrue(by["claude"]["first_run"]["trust_written"])
+        self.assertEqual(by["claude"]["first_run"]["trust_settings_home"], str(self.fake_home / ".claude.json"))
         self.assertFalse(by["grok"]["first_run"].get("home_written"))
         self.assertIsNone(by["grok"]["first_run"].get("settings_home"))
+        self.assertFalse(by["grok"]["first_run"].get("trust_written"))
+        self.assertIsNone(by["grok"]["first_run"].get("trust_settings_home"))
         home = json.loads(self._home_settings().read_text(encoding="utf-8"))
         self.assertIs(home["skipDangerousModePermissionPrompt"], True)
         self.assertNotIn("defaultMode", home.get("permissions") or {})
@@ -267,6 +296,8 @@ class Phase7FirstRun(unittest.TestCase):
         self.assertFalse(self._settings(self.wt_g).exists())
         self.assertTrue(by["claude"]["first_run"]["home_written"])
         self.assertEqual(by["claude"]["first_run"]["settings_home"], str(self._home_settings()))
+        self.assertTrue(by["claude"]["first_run"]["trust_written"])
+        self.assertEqual(by["claude"]["first_run"]["trust_settings_home"], str(self.fake_home / ".claude.json"))
         self.assertFalse(by["grok"]["first_run"].get("home_written"))
 
     def test_resume_argv_unchanged_native_shape(self):
