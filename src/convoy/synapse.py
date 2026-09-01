@@ -253,7 +253,9 @@ def send_one(
             "handoff": ".ola/*handoff*",
             "text": to + " limited: ASK the user to bring_up / open a pane, or write a .ola/*handoff* file; do not steal a TUI, do not mint a sibling session, do not guess remaining quota",
         }
-        hook(root, kind="refuse", summary=to + " limited", instance_id=resolved_instance_id, extra={"to": to, "raw": usage.get("raw"), "ask": ask["action"]})
+        # v2: the feed row carries the whole ask card so siblings pulling
+        # feed --since see the remedy, not just the caller.
+        hook(root, kind="refuse", summary=to + " limited", instance_id=resolved_instance_id, extra={"to": to, "raw": usage.get("raw"), "ask": ask})
         return {
             "ok": False,
             "to": to,
