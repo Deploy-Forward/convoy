@@ -145,6 +145,9 @@ def native_runner(
     if isinstance(rid, str) and rid.strip():
         if harness == "codex":
             cmd.extend(["resume", rid.strip()])
+        elif harness == "agy":
+            # agy --help has no --resume; it resumes via --conversation <ID>
+            cmd.extend(["--conversation", rid.strip()])
         else:
             cmd.extend(["--resume", rid.strip()])
     try:

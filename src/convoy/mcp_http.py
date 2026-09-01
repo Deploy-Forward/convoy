@@ -191,7 +191,7 @@ TOOLS: list[dict[str, Any]] = [
         "description": "Opt-in vendor harness download. dry_run defaults true. Live needs opt_in true. Only x.ai, claude.ai, chatgpt.com, cursor.com, antigravity.google. Never a wrap. Some MCP-supported harnesses are BYO-only and may not have a cataloged installer. affiliate is always JSON null.",
         "inputSchema": _schema(
             {
-                "to": {"type": "string", "description": "grok, claude, codex, cursor-agent, agy/antigravity, hermes, or pi"},
+                "to": {"type": "string", "description": "grok, claude, codex, cursor-agent, or agy/antigravity. BYO-only harnesses without a vendor installer are refused here (onboard still accepts them when present)."},
                 "dry_run": {"type": "boolean", "default": True},
                 "opt_in": {"type": "boolean", "default": False},
             },

@@ -306,6 +306,9 @@ def resume_argv(seat: dict[str, Any]) -> list[str]:
     if sid:
         if _harness_bin(to) == "codex":
             argv.extend(["resume", sid])
+        elif _harness_bin(to) == "agy":
+            # agy --help has no --resume; it resumes via --conversation <ID>
+            argv.extend(["--conversation", sid])
         else:
             argv.extend(["--resume", sid])
     return argv
