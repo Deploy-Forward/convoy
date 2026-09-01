@@ -29,7 +29,7 @@ This block is authoritative for Grok Bot MCP layering and native-send DoD. If ol
 - thread = durable circuit (`convoy_id`).
 - named thread = `--root` binding, not a second MCP URL.
 - Product wording retires "hop" in current product sentences; historical logs below may still quote it.
-- Harness self-identity skills/plugins are a follow-up PR and are intentionally out of scope here.
+- Harness self-identity: first-run installs `neuron-identity` skills into the seat worktree so a launched model knows it is a neuron on a `cvy_id`.
 
 ### Locked layer statement
 

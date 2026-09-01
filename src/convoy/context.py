@@ -15,6 +15,14 @@ POINTER_FILES = (
 def _pointer(path: Path) -> str | None:
     return str(path) if path.is_file() else None
 
+
+def _one_line(path: Path) -> str | None:
+    """SoT id from a one-line file. JSON null if missing. Never invent."""
+    if not path.is_file():
+        return None
+    text = path.read_text(encoding="utf-8-sig").strip()
+    return text or None
+
 def newest_handoff(root: Path) -> str | None:
     folder = Path(root) / ".ola"
     if not folder.is_dir():
@@ -30,6 +38,8 @@ def pack(root: Path, instance_id: str | None = None) -> dict[str, Any]:
         out[key] = _pointer(root / rel)
     out["handoff"] = newest_handoff(root)
     out["instance_id"] = instance_id
+    out["convoy_id"] = _one_line(root / ".convoy" / "id")
+    out["thread_key"] = _one_line(root / ".convoy" / "thread")
     state = git_state(root)
     out["worktree"] = str(root) if state["git_branch"] else None
     out["branch"] = state["git_branch"]
