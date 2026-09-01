@@ -54,6 +54,26 @@
     });
   }
 
+  function bootHeroAtmosphere() {
+    const hero = document.querySelector(".hero");
+    if (!hero || reducedMotion) {
+      return;
+    }
+    if (!("IntersectionObserver" in window)) {
+      hero.classList.add("is-active");
+      return;
+    }
+    const observer = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          hero.classList.toggle("is-active", entry.isIntersecting);
+        }
+      },
+      { threshold: 0, rootMargin: "0px 0px 0px 0px" }
+    );
+    observer.observe(hero);
+  }
+
   const copyButton = document.getElementById("copy-attach");
   const status = document.getElementById("copy-status");
   if (copyButton) {
@@ -77,5 +97,6 @@
 
   window.requestAnimationFrame(() => {
     bootReveal();
+    bootHeroAtmosphere();
   });
 })();
