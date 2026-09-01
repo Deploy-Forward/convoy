@@ -51,7 +51,7 @@
   </header>
 
   <main id="main" class="page-field">
-    <section class="hero">
+    <section class="beat hero">
       <div class="shell hero-grid">
         <div class="hero-copy">
           <p class="hero-kicker mono">grok-bot native MCP</p>
@@ -65,7 +65,6 @@
             <button class="btn btn-primary" id="copy-attach" type="button" data-copy-text="https://convoy.bot/mcp">
               Copy attach URL
             </button>
-            <a class="hero-link mono" href="https://github.com/Deploy-Forward/convoy">GitHub</a>
           </div>
           <p class="mono attach-text">https://convoy.bot/mcp</p>
           <p class="status" id="copy-status" role="status" aria-live="polite"></p>
@@ -75,10 +74,11 @@
           <div class="quiet-frame"></div>
           <div class="quiet-frame-inner"></div>
         </aside>
+        <div class="hero-atmosphere" aria-hidden="true"></div>
       </div>
     </section>
 
-    <section id="how" class="ruled-block">
+    <section id="how" class="beat ruled-block how-beat">
       <div class="shell section">
         <h2 data-reveal>How it works</h2>
         <ol class="steps">
@@ -92,18 +92,30 @@
             <p><span class="mono step-no">03</span> <code>send</code> runs a headless synapse (pointers in, compact card out). <code>feed</code>/<code>context</code> stay pointer-first, and live send keeps a <code>no-steal</code> guard on interactive <code>--resume</code>.</p>
           </li>
         </ol>
-        <p class="neuron-line mono" data-reveal>neurons: grok · claude · codex · cursor-agent · agy · hermes · pi</p>
+      </div>
+    </section>
+
+    <section class="beat ruled-block neurons-beat">
+      <div class="shell section neurons-shell">
+        <h2 data-reveal>Neurons</h2>
+        <p class="neuron-line mono" data-reveal>grok · claude · codex · cursor-agent · agy · hermes · pi</p>
+      </div>
+    </section>
+
+    <section class="beat ruled-block honesty-beat">
+      <div class="shell section honesty-shell">
+        <h2 data-reveal>Honesty</h2>
+        <p class="honesty-line" data-reveal><code>feed</code> + seats + <code>convoy_id</code>. Unknown values are JSON <code>null</code>. BYO harness, no wraps. Public process tools can lag in-tree additions.</p>
+        <footer class="footer" data-reveal>
+          <a class="mono footer-house" href="https://deployforward.dev">Deploy Forward</a>
+          <a href="https://github.com/Deploy-Forward/convoy">GitHub</a>
+          <a href="https://convoy.bot/mcp">https://convoy.bot/mcp</a>
+          <p class="footer-note">A <code>grok-bot</code> native MCP. Live send is not overclaimed here.</p>
+          <p class="footer-note">MIT · another open source product from <a href="https://deployforward.dev">Deploy Forward</a> · convoy.bot · a grok-bot native mcp · one process ↔ one bound thread</p>
+        </footer>
       </div>
     </section>
   </main>
-
-  <footer class="shell footer">
-    <a class="mono footer-house" href="https://deployforward.dev">Deploy Forward</a>
-    <a href="https://github.com/Deploy-Forward/convoy">GitHub</a>
-    <a href="https://convoy.bot/mcp">https://convoy.bot/mcp</a>
-    <p class="footer-note">A <code>grok-bot</code> native MCP. BYO harness, no wraps. Live send is not overclaimed here.</p>
-    <p class="footer-note">MIT · another open source product from <a href="https://deployforward.dev">Deploy Forward</a> · convoy.bot · a grok-bot native mcp · one process ↔ one bound thread</p>
-  </footer>
 
   <script src="/app.js" defer></script>
 </body>
