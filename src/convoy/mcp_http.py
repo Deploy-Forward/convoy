@@ -122,7 +122,7 @@ TOOLS: list[dict[str, Any]] = [
     },
     {
         "name": "bring_up",
-        "description": "Resume hop seats visible. dry_run defaults true so a public URL cannot pop windows. Pass dry_run false to spawn.",
+        "description": "Resume seated neurons visibly. dry_run defaults true so a public URL cannot pop windows. Pass dry_run false to spawn.",
         "inputSchema": _schema({
             "convoy_id": {"type": "string"},
             "thread": {"type": "string"},
@@ -140,7 +140,7 @@ TOOLS: list[dict[str, Any]] = [
     },
     {
         "name": "hide",
-        "description": "Minimize or hide hop TUI windows. Sessions keep running. Does not kill grok.exe/claude.exe/Grok Bot.exe. dry_run defaults true so a public URL cannot change windows. Pass dry_run false to apply. mode=minimize (default, SW_MINIMIZE) or hide (SW_HIDE). restore is bring_up.",
+        "description": "Minimize or hide neuron TUI windows. Sessions keep running. Does not kill grok.exe/claude.exe/Grok Bot.exe. dry_run defaults true so a public URL cannot change windows. Pass dry_run false to apply. mode=minimize (default, SW_MINIMIZE) or hide (SW_HIDE). restore is bring_up.",
         "inputSchema": _schema({
             "convoy_id": {"type": "string"},
             "thread": {"type": "string"},
