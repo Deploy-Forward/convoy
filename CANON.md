@@ -22,4 +22,4 @@ Do not spawn extra Grok Bot conductors unless explicitly requested. A new conduc
 
 `roster.present` is the MCP/agent process PATH. Interactive desktop terminals are a different PATH (bash skips `.profile`). Convoy first-run writes `~/.bashrc` so `claude`/`grok`/`codex` resolve in the next shell. Already-open terminals still need `source ~/.bashrc`.
 
-Follow-up pointer: harness self-identity skills/plugins land in the next PR, not this one.
+Harness self-identity: `ensure_first_run` installs `neuron-identity` into the seat worktree (`.grok/skills`, `.claude/skills`, `AGENTS.md` pointer). Launched models read `thread.md` / `.convoy/id` and know they are a neuron on that `cvy_id`, not Grok Bot. `context.pack` includes `convoy_id` and `thread_key` from those one-line files (JSON `null` if missing).

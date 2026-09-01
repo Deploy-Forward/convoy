@@ -91,7 +91,7 @@ TOOLS: list[dict[str, Any]] = [
     },
     {
         "name": "context",
-        "description": "Packed pointers only (thread.md, role.md, brief, handoff, instance_id, worktree, branch, pr). Not file contents.",
+        "description": "Packed pointers only (thread.md, role.md, brief, handoff, instance_id, worktree, branch, pr) plus convoy_id/thread_key from .convoy one-line files. Not file contents.",
         "inputSchema": _schema({
             "instance_id": {"type": "string"},
         }),
