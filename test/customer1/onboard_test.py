@@ -63,6 +63,7 @@ class OnboardTests(unittest.TestCase):
             self.assertTrue(h["install"]["opt_in_required"])
 
     def test_checkout_root_bind_and_first_run_card(self):
+        # Windows which() finds the fakes via their .cmd twins.
         with mock.patch.dict(os.environ, {"PATH": str(FAKES)}):
             card = onboard(
                 self.root,
@@ -84,9 +85,14 @@ class OnboardTests(unittest.TestCase):
         self.assertIn("first_run", by["claude"])
         self.assertIsNone(by["grok"]["usage_remaining"])
         self.assertNotEqual(by["grok"]["usage_remaining"], 0)
-        bashrc = self.fake_home / ".bashrc"
-        self.assertTrue(bashrc.is_file())
-        self.assertIn("convoy harness PATH", bashrc.read_text(encoding="utf-8"))
+        self.assertTrue(card["path"]["path_ok"])
+        if os.name == "nt":
+            # WT inherits user PATH; bashrc ungate is POSIX-only
+            self.assertEqual(card["path"]["path_host"], "windows-user")
+        else:
+            bashrc = self.fake_home / ".bashrc"
+            self.assertTrue(bashrc.is_file())
+            self.assertIn("convoy harness PATH", bashrc.read_text(encoding="utf-8"))
 
     def test_refuse_stomp_different_thread(self):
         bind(self.checkout, "existing-thread")
