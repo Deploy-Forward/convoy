@@ -108,7 +108,9 @@ class Phase7BringUp(unittest.TestCase):
         self.assertEqual(by["claude"]["resume"], "sess-claude")
         self.assertIsNotNone(by["grok"]["resume"])
         self.assertIsNotNone(by["claude"]["resume"])
-        _native_resume(by["grok"]["argv"], "grok", "sess-grok", model="explicit-grok")
+        # agent-less grok seats point at the Convoy-owned agent file (#15)
+        convoy_agent = str(Path(self.wt_g) / ".grok" / "agents" / "convoy-neuron.md")
+        _native_resume(by["grok"]["argv"], "grok", "sess-grok", model="explicit-grok", agent=convoy_agent)
         _native_resume(by["claude"]["argv"], "claude", "sess-claude")
         self.assertEqual(by["grok"]["worktree"], str(self.wt_g))
         self.assertEqual(by["grok"]["cwd"], str(self.wt_g))
@@ -372,8 +374,10 @@ class Phase7BringUp(unittest.TestCase):
         return fake_which
 
     def _wt_seats(self):
+        # bring_up points agent-less grok seats at the Convoy agent file (#15)
+        convoy_agent = str(Path(self.wt_g) / ".grok" / "agents" / "convoy-neuron.md")
         return [
-            {**self.g, "exe": r"C:\\abs\\grok.exe"},
+            {**self.g, "agent": convoy_agent, "exe": r"C:\\abs\\grok.exe"},
             {**self.c, "exe": r"C:\\abs\\claude.exe"},
         ]
 
