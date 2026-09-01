@@ -12,7 +12,7 @@ from .context import pack, stdin_for
 from .gitstate import git_state
 from .layer import hook
 from .usage import normalize_usage_remaining, probe
-from .convoy import list_seats, read_id
+from .convoy import list_seats, read_id, read_thread
 from .registry import live_on_branch, lookup, lookup_any, parse_agents_jsonl, parse_session_id, register
 
 Runner = Callable[..., dict[str, Any]]
@@ -200,9 +200,17 @@ def send_one(
     resume_token = resume.strip() if isinstance(resume, str) and resume.strip() else None
     resolved_instance_id = instance_id.strip() if isinstance(instance_id, str) and instance_id.strip() else None
 
+    home_thread = read_thread(root)
+
     def _pack_message(current_instance_id: str | None) -> tuple[dict[str, Any], str]:
         packed_row = pack(cwd_root, instance_id=current_instance_id)
         packed_row["worktree"] = str(cwd_root) if worktree else packed_row.get("worktree")
+        # Seat worktrees have no .convoy; the home --root layer owns thread
+        # identity. Overlay only real values — null never clobbers a seat id.
+        if cid:
+            packed_row["convoy_id"] = cid
+        if home_thread:
+            packed_row["thread_key"] = home_thread
         return packed_row, stdin_for(packed_row, body)
 
     packed, message = _pack_message(resolved_instance_id)
