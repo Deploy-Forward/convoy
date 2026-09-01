@@ -12,6 +12,7 @@ import shutil
 import sys
 from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from importlib.resources import files as resource_files
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -45,6 +46,20 @@ HOME_LINE = "convoy.bot · a grok-bot native mcp · one process ↔ one bound th
 HARNESSES = tuple((row["id"], str(row.get("name") or row["id"])) for row in harness_entries(mcp_supported_only=True))
 
 _TOOL_NAMES = ("roster", "glance", "onboard", "terminals", "context", "send", "feed", "stamp", "bring_up", "open", "hide", "minimize", "background", "install")
+
+_SITE_ASSETS: dict[str, tuple[str, str]] = {
+    "/": ("index.html", "text/html; charset=utf-8"),
+    "/styles.css": ("styles.css", "text/css; charset=utf-8"),
+    "/app.js": ("app.js", "text/javascript; charset=utf-8"),
+    "/favicon.svg": ("favicon.svg", "image/svg+xml; charset=utf-8"),
+    "/favicon.ico": ("favicon.svg", "image/svg+xml; charset=utf-8"),
+    "/fonts/work-sans-latin-400.woff2": ("fonts/work-sans-latin-400.woff2", "font/woff2"),
+    "/fonts/work-sans-latin-500.woff2": ("fonts/work-sans-latin-500.woff2", "font/woff2"),
+    "/fonts/work-sans-latin-600.woff2": ("fonts/work-sans-latin-600.woff2", "font/woff2"),
+    "/fonts/work-sans-latin-700.woff2": ("fonts/work-sans-latin-700.woff2", "font/woff2"),
+    "/fonts/jetbrains-mono-latin-400.woff2": ("fonts/jetbrains-mono-latin-400.woff2", "font/woff2"),
+    "/fonts/jetbrains-mono-latin-700.woff2": ("fonts/jetbrains-mono-latin-700.woff2", "font/woff2"),
+}
 
 
 def _schema(properties: dict[str, Any], required: list[str] | None = None) -> dict[str, Any]:
@@ -492,6 +507,20 @@ def _cors(handler: BaseHTTPRequestHandler) -> None:
     handler.send_header("Access-Control-Max-Age", "86400")
 
 
+def _site_asset_response(path: str) -> tuple[int, bytes, str] | None:
+    spec = _SITE_ASSETS.get(path)
+    if spec is None:
+        return None
+    asset_path, content_type = spec
+    try:
+        body = resource_files("convoy.site").joinpath(asset_path).read_bytes()
+    except (FileNotFoundError, ModuleNotFoundError, OSError):
+        if path == "/":
+            return (200, HOME_LINE.encode("utf-8"), "text/html; charset=utf-8")
+        return (404, b"not found", "text/plain; charset=utf-8")
+    return (200, body, content_type)
+
+
 class McpHandler(BaseHTTPRequestHandler):
     server_version = "convoy-mcp/" + SERVER_VERSION
 
@@ -521,12 +550,15 @@ class McpHandler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:  # noqa: N802
         path = urlparse(self.path).path
-        if path in ("/", ""):
-            body = HOME_LINE.encode("utf-8")
-            self._send(200, body, "text/html; charset=utf-8")
-            return
         if path == "/mcp":
             self._send(405, b"POST JSON-RPC to /mcp", "text/plain; charset=utf-8", extra=[("Allow", "POST, OPTIONS")])
+            return
+        if path == "":
+            path = "/"
+        site = _site_asset_response(path)
+        if site is not None:
+            code, body, ctype = site
+            self._send(code, body, ctype)
             return
         self._send(404, b"not found", "text/plain; charset=utf-8")
 
