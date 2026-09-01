@@ -18,6 +18,27 @@ SKILL_RELATIVE = (
     Path(".claude") / "skills" / SKILL_NAME / "SKILL.md",
 )
 
+GROK_AGENT_NAME = "convoy-neuron"
+GROK_AGENT_RELATIVE = Path(".grok") / "agents" / (GROK_AGENT_NAME + ".md")
+
+_GROK_AGENT_TEXT = """\
+---
+name: convoy-neuron
+description: Convoy neuron seat identity for grok --agent. Not Grok Bot.
+---
+
+You are a Convoy neuron: one grok session on a Convoy thread, not Grok Bot.
+
+- Persona: read `role.md` in this worktree.
+- Identity: read `thread.md`, `.convoy/id`, `.convoy/thread`, and the
+  neuron-identity skill (`.grok/skills/neuron-identity/SKILL.md`). Missing
+  files mean unknown — JSON null. Never invent a `cvy_` or session id.
+- Synapse: `python -m convoy send --to <harness> "..."`. Do not type into
+  another neuron's TUI. Do not steal a live `--resume`.
+- Usage dying: ASK the user to bring_up / open a pane, or write a
+  `.ola/*handoff*` file. Never guess remaining quota.
+"""
+
 _AGENTS_BLOCK = (
     SKILL_BEGIN + "\n"
     "You are a Convoy neuron on this thread, not Grok Bot. Read thread.md and "
@@ -85,6 +106,28 @@ def install_neuron_identity(worktree: Path | str) -> dict[str, Any]:
             out["written"] = True
         out["paths"] = paths
         out["agents"] = str(agents)
+        return out
+    except OSError as e:
+        out["ok"] = False
+        out["error"] = type(e).__name__ + ": " + str(e)
+        return out
+
+
+def ensure_grok_agent(worktree: Path | str) -> dict[str, Any]:
+    """Write the Convoy-owned grok agent file into worktree. Idempotent.
+
+    Points grok --agent at seat identity (role.md + neuron-identity skill).
+    Never overwrites a user agent elsewhere; owns only GROK_AGENT_RELATIVE.
+    """
+    out: dict[str, Any] = {"ok": True, "written": False, "agent": None}
+    dest = Path(worktree) / GROK_AGENT_RELATIVE
+    try:
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        prev = dest.read_text(encoding="utf-8") if dest.is_file() else None
+        if prev != _GROK_AGENT_TEXT:
+            dest.write_text(_GROK_AGENT_TEXT, encoding="utf-8")
+            out["written"] = True
+        out["agent"] = str(dest)
         return out
     except OSError as e:
         out["ok"] = False
