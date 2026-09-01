@@ -167,8 +167,10 @@ a {
   text-decoration: none;
 }
 
-.brand img {
-  border: 1px solid var(--line);
+.brand-mark {
+  width: 28px;
+  height: 28px;
+  display: block;
 }
 
 .brand-stack {
@@ -571,8 +573,10 @@ body {
   gap: 0.9rem;
 }
 
-.brand img {
-  border: 1px solid var(--ink);
+.brand-mark {
+  width: 28px;
+  height: 28px;
+  display: block;
 }
 
 .brand-home {
