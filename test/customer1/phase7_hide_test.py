@@ -141,7 +141,8 @@ class Phase7Hide(unittest.TestCase):
             self.assertEqual({w["action"] for w in p2["windows"]}, {"minimize"})
 
     def test_resume_argv_absolute_when_which_hits_never_wrap(self):
-        abs_claude = "/tmp/fake-claude"
+        # abs on the current OS: py3.13+ ntpath.isabs("/x") is False and would re-anchor
+        abs_claude = r"C:\tmp\fake-claude" if os.name == "nt" else "/tmp/fake-claude"
         with mock.patch("convoy.bringup.shutil.which", return_value=abs_claude):
             argv = resume_argv(self.c)
         self.assertEqual(argv, [abs_claude, "--resume", "sess-claude"])
