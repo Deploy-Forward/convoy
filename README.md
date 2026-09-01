@@ -101,3 +101,24 @@ python -m convoy send --to codex --live "Draft unit tests for the retry planner.
 
 Development: `PYTHONPATH=src python3 test/run.py` (discovers `test/customer1/*_test.py`).  
 License: MIT.
+
+## Cloudflare split hosting (static site + MCP proxy)
+
+This repo includes a Cloudflare Worker config that serves the landing page/static files at the edge while preserving the existing Python MCP transport.
+
+- Config: `wrangler.jsonc`
+- Worker entry: `workers-site.mjs`
+- Static assets directory: `src/convoy/site`
+
+Routing behavior:
+
+- `/mcp` and `/mcp/*` are proxied byte-for-byte to `MCP_ORIGIN` (the current Python MCP origin).
+- all other paths are served from Worker static assets (`env.ASSETS.fetch(request)`).
+
+Deploy steps (from an authenticated environment):
+
+1. Set `MCP_ORIGIN` in `wrangler.jsonc` (or with environment-specific vars) to the current Python MCP origin URL.
+2. Run `wrangler deploy`.
+3. Attach the `convoy.bot/*` route to this Worker in Cloudflare.
+
+This repo does not assume that Cloudflare Worker routing is live until those steps are completed.
