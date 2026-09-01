@@ -42,6 +42,19 @@ One MCP endpoint. What is versioned is the feed contract, not the URL — a name
   - `refuse` — the feed row now carries the full `ask` card (`action: bring_up`, `handoff: .ola/*handoff*`, text), so a sibling pulling `feed --since` sees the remedy without having been the caller.
 - Pack stays pointers. Unknown stays JSON `null`. Neurons pull the thread (`feed --since`); nothing in v2 mints a sibling session or steals a TUI.
 
+### Feed contract v2.1 (2026-09-01, additive — stress-test increment)
+
+Locked from the fable-opus stress findings (ORCH_SEND.md; OPUS1/OPUS2_STRESS.md). Additive only; v1/v2 rows keep flowing.
+
+- **Honest author `from` + addressee `to` on rows.** `layer.hook` writes `from` = `instance_id` when given and optional `to` (a seat instance_id or `grok-bot`). `grok-bot` is a reserved addressee, never an author: `hook` refuses `instance_id="grok-bot"` — conductor identity is `stamp`-only (`conductor_stamp` still writes `from: "grok-bot"`). CLI: `hook ... --to X`.
+- **`note` — the neuron-side write, symmetric to `stamp`.** `layer.neuron_note` / MCP tool `note` (args `summary`, `instance_id` required, `to` optional): kind `note`, same one-line ≤500 clamp as stamp (`truncated: true` on clamp), refuses anonymous or `grok-bot` authors. This is the hosted-neuron write path; local neurons may keep using CLI `hook note`.
+- **Runner provenance on synapse rows.** Every synapse row stamps `runner` (`"native"`/`"fake"`/`"ola"` by function identity via `synapse.runner_kind`, else the runner's name) and `argv0` (from the card's argv, JSON `null` when absent) — so the SoT can distinguish a native vendor send from a fake ACK. Rows without these fields predate v2.1 and are not evidence of a native send.
+- **Build id on the wire.** `initialize` `serverInfo.version` is `0.1.0+<short-sha>` when the package sits in a git checkout, bare `0.1.0` when unknown (never an invented sha). Deploy drift is one call to detect.
+- **One process ↔ one bound root (R-05 resolution, option B).** The public MCP stays bound to exactly one root (customer 1: da-integration). Other threads are CLI/file on their own `--root`; an empty MCP `feed` for an unbound thread is the contract working, not a product fail. No root selector on the public URL (arbitrary-path read hole). Rebinding customer 1 to flip a test GREEN is refused.
+- **`notify` stays JSON `null` per harness** until a documented injection point is proven live. Not a tool, not a promise.
+
+Unit: `test/customer1/feed_note_provenance_test.py` (15 tests, GREEN 2026-09-01, suite 199).
+
 ### Locked layer statement
 
 > Grok Bot is the opposite layer from Herdr and CNVS. This Grok Bot chat is the conductor. MCP is how the conductor attaches (`roster`, `onboard`, `send`, `feed`, `context`, `bring_up`/`open`, `terminals`; tree also has `install` and `hide`). Convoy is the SoT: one visible thread, one `cvy_id`, one tied repo, seats/neuron sessions that stay isolated. Default `send` is headless on purpose. `bring_up` is the terminal view, isolated n-pane, and only uses vendor resume ids. Same-branch overlap is refused. Pointers in, compact card out.

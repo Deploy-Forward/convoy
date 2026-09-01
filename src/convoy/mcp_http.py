@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import json
 import shutil
+import subprocess
 import sys
 from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -32,19 +33,39 @@ from .context import pack
 from .convoy import list_seats, read_thread
 from .glance import build_glance
 from .gitstate import git_state
-from .layer import SCHEMA_VERSION, conductor_stamp, feed_since
+from .layer import SCHEMA_VERSION, conductor_stamp, feed_since, neuron_note
 from .synapse import fake_runner, native_runner, send_one
 from .usage import normalize_usage_remaining, probe
 
 PROTOCOL_LATEST = "2025-03-26"
 PROTOCOL_SUPPORTED = frozenset({PROTOCOL_LATEST, "2024-11-05"})
 SERVER_NAME = "convoy"
-SERVER_VERSION = "0.1.0"
+_BASE_VERSION = "0.1.0"
+
+
+def _server_version() -> str:
+    """Base version plus the commit sha when the package sits in a git
+    checkout, so deploy drift is detectable in one initialize call. Unknown
+    stays the bare base version — never an invented sha."""
+    try:
+        r = subprocess.run(
+            ["git", "-C", str(Path(__file__).resolve().parent), "rev-parse", "--short", "HEAD"],
+            capture_output=True, text=True, timeout=10,
+        )
+        sha = (r.stdout or "").strip()
+        if r.returncode == 0 and sha:
+            return _BASE_VERSION + "+" + sha
+    except OSError:
+        pass
+    return _BASE_VERSION
+
+
+SERVER_VERSION = _server_version()
 HOME_LINE = "convoy.bot · a grok-bot native mcp · one process ↔ one bound thread"
 
 HARNESSES = tuple((row["id"], str(row.get("name") or row["id"])) for row in harness_entries(mcp_supported_only=True))
 
-_TOOL_NAMES = ("roster", "glance", "onboard", "terminals", "context", "send", "feed", "stamp", "bring_up", "open", "hide", "minimize", "background", "install")
+_TOOL_NAMES = ("roster", "glance", "onboard", "terminals", "context", "send", "feed", "stamp", "note", "bring_up", "open", "hide", "minimize", "background", "install")
 
 
 def _schema(properties: dict[str, Any], required: list[str] | None = None) -> dict[str, Any]:
@@ -136,6 +157,18 @@ TOOLS: list[dict[str, Any]] = [
                 "transcript": {"type": "string", "description": "Pointer to the conductor transcript, never its bytes"},
             },
             required=["summary"],
+        ),
+    },
+    {
+        "name": "note",
+        "description": "Neuron note: ONE compact line into the thread feed (kind=note) with an honest from — the writing seat's instance_id, never grok-bot (conductor lines are stamp). Optional to addresses one seat or grok-bot. Same one-line clamp as stamp; this is the hosted-neuron write path.",
+        "inputSchema": _schema(
+            {
+                "summary": {"type": "string", "description": "Compact one-line note"},
+                "instance_id": {"type": "string", "description": "The writing seat's instance_id (honest from; never grok-bot)"},
+                "to": {"type": "string", "description": "Optional addressee: a seat instance_id or grok-bot"},
+            },
+            required=["summary", "instance_id"],
         ),
     },
     {
@@ -373,6 +406,17 @@ def call_tool(root: Path, name: str, arguments: dict[str, Any] | None) -> dict[s
                 effort=_opt_str(args, "effort"),
                 instance_id=_opt_str(args, "instance_id"),
                 transcript=_opt_str(args, "transcript"),
+            )
+        except ValueError as e:
+            return {"ok": False, "error": str(e)}
+        return {"ok": True, "schema_version": SCHEMA_VERSION, **row}
+    if name == "note":
+        try:
+            row = neuron_note(
+                root,
+                str(args.get("summary") or ""),
+                instance_id=_opt_str(args, "instance_id"),
+                to=_opt_str(args, "to"),
             )
         except ValueError as e:
             return {"ok": False, "error": str(e)}
