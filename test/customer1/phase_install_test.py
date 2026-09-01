@@ -75,7 +75,9 @@ class PhaseInstall(unittest.TestCase):
         def fake(url):
             seen.append(url)
             return {"ok": True, "url": url}
-        card = install("claude", dry_run=False, opt_in=True, installer=fake)
+        # posix URL pick + bashrc ungate are os.name-gated; pin that branch on every OS.
+        with mock.patch("convoy.install.os.name", "posix"):
+            card = install("claude", dry_run=False, opt_in=True, installer=fake)
         self.assertTrue(card["ok"], card)
         self.assertTrue(card["ran"])
         self.assertEqual(seen, [HARNESSES["claude"]["posix_url"]])

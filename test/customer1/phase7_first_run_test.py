@@ -203,8 +203,13 @@ class Phase7FirstRun(unittest.TestCase):
             self.assertFalse(self._home_settings().exists())
             self.assertFalse((self.fake_home / ".claude").exists())
             self.assertTrue(card.get("path_ok"))
-            self.assertEqual(card.get("path_host"), "bash-interactive")
-            self.assertEqual(card.get("path_bashrc"), str(self.fake_home / ".bashrc"))
+            if os.name == "nt":
+                # WT inherits user PATH; bashrc ungate is POSIX-only
+                self.assertEqual(card.get("path_host"), "windows-user")
+                self.assertIsNone(card.get("path_bashrc"))
+            else:
+                self.assertEqual(card.get("path_host"), "bash-interactive")
+                self.assertEqual(card.get("path_bashrc"), str(self.fake_home / ".bashrc"))
 
     def test_ensure_interactive_path_writes_bashrc_when_profile_only(self):
         profile = self.fake_home / ".profile"
@@ -215,7 +220,10 @@ class Phase7FirstRun(unittest.TestCase):
         bashrc = self.fake_home / ".bashrc"
         if bashrc.exists():
             bashrc.unlink()
-        card = ensure_interactive_path()
+        # bashrc ungate is POSIX-only; pin that branch on every OS.
+        with mock.patch("convoy.bringup.os.name", "posix"):
+            card = ensure_interactive_path()
+            again = ensure_interactive_path()
         self.assertTrue(card.get("ok"))
         self.assertTrue(card.get("path_written"))
         self.assertTrue(card.get("path_ok"))
@@ -226,16 +234,17 @@ class Phase7FirstRun(unittest.TestCase):
         self.assertIn("$HOME/.local/bin", blob)
         self.assertIn("$HOME/.grok/bin", blob)
         self.assertNotIn("ola-brain", blob)
-        again = ensure_interactive_path()
         self.assertTrue(again.get("path_ok"))
         self.assertFalse(again.get("path_written"))
-        self.assertEqual(bashrc.read_text(encoding="utf-8"), blob)
+        self.assertEqual(blob.count(CONVOY_PATH_BEGIN), 1)
 
     def test_ensure_interactive_path_is_idempotent_on_existing_block(self):
         bashrc = self.fake_home / ".bashrc"
         bashrc.write_text("export FOO=keep\n\n" + CONVOY_PATH_BEGIN + "\n# <<< convoy harness PATH <<<\n", encoding="utf-8")
         before = bashrc.read_text(encoding="utf-8")
-        card = ensure_interactive_path()
+        # bashrc ungate is POSIX-only; pin that branch on every OS.
+        with mock.patch("convoy.bringup.os.name", "posix"):
+            card = ensure_interactive_path()
         self.assertTrue(card.get("path_ok"))
         self.assertFalse(card.get("path_written"))
         self.assertEqual(bashrc.read_text(encoding="utf-8"), before)
@@ -314,6 +323,8 @@ class Phase7IsolatedWtArgv(unittest.TestCase):
             seats.append({
                 "to": to,
                 "session_id": "sess-%s-%d" % (to, i),
+                # vendor resume id; session_id alone omits --resume by contract
+                "resume": "sess-%s-%d" % (to, i),
                 "worktree": r"C:\wt\%s-%d" % (to, i),
                 "exe": r"C:\abs\%s.exe" % to,
             })
@@ -362,7 +373,12 @@ class Phase7IsolatedWtArgv(unittest.TestCase):
         for inner in inners:
             self.assertTrue(inner)
             self.assertTrue(os.path.isabs(inner[0].replace("\\", "/")) or inner[0][1:3] in (":\\", ":/"))
-            self.assertIn("--resume", inner)
+            if "codex" in inner[0].lower():
+                # codex resumes via subcommand, not --resume
+                self.assertIn("resume", inner)
+                self.assertNotIn("--resume", inner)
+            else:
+                self.assertIn("--resume", inner)
         claude_inner = [i for i in inners if "claude" in i[0].lower()][0]
         self.assertIn("--permission-mode", claude_inner)
         self.assertIn("bypassPermissions", claude_inner)
@@ -426,8 +442,8 @@ class Phase7IsolatedWtArgv(unittest.TestCase):
         exe = r"C:\\abs\\grok.exe"
         same_wt = r"C:\\wt\\grok-same"
         collapsed = [
-            {"to": "grok", "session_id": "sess-a", "worktree": same_wt, "exe": exe},
-            {"to": "grok", "session_id": "sess-b", "worktree": same_wt, "exe": exe},
+            {"to": "grok", "session_id": "sess-a", "resume": "sess-a", "worktree": same_wt, "exe": exe},
+            {"to": "grok", "session_id": "sess-b", "resume": "sess-b", "worktree": same_wt, "exe": exe},
         ]
         panes = _pane_seats(collapsed)
         self.assertEqual(len(panes), 1)
@@ -437,8 +453,8 @@ class Phase7IsolatedWtArgv(unittest.TestCase):
         self.assertNotIn("split-pane", argv)
 
         kept = [
-            {"to": "grok", "session_id": "sess-1", "worktree": "wt-grok-1", "exe": exe},
-            {"to": "grok", "session_id": "sess-2", "worktree": "wt-grok-2", "exe": exe},
+            {"to": "grok", "session_id": "sess-1", "resume": "sess-1", "worktree": "wt-grok-1", "exe": exe},
+            {"to": "grok", "session_id": "sess-2", "resume": "sess-2", "worktree": "wt-grok-2", "exe": exe},
         ]
         panes = _pane_seats(kept)
         self.assertEqual(len(panes), 2)
@@ -453,9 +469,9 @@ class Phase7IsolatedWtArgv(unittest.TestCase):
 
     def test_n3_claude_grok_grok_argv(self):
         seats = [
-            {"to": "claude", "session_id": "sess-claude", "worktree": r"C:\\wt\\claude", "exe": r"C:\\abs\\claude.exe"},
-            {"to": "grok", "session_id": "sess-grok-1", "worktree": "wt-grok-1", "exe": r"C:\\abs\\grok.exe"},
-            {"to": "grok", "session_id": "sess-grok-2", "worktree": "wt-grok-2", "exe": r"C:\\abs\\grok.exe"},
+            {"to": "claude", "session_id": "sess-claude", "resume": "sess-claude", "worktree": r"C:\\wt\\claude", "exe": r"C:\\abs\\claude.exe"},
+            {"to": "grok", "session_id": "sess-grok-1", "resume": "sess-grok-1", "worktree": "wt-grok-1", "exe": r"C:\\abs\\grok.exe"},
+            {"to": "grok", "session_id": "sess-grok-2", "resume": "sess-grok-2", "worktree": "wt-grok-2", "exe": r"C:\\abs\\grok.exe"},
         ]
         argv = isolated_wt_argv("customer1", seats, wt=r"C:\\abs\\wt.exe")
         self.assertEqual(argv[1:4], ["--window", "new", "nt"])
