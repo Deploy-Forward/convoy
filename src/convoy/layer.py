@@ -35,8 +35,16 @@ def feed_path(root: Path) -> Path:
     p.parent.mkdir(parents=True, exist_ok=True)
     return p
 
+def _is_conductor_alias(val: Any) -> bool:
+    # Exact-match refusal is bypassable (Grok-Bot, grok_bot, grokbot):
+    # normalize case/spacing/separators before comparing.
+    if not isinstance(val, str):
+        return False
+    return val.strip().lower().replace("_", "").replace("-", "") == "grokbot"
+
+
 def hook(root: Path, kind: str, summary: str, instance_id: str | None = None, extra: dict[str, Any] | None = None, to: str | None = None) -> dict[str, Any]:
-    if instance_id == _CONDUCTOR:
+    if _is_conductor_alias(instance_id):
         raise ValueError("refuse grok-bot as author; conductor identity is stamp-only")
     event = {"ts": utc_now(), "kind": kind, "instance_id": instance_id, "summary": summary}
     # v2.1 additive: honest author `from` (the writing seat) and optional

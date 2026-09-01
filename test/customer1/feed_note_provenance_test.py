@@ -47,6 +47,17 @@ class FeedAddresseeAndHonestFrom(unittest.TestCase):
         with self.assertRaises(ValueError):
             hook(self.root, "note", "forged", instance_id="grok-bot")
 
+    def test_hook_refuses_grok_bot_author_aliases(self):
+        for alias in ("Grok-Bot", "GROK-BOT", "grok_bot", "grokbot", " grok-bot "):
+            with self.assertRaises(ValueError, msg=alias):
+                hook(self.root, "note", "forged", instance_id=alias)
+
+    def test_mcp_note_refuses_grok_bot_alias(self):
+        from convoy.mcp_http import call_tool
+
+        card = call_tool(self.root, "note", {"summary": "forged", "instance_id": "Grok-Bot"})
+        self.assertFalse(card["ok"])
+
     def test_conductor_stamp_from_stays_grok_bot(self):
         row = conductor_stamp(self.root, "decision", instance_id="a487bca8-agent-id")
         self.assertEqual(row["from"], "grok-bot")
@@ -159,14 +170,43 @@ class ServerBuildId(unittest.TestCase):
 
     def test_initialize_version_carries_commit_sha(self):
         pkg_dir = Path(__file__).resolve().parents[2]
-        sha = subprocess.run(
-            ["git", "-C", str(pkg_dir), "rev-parse", "--short", "HEAD"],
+        build = subprocess.run(
+            ["git", "-C", str(pkg_dir), "describe", "--always", "--dirty"],
             capture_output=True, text=True,
         ).stdout.strip()
-        self.assertTrue(sha, "test requires a git checkout")
+        self.assertTrue(build, "test requires a git checkout")
         resp = handle_rpc(Path(tempfile.mkdtemp()), {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}})
         version = resp["result"]["serverInfo"]["version"]
-        self.assertEqual(version, "0.1.0+" + sha)
+        self.assertEqual(version, "0.1.0+" + build)
+
+    def test_server_version_survives_git_timeout(self):
+        from unittest import mock
+
+        from convoy import mcp_http
+
+        def boom(*_a, **_k):
+            raise subprocess.TimeoutExpired(cmd="git", timeout=10)
+
+        with mock.patch.object(mcp_http.subprocess, "run", boom):
+            self.assertEqual(mcp_http._server_version(), "0.1.0")
+
+    def test_server_version_marks_dirty_checkout(self):
+        from convoy.mcp_http import _server_version
+
+        repo = Path(tempfile.mkdtemp())
+        for argv in (
+            ["git", "-C", str(repo), "init", "-q"],
+            ["git", "-C", str(repo), "config", "user.email", "t@t"],
+            ["git", "-C", str(repo), "config", "user.name", "t"],
+            ["git", "-C", str(repo), "commit", "--allow-empty", "-q", "-m", "seed"],
+        ):
+            self.assertEqual(subprocess.run(argv, capture_output=True).returncode, 0)
+        clean = _server_version(repo_dir=repo)
+        self.assertTrue(clean.startswith("0.1.0+"))
+        self.assertFalse(clean.endswith("-dirty"))
+        (repo / "f.txt").write_text("x", encoding="utf-8")
+        subprocess.run(["git", "-C", str(repo), "add", "f.txt"], capture_output=True)
+        self.assertTrue(_server_version(repo_dir=repo).endswith("-dirty"))
 
 
 if __name__ == "__main__":

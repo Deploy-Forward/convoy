@@ -43,19 +43,21 @@ SERVER_NAME = "convoy"
 _BASE_VERSION = "0.1.0"
 
 
-def _server_version() -> str:
-    """Base version plus the commit sha when the package sits in a git
-    checkout, so deploy drift is detectable in one initialize call. Unknown
-    stays the bare base version — never an invented sha."""
+def _server_version(repo_dir: Path | None = None) -> str:
+    """Base version plus `git describe --always --dirty` when the package sits
+    in a git checkout, so deploy drift — including a patched-in-place deploy —
+    is detectable in one initialize call. Unknown stays the bare base version —
+    never an invented sha. SubprocessError is caught too: TimeoutExpired is NOT
+    an OSError, and a hung git must not stop the server from importing."""
     try:
         r = subprocess.run(
-            ["git", "-C", str(Path(__file__).resolve().parent), "rev-parse", "--short", "HEAD"],
+            ["git", "-C", str(repo_dir or Path(__file__).resolve().parent), "describe", "--always", "--dirty"],
             capture_output=True, text=True, timeout=10,
         )
-        sha = (r.stdout or "").strip()
-        if r.returncode == 0 and sha:
-            return _BASE_VERSION + "+" + sha
-    except OSError:
+        build = (r.stdout or "").strip()
+        if r.returncode == 0 and build:
+            return _BASE_VERSION + "+" + build
+    except (OSError, subprocess.SubprocessError):
         pass
     return _BASE_VERSION
 
@@ -161,7 +163,7 @@ TOOLS: list[dict[str, Any]] = [
     },
     {
         "name": "note",
-        "description": "Neuron note: ONE compact line into the thread feed (kind=note) with an honest from — the writing seat's instance_id, never grok-bot (conductor lines are stamp). Optional to addresses one seat or grok-bot. Same one-line clamp as stamp; this is the hosted-neuron write path.",
+        "description": "Neuron note: ONE compact line into the thread feed (kind=note) with an attributed from — the writing seat's claimed instance_id (the bus does not authenticate authorship), never grok-bot or an alias of it (conductor lines are stamp). Optional to addresses one seat or grok-bot. Same one-line clamp as stamp; this is the hosted-neuron write path.",
         "inputSchema": _schema(
             {
                 "summary": {"type": "string", "description": "Compact one-line note"},
