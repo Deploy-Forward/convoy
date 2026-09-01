@@ -246,15 +246,23 @@ def send_one(
     else:
         usage = {"usage_remaining": None, "limited": False, "raw": None}
     if usage.get("limited"):
-        hook(root, kind="refuse", summary=to + " limited", instance_id=resolved_instance_id, extra={"to": to, "raw": usage.get("raw")})
+        # Grok has no meter; even a lying probe must not surface one.
+        limited_remaining = None if _normalize_target_name(target_name) == "grok" else normalize_usage_remaining(usage.get("usage_remaining"))
+        ask = {
+            "action": "bring_up",
+            "handoff": ".ola/*handoff*",
+            "text": to + " limited: ASK the user to bring_up / open a pane, or write a .ola/*handoff* file; do not steal a TUI, do not mint a sibling session, do not guess remaining quota",
+        }
+        hook(root, kind="refuse", summary=to + " limited", instance_id=resolved_instance_id, extra={"to": to, "raw": usage.get("raw"), "ask": ask["action"]})
         return {
             "ok": False,
             "to": to,
             "session_id": None,
             "model": None,
-            "usage_remaining": normalize_usage_remaining(usage.get("usage_remaining")),
+            "usage_remaining": limited_remaining,
             "refused": True,
             "error": to + " limited",
+            "ask": ask,
             "body": usage.get("raw"),
             "pointers": packed,
             "convoy_id": cid,
