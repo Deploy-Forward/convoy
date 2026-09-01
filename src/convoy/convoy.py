@@ -161,6 +161,30 @@ def list_seats(root: Path, convoy_id: str | None = None, require_session: bool =
         return list(found.values())
     return list(found.values()) + blanks
 
+def set_seat_agent(root: Path, session_id: str, agent: str) -> dict[str, Any] | None:
+    """Persist agent on an existing seat row. Append-only; last row wins.
+
+    No-op (None) when the seat is unknown or already carries that agent —
+    repeated bring_up must not grow seats.jsonl.
+    """
+    sid = str(session_id or "").strip()
+    val = str(agent or "").strip()
+    if not sid or not val:
+        return None
+    rows = list_seats(root, require_session=True)
+    row = None
+    for r in rows:
+        if r.get("session_id") == sid:
+            row = r
+    if row is None or row.get("agent") == val:
+        return None
+    updated = {**row, "agent": val}
+    path = _seats_path(root)
+    with path.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(updated, separators=(",", ":")) + "\n")
+    return updated
+
+
 def lookup_resume(root: Path, thread: str, to: str, worktree: str | None = None) -> str | None:
     """Return stored vendor resume id for thread+to(+worktree when provided)."""
     cid = read_id(root)

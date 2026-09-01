@@ -116,6 +116,9 @@ def _first_run_card(hid: str, root: Path) -> dict[str, Any]:
         out["identity_paths"] = row["identity_paths"]
     if row.get("identity_agents"):
         out["identity_agents"] = row["identity_agents"]
+    out["agent_written"] = bool(row.get("agent_written"))
+    if row.get("agent_path"):
+        out["agent_path"] = row["agent_path"]
     return out
 
 

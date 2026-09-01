@@ -45,7 +45,7 @@ import subprocess
 from pathlib import Path
 from typing import Any, Callable
 
-from .identity import install_neuron_identity
+from .identity import ensure_grok_agent, install_neuron_identity
 from .convoy import (
     CONDUCTOR,
     list_seats,
@@ -54,6 +54,7 @@ from .convoy import (
     read_id,
     read_lead,
     read_thread,
+    set_seat_agent,
 )
 
 Tiler = Callable[..., list[dict[str, int]]]
@@ -507,6 +508,8 @@ def ensure_first_run(seat: dict[str, Any]) -> dict[str, Any]:
         "identity_written": False,
         "identity_paths": [],
         "identity_agents": None,
+        "agent_written": False,
+        "agent_path": None,
     }
     path_card = ensure_interactive_path()
     out["path_written"] = bool(path_card.get("path_written"))
@@ -528,6 +531,12 @@ def ensure_first_run(seat: dict[str, Any]) -> dict[str, Any]:
             out["identity_agents"] = ident.get("agents")
             if ident.get("error"):
                 out["identity_error"] = ident["error"]
+            if _harness_bin(to) == "grok":
+                agent_card = ensure_grok_agent(wt_path)
+                out["agent_written"] = bool(agent_card.get("written"))
+                out["agent_path"] = agent_card.get("agent")
+                if agent_card.get("error"):
+                    out["agent_error"] = agent_card["error"]
     if not _is_claude(to):
         return out
     if not (isinstance(wt, str) and wt.strip()) and not isinstance(wt, Path):
@@ -855,6 +864,26 @@ def _hop_seats(root: Path, cid: str) -> list[dict[str, Any]]:
     return [s for s in seats if not is_conductor(s.get("to"))]
 
 
+def _seat_with_agent(root: Path, seat: dict[str, Any], first_run: dict[str, Any]) -> dict[str, Any]:
+    """Point an agent-less grok seat at the Convoy-owned agent file.
+
+    An explicit seat agent (e.g. agents/cloud-g1.md) always wins. Persists
+    onto the seat row when it has a session_id, so resume_argv sees --agent
+    on later bring_up without first-run. Never touches the vendor resume id.
+    """
+    agent_path = (first_run or {}).get("agent_path")
+    to = str((seat or {}).get("to") or "")
+    if not agent_path or _harness_bin(to) != "grok":
+        return seat
+    existing = seat.get("agent")
+    if isinstance(existing, str) and existing.strip():
+        return seat
+    sid = seat.get("session_id")
+    if isinstance(sid, str) and sid.strip():
+        set_seat_agent(root, sid.strip(), str(agent_path))
+    return {**seat, "agent": str(agent_path)}
+
+
 def _window_for(root: Path, seat: dict[str, Any], rect: dict[str, int] | None, cid: str, thread: str | None) -> dict[str, Any]:
     to = seat.get("to")
     sid = seat.get("session_id")
@@ -906,13 +935,16 @@ def bring_up(root: Path, convoy_id: str | None = None, thread: str | None = None
     tile_fn = tiler or tile_rects
     rects = tile_fn(len(hops))
     windows: list[dict[str, Any]] = []
+    effective: list[dict[str, Any]] = []
     for i, s in enumerate(hops):
         rect = rects[i] if i < len(rects) else None
-        win = _window_for(root, s, rect, cid, bound)
         try:
             fr = ensure_first_run(s)
         except Exception as e:
             fr = {"ok": False, "prepared": False, "wrote": False, "settings": None, "error": str(e), "home_written": False, "settings_home": None}
+        s = _seat_with_agent(root, s, fr)
+        effective.append(s)
+        win = _window_for(root, s, rect, cid, bound)
         win["first_run"] = {
             "prepared": bool(fr.get("prepared")),
             "wrote": bool(fr.get("wrote")),
@@ -928,7 +960,7 @@ def bring_up(root: Path, convoy_id: str | None = None, thread: str | None = None
     if runner is not None:
         ready: list[dict[str, Any]] = []
         ready_idx: list[int] = []
-        for i, s in enumerate(hops):
+        for i, s in enumerate(effective):
             win = windows[i]
             if not win.get("ok"):
                 continue
