@@ -159,6 +159,9 @@ class PhaseMcpHttp(unittest.TestCase):
         self.assertIn("<!doctype html>", body.lower())
         self.assertIn('property="og:image" content="https://convoy.bot/og.png"', body)
         self.assertIn('name="twitter:card" content="summary_large_image"', body)
+        self.assertIn("Rendered from <code>tools/list</code> on <code>/mcp</code>", body)
+        self.assertIn("reading the wire", body)
+        self.assertNotIn("grok · claude · codex", body)
         self.assertTrue(ctype.startswith("text/html"))
 
     def test_get_mcp_is_post_only(self):

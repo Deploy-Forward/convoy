@@ -2,6 +2,7 @@
   document.documentElement.classList.add("js");
   const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
   const revealNodes = Array.from(document.querySelectorAll("[data-reveal]"));
+  let wireToolsCache = null;
 
   revealNodes.forEach((node, index) => {
     const attrDelay = node.getAttribute("data-reveal-delay");
@@ -74,6 +75,127 @@
     observer.observe(hero);
   }
 
+  function schemaHints(schema) {
+    if (!schema || typeof schema !== "object") {
+      return "inputs: unknown";
+    }
+    const props = schema.properties && typeof schema.properties === "object" ? Object.keys(schema.properties) : [];
+    const required = Array.isArray(schema.required) ? schema.required : [];
+    if (!props.length) {
+      return "inputs: none";
+    }
+    if (!required.length) {
+      return `inputs: ${props.length}`;
+    }
+    return `required: ${required.join(", ")}`;
+  }
+
+  function parseTools(payload) {
+    if (!payload || typeof payload !== "object") {
+      return [];
+    }
+    const result = payload.result;
+    if (result && typeof result === "object" && Array.isArray(result.tools)) {
+      return result.tools;
+    }
+    return [];
+  }
+
+  async function postRpc(method, id, params, extraHeaders) {
+    const headers = {
+      "Content-Type": "application/json",
+      Accept: "application/json, text/event-stream",
+      ...(extraHeaders || {}),
+    };
+    const response = await fetch("/mcp", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id,
+        method,
+        ...(params ? { params } : {}),
+      }),
+    });
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+    const json = await response.json();
+    return { json, headers: response.headers };
+  }
+
+  async function fetchWireTools() {
+    if (wireToolsCache) {
+      return wireToolsCache;
+    }
+    const init = await postRpc("initialize", "site-init", {
+      protocolVersion: "2025-03-26",
+      capabilities: {},
+      clientInfo: { name: "convoy-site", version: "1.0.0" },
+    });
+    const sessionId = init.headers.get("Mcp-Session-Id") || init.headers.get("mcp-session-id");
+    const list = await postRpc("tools/list", "site-tools-list", null, sessionId ? { "Mcp-Session-Id": sessionId } : undefined);
+    const tools = parseTools(list.json);
+    if (!Array.isArray(tools)) {
+      throw new Error("invalid tools/list payload");
+    }
+    wireToolsCache = tools;
+    return tools;
+  }
+
+  function renderWireTools(tools) {
+    const status = document.getElementById("wire-live-status");
+    const list = document.getElementById("wire-live-list");
+    if (!status || !list) {
+      return;
+    }
+    list.replaceChildren();
+    if (!tools.length) {
+      status.textContent = "couldn't read the wire: tools/list returned no tools";
+      return;
+    }
+    status.textContent = `live tools/list: ${tools.length} verbs`;
+    for (const tool of tools) {
+      const item = document.createElement("li");
+      item.className = "wire-live-item";
+
+      const head = document.createElement("div");
+      head.className = "wire-live-item-head";
+
+      const name = document.createElement("span");
+      name.className = "wire-live-name";
+      name.textContent = String(tool.name || "unknown");
+
+      const hints = document.createElement("span");
+      hints.className = "wire-live-hints";
+      hints.textContent = schemaHints(tool.inputSchema);
+
+      const desc = document.createElement("p");
+      desc.className = "wire-live-desc";
+      desc.textContent = String(tool.description || "No description on wire.");
+
+      head.append(name, hints);
+      item.append(head, desc);
+      list.append(item);
+    }
+  }
+
+  async function bootWireTools() {
+    const status = document.getElementById("wire-live-status");
+    const list = document.getElementById("wire-live-list");
+    if (!status || !list) {
+      return;
+    }
+    status.textContent = "reading the wire…";
+    try {
+      const tools = await fetchWireTools();
+      renderWireTools(tools);
+    } catch (_err) {
+      list.replaceChildren();
+      status.textContent = "couldn't read the wire";
+    }
+  }
+
   const copyButton = document.getElementById("copy-attach");
   const status = document.getElementById("copy-status");
   if (copyButton) {
@@ -99,4 +221,5 @@
     bootReveal();
     bootHeroAtmosphere();
   });
+  bootWireTools();
 })();
