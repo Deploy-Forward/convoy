@@ -138,7 +138,11 @@ def live_on_branch(root: Path, branch: str | None) -> list[dict[str, Any]]:
     path = registry_path(root)
     if not path.exists():
         return []
-    found: list[dict[str, Any]] = []
+    # Dedupe by session_id, last row wins (opus-1 AMBER-2): one chair is one
+    # agent, however many occupants it has had — counting raw rows made the
+    # same-branch guard degrade permanently after every swap/re-register.
+    found: dict[str, dict[str, Any]] = {}
+    blanks: list[dict[str, Any]] = []
     with path.open(encoding="utf-8-sig") as f:
         for line in f:
             line = line.strip()
@@ -149,5 +153,9 @@ def live_on_branch(root: Path, branch: str | None) -> list[dict[str, Any]]:
             except json.JSONDecodeError:
                 continue
             if row.get("git_branch") == branch:
-                found.append(row)
-    return found
+                sid = row.get("session_id")
+                if isinstance(sid, str) and sid:
+                    found[sid] = row
+                else:
+                    blanks.append(row)
+    return list(found.values()) + blanks

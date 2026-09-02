@@ -114,6 +114,10 @@ def seat(
         # Convoy stores it; it never sets vendor effort flags.
         "effort": effort.strip() if isinstance(effort, str) and effort.strip() else None,
         "resume": resume_val,
+        # Token-to-harness binding (opus-2 RED at baa6a55): resume_for records
+        # the harness this token is claimed for; resume_target refuses on
+        # mismatch, so a stale token can never ride another harness's argv.
+        "resume_for": to if resume_val else None,
         "title": title_val,
         "agent": agent_val,
         "resume_key": rkey,
@@ -186,6 +190,49 @@ def set_seat_agent(root: Path, session_id: str, agent: str) -> dict[str, Any] | 
     path = _seats_path(root)
     with path.open("a", encoding="utf-8") as f:
         f.write(json.dumps(updated, separators=(",", ":")) + "\n")
+    return updated
+
+
+def update_seat(root: Path, session_id: str, **changes: Any) -> dict[str, Any]:
+    """Field-preserving seat update ({**row, ...changes}, the set_seat_agent
+    pattern) — bare seat() writes whole rows last-wins and silently blanks
+    unpassed fields (opus-1 AMBER-4). A harness change nulls resume AND
+    vendor_session_id unless explicitly re-provided (no swap ever carries a
+    vendor session — ratified RED-2 resolution). resume_key is recomputed
+    (to/worktree are hashed: it is a resume MAP key, not chair identity)."""
+    sid = str(session_id or "").strip()
+    row = None
+    for r in list_seats(root, require_session=True):
+        if r.get("session_id") == sid:
+            row = r
+    if row is None:
+        raise ValueError("unknown seat: " + sid)
+    harness_changed = "to" in changes and changes["to"] != row.get("to")
+    updated: dict[str, Any] = {**row, **changes}
+    if harness_changed:
+        if "resume" not in changes:
+            updated["resume"] = None
+        if "vendor_session_id" not in changes:
+            updated["vendor_session_id"] = None
+    if updated.get("resume"):
+        if "resume" in changes and changes["resume"]:
+            updated["resume_for"] = updated.get("to")
+    else:
+        updated["resume_for"] = None
+    cid = row.get("convoy_id") or ensure_id(root)
+    thread = read_thread(root) or ""
+    updated["resume_key"] = make_resume_key(cid, thread, str(updated.get("to") or ""), updated.get("worktree"))
+    path = _seats_path(root)
+    with path.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(updated, separators=(",", ":")) + "\n")
+    register(
+        root,
+        sid,
+        str(updated.get("to") or ""),
+        extra={"convoy_id": cid, "worktree": updated.get("worktree"), "model": updated.get("model"),
+               "to": updated.get("to"), "resume": updated.get("resume"), "title": updated.get("title"),
+               "agent": updated.get("agent"), "resume_key": updated.get("resume_key")},
+    )
     return updated
 
 
