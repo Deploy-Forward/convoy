@@ -39,8 +39,8 @@ class FeedV2Contract(unittest.TestCase):
             "ship feed contract v2: conductor stamps + refuse/ask on the bus",
             agent="Orchestrator",
             effort="x-high",
-            instance_id="a487bca8-4a8e-41b8-81b0-5a1182368cc2",
-            transcript="/home/box/agent-data/agent-transcripts/a487bca8-4a8e-41b8-81b0-5a1182368cc2/a487bca8-4a8e-41b8-81b0-5a1182368cc2.jsonl",
+            instance_id="00000000-0000-4000-8000-000000000002",
+            transcript="/transcripts/00000000-0000-4000-8000-000000000002/00000000-0000-4000-8000-000000000002.jsonl",
             usage_remaining="Current session: 7% used",
         )
         self.assertEqual(row["kind"], "conductor")
@@ -48,7 +48,7 @@ class FeedV2Contract(unittest.TestCase):
         self.assertEqual(row["agent"], "Orchestrator")
         self.assertIsNone(row["model"])
         self.assertEqual(row["effort"], "x-high")
-        self.assertEqual(row["instance_id"], "a487bca8-4a8e-41b8-81b0-5a1182368cc2")
+        self.assertEqual(row["instance_id"], "00000000-0000-4000-8000-000000000002")
         self.assertTrue(str(row["transcript"]).endswith(".jsonl"))
         # blob strings clamp to null — never a promoted meter
         self.assertIsNone(row["usage_remaining"])

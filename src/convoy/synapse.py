@@ -84,7 +84,7 @@ def fake_runner(to: str, body: str, instance_id: str | None = None, label: str |
 
 def ola_runner(to: str, body: str, instance_id: str | None = None, label: str | None = None, cwd: str | None = None, worktree: str | None = None, **_k: Any) -> dict[str, Any]:
     target = instance_id or to
-    brain = os.environ.get("OLA_BRAIN") or shutil.which("ola-brain") or r"C:\Users\marco\.local\bin\ola-brain.exe"
+    brain = os.environ.get("OLA_BRAIN") or shutil.which("ola-brain") or "ola-brain"
     cmd = [brain, "side-chat", "send"]
     if label and not instance_id:
         cmd.extend(["--label", label])

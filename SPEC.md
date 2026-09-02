@@ -211,7 +211,7 @@ Customer 1 talks to Grok Bot. Grok Bot opens synapses through Convoy. Each synap
 | Object | Lives where | Shape | Owns | Does not own |
 |---|---|---|---|---|
 | **Thread** | The human conversation (this Grok Bot chat, or any customer thread). Front matter is in the chat, never invented. | Message to/From, Thread path, Skill on disk. The conversation is the durable unit. | The human's questions, compact cards coming back, the decision to open a synapse. | Vendor session_ids. Packed stdin. Full transcripts. |
-| **Layer** | `.convoy/feed.jsonl` under a checkout root. On Aether customer 1: `C:\Users\marco\ola\da-integration\.convoy\feed.jsonl`. | JSONL of `{ts, kind, instance_id, summary, ...extra}`. Sliding window via `feed_since`. | Event time. Pointers (thread.md, role.md, `.ola/brief.md`, newest handoff, instance_id, worktree, branch, pr). Which neuron was touched, when. | Bytes of a vendor transcript. `hook-context` / `precompact` / `session-end` from ola-brain. Vendor `--resume`. |
+| **Layer** | `.convoy/feed.jsonl` under a checkout root. On Aether customer 1: `C:\Users\dev\ola\da-integration\.convoy\feed.jsonl`. | JSONL of `{ts, kind, instance_id, summary, ...extra}`. Sliding window via `feed_since`. | Event time. Pointers (thread.md, role.md, `.ola/brief.md`, newest handoff, instance_id, worktree, branch, pr). Which neuron was touched, when. | Bytes of a vendor transcript. `hook-context` / `precompact` / `session-end` from ola-brain. Vendor `--resume`. |
 | **Synapse** | One native send: Convoy execs one harness CLI, one instance, one meter. Card comes back compact. | `{ok, to, session_id, model, usage_remaining, body, ...}`. Hook row stamped on send/refuse/spawn. | That harness's native session_id. That harness's cwd/worktree. That harness's remaining quota (or JSON `null`). | Another synapse's session. Another synapse's branch. The Grok Bot main context window. |
 
 Rules that follow from the table:
@@ -392,7 +392,7 @@ Default synapse (`send`) is headless: it never pops a TUI and never calls `live_
 ```
 Message to/From: {Agent} | {model} | {effort}
 Thread: {filepath} | usage remaining {n|unknown}
-Skill on disk: /home/box/agent-data/workflows/agent-channel/SKILL.md
+Skill on disk: <agent-host>/workflows/agent-channel/SKILL.md
 ```
 
 If a field is unknown, write `unknown` or JSON `null`. Do not fill it from memory.
@@ -430,11 +430,11 @@ The human conversation is the thread. The layer is pointers, not pack bytes in s
 
 ### Successful functions
 
-- **GREEN:** ola-brain `side-chat send grok --label synapse-proof` → `grok-session-synapseproof` `SYNAPSE_OK` 34s; turn 2 `SYNAPSE_TURN2` 11s; turn 3 via convoy mention `SYNAPSE_TURN3`; registry `session_id` `01a04890-17df-7af0-b54c-9b69dd81b3b2` (2026-08-28 Aether).
+- **GREEN:** ola-brain `side-chat send grok --label synapse-proof` → `grok-session-synapseproof` `SYNAPSE_OK` 34s; turn 2 `SYNAPSE_TURN2` 11s; turn 3 via convoy mention `SYNAPSE_TURN3`; registry `session_id` `<redacted-vendor-session-id>` (2026-08-28 Aether).
 - **GREEN:** `Invoke-AgentChannel.ps1 context` (packed pointers).
 - **RED:** CLI side-chat `send` skips the IDE hydration pointer (cold message). Codex JSON has no `session_id` so next turn is `resume --last` (hostile).
 - **RED:** dry-run printed instance id without `register_agent`.
-- **GREEN (this tree):** `context.py` pack/stdin pointers. `ola_runner` passes `--label` before target. `parse_session_id` reads JSON or ola-brain `instance_id: reply` (must contain `-session-`). No UUID regex. Dry-run session_id is JSON null. Live 2026-08-28: pointers in, PHASE1_T1/T2, vendor `01a048ee-3072-7011-b996-6ae068bbed4d`. CLI auto-register from stdout was the remaining gap.
+- **GREEN (this tree):** `context.py` pack/stdin pointers. `ola_runner` passes `--label` before target. `parse_session_id` reads JSON or ola-brain `instance_id: reply` (must contain `-session-`). No UUID regex. Dry-run session_id is JSON null. Live 2026-08-28: pointers in, PHASE1_T1/T2, vendor `<redacted-vendor-session-id>`. CLI auto-register from stdout was the remaining gap.
 
 ### Pseudo-code
 
@@ -508,7 +508,7 @@ Event time is the hook stamp on the layer. Sliding window = grep feed by `ts`. N
 ### Successful functions
 
 - **GREEN unit:** `test/customer1/temporal_hooks_test.py` (`hook` + `feed_since`). Asserts `ts`, `kind`, `instance_id`, `summary` and that `feed_since(later["ts"])` returns the new hop.
-- **GREEN Aether:** convoy hook stamps `{ts,kind,instance_id,summary}` to `C:\Users\marco\ola\da-integration\.convoy\feed.jsonl` via `C:\.grok\ConvoyLayer.ps1`. `convoy feed --since` returns that window. Example c1-locked ts `2026-08-28T14:42:46.975866Z`.
+- **GREEN Aether:** convoy hook stamps `{ts,kind,instance_id,summary}` to `C:\Users\dev\ola\da-integration\.convoy\feed.jsonl` via `C:\.grok\ConvoyLayer.ps1`. `convoy feed --since` returns that window. Example c1-locked ts `2026-08-28T14:42:46.975866Z`.
 - **GREEN code:** `src/convoy/layer.py` `hook()`, `feed_since()`. CLI: `python -m convoy hook <kind> <summary> [--instance-id]` and `python -m convoy feed --since <ISO>`.
 - **RED:** MCP `feed` tool not attached to this chat. ola-brain feed is a different object and hung when probed.
 
@@ -809,7 +809,7 @@ Two live harnesses, two `session_id`s, two hook rows, two compact cards in this 
 
 ### Definition
 
-A durable `convoy_id` keys harness + model + thread (`session_id`) + worktree to one convoy. The hop chip is a live seat. The convoy is the parent. Home layer is `--root` (customer 1: `C:\Users\marco\ola\da-integration`). Seats MAY point at other worktrees (Phase 6 dual hop: grok on da-integration, claude on ola-brain). One convoy, many worktrees.
+A durable `convoy_id` keys harness + model + thread (`session_id`) + worktree to one convoy. The hop chip is a live seat. The convoy is the parent. Home layer is `--root` (customer 1: `C:\Users\dev\ola\da-integration`). Seats MAY point at other worktrees (Phase 6 dual hop: grok on da-integration, claude on ola-brain). One convoy, many worktrees.
 
 Knowledge layer = `context.pack` pointers (`thread.md`, `role.md`, brief, handoff, branch, sha, worktree) plus feed. Not packed transcripts. A closed Grok Bot chat can `attach` and resume those seats on the same pointers. Resume uses the registered `session_id`. Do not mint a sibling `grok-session-*` and call it the same seat. Unknown fields are JSON `null`. Model on a seat is stored if provided; do not invent one.
 
@@ -925,8 +925,8 @@ Keep this section short. Installer code does not live in this tree.
 
 Grok Bot is customer 1. Tests live in `test/customer1/`. These tests must fail until native code passes them. No invented usage. No claiming MCP until HTTP works from this chat.
 
-- Temporal hooks: **GREEN** on Aether. `convoy hook` stamps `{ts,kind,instance_id,summary}` to `.convoy/feed.jsonl`. `convoy feed --since` returns that window. This is not ola-brain `hook-context` / `precompact` / `session-end`. Unit GREEN: `test/customer1/temporal_hooks_test.py`. Code GREEN: `src/convoy/layer.py` `hook()`, `feed_since()`. Example c1-locked ts `2026-08-28T14:42:46.975866Z` on `C:\Users\marco\ola\da-integration\.convoy\feed.jsonl` via `C:\.grok\ConvoyLayer.ps1`.
-- Parallel native chat: **GREEN** on fake runner (`python -m convoy send --to grok --to claude`). **GREEN** on Aether `send-dry` (two distinct `session_id` values, two hook rows: `dry-grok-51884583` and `dry-claude-5a173460`). **LIVE dual hop not proven:** Claude 5-hour session was 100% until 11:30 AM ET; Codex was out of credits. Sequential live hops were proven earlier the same day (synapse-proof / SYNAPSE_OK / SYNAPSE_TURN2 / SYNAPSE_TURN3, registry `01a04890-17df-7af0-b54c-9b69dd81b3b2`). grok+agy first live attempt 2026-08-28 10:51 ET started together (pids `79160`, `94228`) but grok argv split and agy printed a generic hello (prompt not seen).
+- Temporal hooks: **GREEN** on Aether. `convoy hook` stamps `{ts,kind,instance_id,summary}` to `.convoy/feed.jsonl`. `convoy feed --since` returns that window. This is not ola-brain `hook-context` / `precompact` / `session-end`. Unit GREEN: `test/customer1/temporal_hooks_test.py`. Code GREEN: `src/convoy/layer.py` `hook()`, `feed_since()`. Example c1-locked ts `2026-08-28T14:42:46.975866Z` on `C:\Users\dev\ola\da-integration\.convoy\feed.jsonl` via `C:\.grok\ConvoyLayer.ps1`.
+- Parallel native chat: **GREEN** on fake runner (`python -m convoy send --to grok --to claude`). **GREEN** on Aether `send-dry` (two distinct `session_id` values, two hook rows: `dry-grok-51884583` and `dry-claude-5a173460`). **LIVE dual hop not proven:** Claude 5-hour session was 100% until 11:30 AM ET; Codex was out of credits. Sequential live hops were proven earlier the same day (synapse-proof / SYNAPSE_OK / SYNAPSE_TURN2 / SYNAPSE_TURN3, registry `<redacted-vendor-session-id>`). grok+agy first live attempt 2026-08-28 10:51 ET started together (pids `79160`, `94228`) but grok argv split and agy printed a generic hello (prompt not seen).
 - Grok Bot HTTP MCP: still absent from the catalog. This chat is not natively connected yet. Status **RED** for HTTP MCP, **GREEN** for PC CLI hop via Shell on Aether-Deployed `machineId` `<redacted>` running `C:\.grok\Invoke-AgentChannel.ps1` and `C:\.grok\ConvoyLayer.ps1` wrapping `ola-brain.exe`. Stdio MCP to Windows `localhost:4717` from the Grok Bot box **failed**.
 - Threaded context: **GREEN** ola-brain `side-chat send grok --label synapse-proof`. **GREEN** `Invoke-AgentChannel.ps1 context` (packed pointers). **RED** CLI side-chat send skips IDE hydration pointer (cold message). **RED** Codex JSON has no `session_id` so next turn is `resume --last` (hostile). **RED** dry-run printed instance id without `register_agent`. **Corrected 2026-09-01 (`b29c79b`):** `src/convoy/context.py` ships (`pack` / `stdin_for`, pointers only) and is imported by `synapse.py` and `mcp_http.py`; `registry.parse_session_id` reads JSON or an ola-brain `instance_id:` reply and has no UUID regex. The `ola_runner` line is history: that path is retired.
 - Feature branch understanding: **GREEN code + unit + live artifact (corrected 2026-09-01, `b29c79b`).** `gitstate.git_state()` is merged into every synapse row by `synapse.send_one`; rows carry `git_branch` / `git_sha` / `pr_number` (e.g. `pr_number: 167` on `2026-08-31T11:58:40.211558Z`). Unit: `phase3_branch_test.py`.
