@@ -1,0 +1,20 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "convoy-bot",
+  "main": "workers-site.mjs",
+  "compatibility_date": "2026-09-01",
+  "assets": {
+    "directory": "src/convoy/site",
+    "binding": "ASSETS"
+  },
+  "vars": {
+    // Set this to the existing Python MCP origin that currently serves /mcp.
+    // Example: https://mcp-origin.example
+    "MCP_ORIGIN": "https://mcp-origin.example"
+  }
+  // Route is configured in Cloudflare once the convoy.bot zone is attached.
+  // Example:
+  // "routes": [
+  //   { "pattern": "convoy.bot/*", "custom_domain": true }
+  // ]
+}

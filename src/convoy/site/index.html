@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>convoy.bot | shared project memory for Grok Bot</title>
+  <meta name="description" content="grok-bot native MCP for convoy.bot — one durable thread, native neurons, and compact cards back from your existing CLIs.">
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://convoy.bot/">
+  <meta property="og:title" content="convoy.bot · grok-bot native MCP">
+  <meta property="og:description" content="One durable thread. Native neurons. Compact cards back. Attach once at convoy.bot/mcp and keep Grok Bot as conductor.">
+  <meta property="og:image" content="https://convoy.bot/og.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="convoy.bot · grok-bot native MCP">
+  <meta name="twitter:description" content="One durable thread. Native neurons. Compact cards back. Attach once at convoy.bot/mcp and keep Grok Bot as conductor.">
+  <meta name="twitter:image" content="https://convoy.bot/og.png">
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="icon" href="/favicon.ico" sizes="any">
+  <link rel="icon" href="/favicon-96.png" type="image/png" sizes="96x96">
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <header class="topbar">
+    <div class="shell header-shell">
+      <div class="header-lockup">
+        <a class="lockup-mark" href="/" aria-label="convoy.bot home">
+          <svg class="brand-mark" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Deploy Forward">
+            <rect width="128" height="128" rx="26" fill="#1d4ed8"/>
+            <rect x="22" y="22" width="15" height="15" fill="#ffffff"/>
+            <rect x="91" y="22" width="15" height="15" fill="#ffffff"/>
+            <rect x="22" y="91" width="15" height="15" fill="#ffffff"/>
+            <rect x="91" y="91" width="15" height="15" fill="#ffffff"/>
+            <rect x="46" y="46" width="36" height="36" fill="#ffffff"/>
+          </svg>
+        </a>
+        <div class="lockup-text">
+          <a class="lockup-wordmark mono" href="/">convoy.bot</a>
+          <a class="lockup-house" href="https://deployforward.dev">Deploy Forward</a>
+        </div>
+      </div>
+      <nav class="top-links mono" aria-label="Primary">
+        <a href="#how">How</a>
+        <a href="https://convoy.bot/mcp">Attach MCP</a>
+        <a href="https://github.com/Deploy-Forward/convoy">GitHub</a>
+      </nav>
+    </div>
+  </header>
+
+  <main id="main" class="page-field">
+    <section class="beat hero">
+      <div class="shell hero-grid">
+        <div class="hero-copy">
+          <p class="hero-kicker mono">grok-bot native MCP</p>
+          <h1 class="hero-title mono">convoy.bot</h1>
+          <p class="hero-line">One durable thread. Native neurons. Compact cards back.</p>
+          <p class="lede">
+            Convoy keeps one MCP root at <code>https://convoy.bot/mcp</code>, routes work to your existing CLIs,
+            and grounds every neuron in one durable thread state.
+          </p>
+          <div class="hero-actions">
+            <button class="btn btn-primary" id="copy-attach" type="button" data-copy-text="https://convoy.bot/mcp">
+              Copy attach URL
+            </button>
+          </div>
+          <p class="mono attach-text">https://convoy.bot/mcp</p>
+          <p class="status" id="copy-status" role="status" aria-live="polite"></p>
+        </div>
+
+        <aside class="hero-quiet" aria-hidden="true">
+          <div class="quiet-frame"></div>
+          <div class="quiet-frame-inner"></div>
+        </aside>
+        <div class="hero-atmosphere" aria-hidden="true"></div>
+      </div>
+    </section>
+
+    <section id="how" class="beat ruled-block how-beat">
+      <div class="shell section">
+        <h2 data-reveal>How it works</h2>
+        <p class="how-copy" data-reveal>Attach one MCP root at <code>https://convoy.bot/mcp</code>. A named thread is a <code>--root</code> binding, not a second MCP URL.</p>
+        <p class="how-copy" data-reveal>Bring your own harnesses. Convoy reports PATH truth on the process-bound root and does not invent a roster.</p>
+        <p class="how-copy" data-reveal>One process, one bound thread. Pointers in, compact cards back.</p>
+        <section class="wire-live" data-reveal aria-labelledby="wire-live-heading">
+          <h3 class="mono wire-live-heading" id="wire-live-heading">Live verbs on the wire</h3>
+          <p class="wire-live-meta">Rendered from <code>tools/list</code> on <code>/mcp</code>. If it is not on the wire, it does not exist.</p>
+          <p class="wire-live-status mono" id="wire-live-status" role="status" aria-live="polite">reading the wire…</p>
+          <ul class="wire-live-list" id="wire-live-list"></ul>
+        </section>
+      </div>
+    </section>
+
+    <section class="beat ruled-block neurons-beat">
+      <div class="shell section neurons-shell">
+        <h2 data-reveal>BYO neurons</h2>
+        <p class="neuron-line" data-reveal>Convoy does not ship wrapper identities. Harness availability is process-bound and wire-reported from the attached MCP root.</p>
+      </div>
+    </section>
+
+    <section class="beat ruled-block honesty-beat">
+      <div class="shell section honesty-shell">
+        <h2 data-reveal>Honesty</h2>
+        <p class="honesty-line" data-reveal>One process, one bound thread. Unknown values are JSON <code>null</code>. BYO harness, no wraps. Public process tools can lag in-tree additions.</p>
+        <footer class="footer" data-reveal>
+          <a class="mono footer-house" href="https://deployforward.dev">Deploy Forward</a>
+          <a href="https://github.com/Deploy-Forward/convoy">GitHub</a>
+          <a href="https://convoy.bot/mcp">https://convoy.bot/mcp</a>
+          <p class="footer-note">A <code>grok-bot</code> native MCP. Live send is not overclaimed here.</p>
+          <p class="footer-note">MIT · another open source product from <a href="https://deployforward.dev">Deploy Forward</a> · convoy.bot · a grok-bot native mcp · one process ↔ one bound thread</p>
+        </footer>
+      </div>
+    </section>
+  </main>
+
+  <script src="/app.js" defer></script>
+</body>
+</html>

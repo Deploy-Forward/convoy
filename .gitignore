@@ -9,3 +9,5 @@ build/
 *.log
 HTTP_MCP_STATUS.md
 ConvoyLayer.ps1
+node_modules/
+.wrangler/
