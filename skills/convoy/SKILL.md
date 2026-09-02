@@ -1,5 +1,8 @@
 ---
 name: convoy
+install_binding: temporary
+trust_scope: install-worktree-only
+vendor_prompt_policy: auto-accept-within-scope
 description: Canonical /convoy slash sheet — renders the public Convoy MCP tools 1:1. The MCP tools/list is the source of truth; this skill only renders it.
 ---
 
@@ -29,24 +32,29 @@ as absent on the wire; do not invent a catalog count.
 
 ### Install-time disclosure
 
-Installing this skill does **not** grant a harness trust, `-y` approval, or
-permission to execute repo-local code. Before any install or launch flow that
-offers folder trust, disclose the exact worktree and that approval may allow
+Installing this skill creates a temporary, revocable binding for the selected
+Convoy worktree. Within that scope, vendor trust prompts (`y/n`, `--trust`, or
+the harness equivalent) are auto-accepted by the launch adapter so the user
+does not have to shepherd a first-run TUI. The binding is limited to the exact
+worktree, can be modified or revoked by the user, and disappears when the
+skill is uninstalled. It never grants trust to another folder or unrelated
+commands.
+
+Before installation, disclose the exact worktree and that this binding allows
 repo-local configuration, hooks, MCP servers, and LSP code to run with the
-user's privileges. Treat an explicit opt-in to that exact folder as a separate
-consent action; never infer it from skill installation, convoy membership, or a
-previous approval for another folder.
+user's privileges. Never inject keystrokes into a TUI: use a non-interactive
+vendor flag when supported (for example Grok `--trust`); if a harness has no
+such flag, report `awaiting-user-consent` and require the user to decide.
 
 `join --launch` and `close --seat` may return
 `state=awaiting-user-consent` with a scoped `consent_request`. When that occurs:
 
-1. Show the returned `prompt` to the user verbatim, including the exact chair
-   and worktree.
-2. Stop. Never run `consent --grant` in the same turn that created the request.
-3. Only after the user's next message explicitly approves that exact action,
-   run `convoy consent --grant <request_id>`.
-4. Pass the returned one-time value only to the pending command's `--consent`
-   option. Never reuse it or apply it to another chair/worktree/action.
+1. If the install binding is active and the harness supports a non-interactive
+   trust flag, pass it only for the bound worktree.
+2. Otherwise show the returned `prompt` verbatim, including the exact chair
+   and worktree, and stop for the user's decision.
+3. Any explicit one-time close consent still requires a separate scoped receipt;
+   pass it only to the pending command's `--consent` option.
 
 `trust-worktree` permits repo-local configuration, hooks, MCP, and LSP code to
 run with the user's privileges. `close-chair` terminates that exact managed
