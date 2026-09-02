@@ -4,6 +4,7 @@ import sys
 import tempfile
 import threading
 import unittest
+import urllib.error
 import urllib.request
 from pathlib import Path
 from unittest import mock
@@ -154,8 +155,45 @@ class PhaseMcpHttp(unittest.TestCase):
             body = r.read().decode("utf-8")
             ctype = r.headers.get("Content-Type", "")
         self.assertIn("convoy.bot", body)
-        self.assertIn("grok-bot native mcp", body)
-        self.assertTrue(ctype.startswith("text/html") or ctype.startswith("text/plain"))
+        self.assertIn(HOME_LINE, body)
+        self.assertIn("<!doctype html>", body.lower())
+        self.assertIn('property="og:image" content="https://convoy.bot/og.png"', body)
+        self.assertIn('name="twitter:card" content="summary_large_image"', body)
+        self.assertIn("Rendered from <code>tools/list</code> on <code>/mcp</code>", body)
+        self.assertIn("reading the wire", body)
+        self.assertNotIn("grok · claude · codex", body)
+        self.assertTrue(ctype.startswith("text/html"))
+
+    def test_get_mcp_is_post_only(self):
+        req = urllib.request.Request(self.mcp, method="GET")
+        with self.assertRaises(urllib.error.HTTPError) as ctx:
+            urllib.request.urlopen(req, timeout=5)
+        self.assertEqual(ctx.exception.code, 405)
+        self.assertIn("POST JSON-RPC to /mcp", ctx.exception.read().decode("utf-8"))
+        self.assertEqual(ctx.exception.headers.get("Allow"), "POST, OPTIONS")
+
+    def test_post_mcp_still_works(self):
+        ping = _rpc(self.mcp, "ping")
+        self.assertEqual(ping["jsonrpc"], "2.0")
+        self.assertEqual(ping["result"], {})
+
+    def test_favicon_routes_exist(self):
+        cases = (
+            ("/favicon.svg", "image/svg+xml"),
+            ("/favicon.ico", "image/x-icon"),
+            ("/favicon-96.png", "image/png"),
+            ("/apple-touch-icon.png", "image/png"),
+            ("/og.png", "image/png"),
+        )
+        for path, expected_type in cases:
+            req = urllib.request.Request(self.base + path, method="GET")
+            with urllib.request.urlopen(req, timeout=5) as r:
+                body = r.read()
+                ctype = r.headers.get("Content-Type", "")
+            self.assertTrue(body)
+            self.assertTrue(ctype.startswith(expected_type), msg=f"{path} -> {ctype}")
+        with urllib.request.urlopen(self.base + "/favicon.svg", timeout=5) as svg_res:
+            self.assertIn("<svg", svg_res.read().decode("utf-8"))
 
     def test_open_alias_dry(self):
         resp = _rpc(self.mcp, "tools/call", {"name": "open", "arguments": {"dry_run": True}})
