@@ -122,7 +122,7 @@ class Glance(unittest.TestCase):
 
     def test_by_thread_filters_convoy_id_only_and_omits_unknown_model(self):
         seat(self.root, "grok", "sess-grok", worktree=str(self.wt_g))
-        seat(self.root, "claude", "sess-claude", worktree=str(self.wt_c), model="Fable 5")
+        seat(self.root, "claude", "sess-claude", worktree=str(self.wt_c), model="claude-fable-5")
         seats_path = self.root / ".convoy" / "seats.jsonl"
         with seats_path.open("a", encoding="utf-8") as f:
             f.write(
@@ -163,7 +163,7 @@ class Glance(unittest.TestCase):
         by_to = {s["to"]: s for s in seats}
         self.assertIn("last_synapse", by_to["grok"])
         self.assertNotIn("model", by_to["grok"])
-        self.assertEqual(by_to["claude"]["model"], "Fable 5")
+        self.assertEqual(by_to["claude"]["model"], "claude-fable-5")
         self.assertNotIn("week_pct", by_to["claude"])
 
     def test_glance_thread_selector_returns_seats(self):

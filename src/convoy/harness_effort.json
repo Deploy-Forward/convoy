@@ -50,7 +50,7 @@
         "cli_flag_aliases": [
           "--effort"
         ],
-        "evidence": "grok --help (customer-1 box, 2026-09-01, grok 1.0.13); enum from live invalid-value reject in lead research (xhigh, high, medium, low)"
+        "evidence": "grok --help (demo box, 2026-09-01, grok 1.0.13); enum from live invalid-value reject in lead research (xhigh, high, medium, low)"
       }
     },
     {
@@ -77,7 +77,7 @@
         "docs_only_tokens": [
           "ultracode"
         ],
-        "evidence": "claude --help (customer-1 box, 2026-09-01) lists low|medium|high|xhigh|max; vendor docs also name ultracode, which is not in --help and is never emitted by Convoy"
+        "evidence": "claude --help (demo box, 2026-09-01) lists low|medium|high|xhigh|max; vendor docs also name ultracode, which is not in --help and is never emitted by Convoy"
       }
     },
     {
@@ -145,7 +145,7 @@
           "high"
         ],
         "cli_flag": "--effort",
-        "evidence": "agy --help (customer-1 box, 2026-09-01): --effort low|medium|high; resume is --conversation <ID>, there is no --resume flag"
+        "evidence": "agy --help (demo box, 2026-09-01): --effort low|medium|high; resume is --conversation <ID>, there is no --resume flag"
       }
     },
     {
@@ -161,7 +161,7 @@
       "effort": {
         "mode": "model-driven",
         "keys": null,
-        "evidence": "hermes --help (customer-1 box, 2026-09-01): --resume SESSION / -r verified; effort belongs to the driven model"
+        "evidence": "hermes --help (demo box, 2026-09-01): --resume SESSION / -r verified; effort belongs to the driven model"
       }
     },
     {
@@ -187,7 +187,7 @@
           "xhigh",
           "max"
         ],
-        "evidence": "pi --help (customer-1 box, 2026-09-01): --thinking <level> for the driven model; model pattern also accepts :<thinking>. --resume is a session picker; direct-id resume unverified"
+        "evidence": "pi --help (demo box, 2026-09-01): --thinking <level> for the driven model; model pattern also accepts :<thinking>. --resume is a session picker; direct-id resume unverified"
       }
     }
   ]

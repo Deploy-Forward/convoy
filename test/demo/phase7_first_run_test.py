@@ -50,11 +50,11 @@ class Phase7FirstRun(unittest.TestCase):
         self.wt_g = Path(tempfile.mkdtemp())
         self.wt_c = Path(tempfile.mkdtemp())
         self.wt_x = Path(tempfile.mkdtemp())
-        self.thread = "customer1"
+        self.thread = "demo"
         self.cid = ensure_id(self.root)
         bind(self.root, self.thread)
         self.g = seat(self.root, "grok", "sess-grok", worktree=str(self.wt_g), model="explicit-grok", resume="sess-grok")
-        self.c = seat(self.root, "claude", "sess-claude", worktree=str(self.wt_c), model="Fable 5", resume="sess-claude")
+        self.c = seat(self.root, "claude", "sess-claude", worktree=str(self.wt_c), model="claude-fable-5", resume="sess-claude")
         # Snapshot real home BEFORE patching Path.home (classmethod is process-global).
         self.real_home = Path(os.path.expanduser("~"))
         self.real_home_settings = self.real_home / ".claude" / "settings.json"
@@ -163,7 +163,7 @@ class Phase7FirstRun(unittest.TestCase):
 
     def test_ensure_first_run_writes_trust_for_both_windows_slash_spellings(self):
         wt = Path(tempfile.mkdtemp())
-        variants = [r"C:\Users\dev\ola\da-integration", "C:/Users/dev/ola/da-integration"]
+        variants = [r"C:\Users\demo\project-root", "C:/Users/demo/project-root"]
         with mock.patch("convoy.bringup._project_path_variants", return_value=variants):
             card = ensure_first_run({"to": "claude", "worktree": str(wt)})
         self.assertTrue(card.get("ok"))
@@ -356,7 +356,7 @@ class Phase7IsolatedWtArgv(unittest.TestCase):
 
     def test_named_window_nt_first_n3_vh_splits(self):
         seats = self._seats(3)
-        argv = isolated_wt_argv("customer1", seats, wt=r"C:\Windows\System32\wt.exe")
+        argv = isolated_wt_argv("demo", seats, wt=r"C:\Windows\System32\wt.exe")
         self.assertEqual(argv[0], r"C:\Windows\System32\wt.exe")
         self.assertEqual(argv[1], "--window")
         self.assertEqual(argv[2], "new")
@@ -421,7 +421,7 @@ class Phase7IsolatedWtArgv(unittest.TestCase):
         self.assertIn("0", str(ctx.exception).lower())
         with self.assertRaises(ValueError):
             isolated_wt_argv(0, seats)
-        argv = isolated_wt_argv("customer1", seats, wt=r"C:\abs\wt.exe")
+        argv = isolated_wt_argv("demo", seats, wt=r"C:\abs\wt.exe")
         self.assertEqual(argv[1], "--window")
         self.assertEqual(argv[2], "new")
         self.assertNotIn("-w", argv)
@@ -438,7 +438,7 @@ class Phase7IsolatedWtArgv(unittest.TestCase):
         self.assertEqual(argv[argv.index("--window") + 1], "new")
 
     def test_n1_one_nt_no_split(self):
-        argv = isolated_wt_argv("customer1", self._seats(1), wt=r"C:\\abs\\wt.exe")
+        argv = isolated_wt_argv("demo", self._seats(1), wt=r"C:\\abs\\wt.exe")
         self.assertEqual(argv[1:4], ["--window", "new", "nt"])
         self.assertNotIn(";", argv)
         self.assertNotIn("-V", argv)
@@ -456,7 +456,7 @@ class Phase7IsolatedWtArgv(unittest.TestCase):
         ]
         panes = _pane_seats(collapsed)
         self.assertEqual(len(panes), 1)
-        argv = isolated_wt_argv("customer1", collapsed, wt=r"C:\\abs\\wt.exe")
+        argv = isolated_wt_argv("demo", collapsed, wt=r"C:\\abs\\wt.exe")
         self.assertEqual(argv.count("--resume"), 1)
         self.assertNotIn(";", argv)
         self.assertNotIn("split-pane", argv)
@@ -468,7 +468,7 @@ class Phase7IsolatedWtArgv(unittest.TestCase):
         panes = _pane_seats(kept)
         self.assertEqual(len(panes), 2)
         self.assertEqual([p["worktree"] for p in panes], ["wt-grok-1", "wt-grok-2"])
-        argv2 = isolated_wt_argv("customer1", kept, wt=r"C:\\abs\\wt.exe")
+        argv2 = isolated_wt_argv("demo", kept, wt=r"C:\\abs\\wt.exe")
         self.assertEqual(argv2.count("--resume"), 2)
         self.assertEqual(argv2.count(";"), 1)
         self.assertEqual(argv2.count("-V"), 1)
@@ -482,7 +482,7 @@ class Phase7IsolatedWtArgv(unittest.TestCase):
             {"to": "grok", "session_id": "sess-grok-1", "resume": "sess-grok-1", "worktree": "wt-grok-1", "exe": r"C:\\abs\\grok.exe"},
             {"to": "grok", "session_id": "sess-grok-2", "resume": "sess-grok-2", "worktree": "wt-grok-2", "exe": r"C:\\abs\\grok.exe"},
         ]
-        argv = isolated_wt_argv("customer1", seats, wt=r"C:\\abs\\wt.exe")
+        argv = isolated_wt_argv("demo", seats, wt=r"C:\\abs\\wt.exe")
         self.assertEqual(argv[1:4], ["--window", "new", "nt"])
         self.assertEqual(argv.count("--resume"), 3)
         semis = [i for i, a in enumerate(argv) if a == ";"]
@@ -502,7 +502,7 @@ class Phase7IsolatedWtArgv(unittest.TestCase):
             "exe": r"C:\\abs\\ultracode-shim.exe",
         }]
         with self.assertRaises(ValueError):
-            isolated_wt_argv("customer1", seats, wt=r"C:\\abs\\wt.exe")
+            isolated_wt_argv("demo", seats, wt=r"C:\\abs\\wt.exe")
 
 
 if __name__ == "__main__":
