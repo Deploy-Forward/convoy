@@ -95,6 +95,57 @@ is a resume MAP key, never seat identity.
 Unit: `test/demo/seat_lifecycle_test.py` (15 tests, GREEN 2026-09-02,
 suite 232).
 
+### Graph: the ontology of attributions over a thread (Marco 2026-09-02, read side landed)
+
+A thread is the **context**; the graph is the **ontology of attributions** over
+it. Context is model-agnostic within a session (an in-session model switch
+keeps the vendor UUID and transcript) and the chair survives the occupant, so
+a neuron resuming anywhere needs two things: the thread pointer, and who else
+is connected to it. `convoy graph` answers both from `seats.jsonl` +
+`feed.jsonl` only — never a vendor transcript, never a token.
+
+- **Nodes:** `thread:<cvy_id>`, `chair:<session_id>` (with `current`
+  harness/model/effort, `resume: {available, for}`, `lineage[]`),
+  `harness:<id>`, `model:<id>` (only when known — no placeholder node),
+  `conductor:grok-bot`, `unknown:<name>` (a bus name that is not a chair).
+- **Edges:** `seats` (thread→chair), `runs_on` (chair→harness, `current`
+  true/false so history stays visible), `runs` (chair→model), `note` /
+  `stamp` (from→to, attributed), `synapse` (`from: null` — send has no caller
+  identity, sender-unknown recorded as absence).
+- **Lineage** projects `join` / `swap` / `seated` rows per chair; a join or
+  swap is `pending` until its `seated` ack, then `acked` with `seated_at`
+  (codex 2026-09-02: unacked pending is a first-class state).
+- **Attestation** is `attested` on every bus-derived edge (claimed, not
+  authenticated). `observed` is reserved for a vendor-record reader that does
+  not exist yet; the field exists so the upgrade is additive.
+- **Resume is a boolean, never a token:** `resume.available` is true only when
+  the seat holds a token minted for its current harness (`resume_for`
+  match); a swap nulls it by contract.
+- **`graph --neuron S`** is the rejoin card: the chair, the parties it has
+  talked with, and `{convoy_id, thread, path, last_row_ts}` to resume from.
+  Unknown neuron refuses.
+- **`place` (the post-hook, Marco 2026-09-02):** every neighborhood card
+  carries the chair's self-knowledge — `last_contribution` (ts/kind/summary
+  of the newest row it AUTHORED; synapse rows have no author and never
+  count), `contributions`, temporal `rank` (1-based by latest contribution,
+  newest first, `null` when it never wrote), `of` (chairs on the thread),
+  `degree` (parties it has talked with), `lead`, `lead_chair`. A harness's
+  post-tool hook can call `graph --neuron <me>` and know its place.
+- **Lead is passed to an identified neuron:** `lead --to <chair> --as
+  <author chair>` stamps kind `lead` (`from`=author, `to`=chair; neuron-
+  authored, conductor aliases refused) and then writes the legacy
+  `.convoy/lead` harness file so bring-up keeps its meaning. The latest
+  `lead` row naming an existing chair is the lead; graph marks it
+  (`lead: true`, a `lead` edge). `lead --to <harness>` without a chair match
+  stays the legacy harness write. Bare `lead` reports both `lead` (harness)
+  and `lead_chair`.
+- **Not in this increment:** resume-by-neuron launch (`resume --neuron`),
+  cross-thread edges (`fork` / `parent_convoy_id`), `observed` attestation.
+  Graph is read-only by construction.
+
+Unit: `test/demo/graph_test.py` (14 tests, GREEN 2026-09-02, suite 270).
+Live: `graph --neuron codex-fable-opus` on the fable-opus root, same day.
+
 ### Locked layer statement
 
 > Grok Bot is the opposite layer from Herdr and CNVS. This Grok Bot chat is the conductor. MCP is how the conductor attaches (`roster`, `onboard`, `send`, `feed`, `context`, `bring_up`/`open`, `terminals`; tree also has `install` and `hide`). Convoy is the SoT: one visible thread, one `cvy_id`, one tied repo, seats/neuron sessions that stay isolated. Default `send` is headless on purpose. `bring_up` is the terminal view, isolated n-pane, and only uses vendor resume ids. Same-branch overlap is refused. Pointers in, compact card out.

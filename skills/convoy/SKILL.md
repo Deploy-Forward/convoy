@@ -25,8 +25,23 @@ fallback — it is the primary surface.
 5. Never copy/paste historical counts ("13 tools", "14 tools") into this file.
 
 Tree-only CLI verbs (`join` / `swap` / `seated`, plus `choices` / `launch` /
-`close` / `consent`) are absent from the public MCP until deployed. Render them
-as absent on the wire; do not invent a catalog count.
+`close` / `consent`, plus `graph [--neuron S]`) are absent from the public MCP
+until deployed. Render them as absent on the wire; do not invent a catalog
+count.
+
+## Rejoining the fray: `graph --neuron <chair>`
+
+Read-only. Returns the chair's current harness/model, its lineage (join /
+swap / seated, `pending` until acked), the parties it has talked with, and the
+thread pointer (`convoy_id`, `thread`, `path`, `last_row_ts`) to resume from.
+Never a token: `resume.available` is a boolean. Every edge is `attested`
+(claimed on the bus), never authenticated.
+
+The card also carries `place`: your last contribution, your temporal rank
+among the chairs (1 = most recent author), your degree, and who holds lead.
+Run it as your post-hook after you write to the bus. To pass lead to an
+identified neuron: `lead --to <chair> --as <your chair>` (neuron-authored;
+the conductor asks via `stamp`).
 
 ## Two-turn consent rail
 
