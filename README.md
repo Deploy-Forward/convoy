@@ -56,15 +56,58 @@ Notes tied to code/tests:
 - First-run seats can omit vendor resume; then no resume token is passed.
 - Live `send` is headless and never steals an active interactive neuron; refusal cards ask users to `bring_up` / open a pane or write `.ola/*handoff*`.
 - `context.pack` overlays home-layer `convoy_id` + `thread_key` onto seat-worktree pointers when present.
-- `bring_up` / `open` are the only show commands.
+- `bring_up` / `open` are the bulk show commands; targeted `join --launch` is
+  the explicit one-chair exception described below.
 
 ### Bring-up and pane invariants
 
 - Isolated WT only: one `wt --window new` spawn, one tab, split panes joined with literal `";"` argv elements.
-- Never `-w 0`; never `-w <thread>`; never `--` before harness exe; never per-seat `CREATE_NEW_CONSOLE`; never close on fail with `WM_CLOSE`.
+- Bulk bring-up never uses `-w 0` or `-w <thread>`; targeted launch may use
+  `-w 0` only after the user explicitly requests `--launch` from an active
+  Windows Terminal session. Never `--` before harness exe; never per-seat
+  `CREATE_NEW_CONSOLE`; never close on fail with `WM_CLOSE`.
 - Two same-harness seats on different worktrees are two panes; duplicates collapse by worktree/resume/session key.
 - `Ctrl+Shift+W` should only drop one split pane at a time (or no-op when there is no split pane left).
 - Codex TUI conflict: while a Codex pane is focused, `Shift+Up` / `Shift+Down` can change reasoning level and fight pane navigation. Do not use those shortcuts for pane selection in that focus state.
+
+### Targeted one-chair launch
+
+Full contract and DoD: [`docs/targeted-launch.md`](docs/targeted-launch.md).
+
+`convoy choices` lists installed harnesses, known Git/registered worktrees,
+existing chair identifiers, and the detected terminal adapter. It deliberately
+omits every vendor resume token. A model or user can then invoke:
+
+```bash
+convoy join --to <harness> --worktree <path> --launch
+```
+
+This registers and launches exactly one fresh chair. Harness argv construction
+is independent of terminal placement, so all harnesses use the same terminal
+adapter contract. A persistent atomic launch claim refuses duplicate launchers;
+existing/resumable chairs are not eligible and a failed terminal spawn leaves
+the fresh chair pending for an explicit retry.
+
+Supported active-pane adapters:
+
+| Host | Detection | Targeting |
+| --- | --- | --- |
+| Windows Terminal | Windows, `WT_SESSION`, and `wt` on PATH | `wt -w 0 split-pane`; targets the most-recent WT window and its active pane |
+| tmux on macOS/Linux | `TMUX`, `TMUX_PANE`, and `tmux` on PATH | `tmux split-window -t <caller-pane>`; exact caller pane |
+
+Other terminal hosts fail closed with a manual-pane instruction. Convoy never
+injects keystrokes or guesses an iTerm, Terminal.app, WezTerm, kitty, or shell
+API. Source installs currently require Python 3.11+; the project exposes a
+cross-platform `convoy` console entry point, but a machine without Python still
+needs a packaged executable/runtime before a skill can invoke it.
+
+Creation and closure are separate capabilities. The Windows Terminal CLI can
+create a split but does not expose its `closePane` action. A killed TUI may leave
+an exited pane visible under graceful `closeOnExit`, so absent process IDs are
+not pane-close proof. Until Convoy has an exact pane-control protocol, the user
+must close that pane cleanly (`Ctrl+D` in the exited pane or the configured
+`closePane` binding). First-run harness trust prompts are also user decisions;
+Convoy surfaces them and never auto-accepts them.
 
 ## How it works
 

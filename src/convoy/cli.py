@@ -15,6 +15,7 @@ from .glance import build_glance, run_tray
 from .layer import SCHEMA_VERSION, conductor_stamp, feed_since, hook
 from .lifecycle import join, seated_ack, swap
 from .synapse import fake_runner, native_runner, send_many, send_one
+from .targeted_launch import active_pane_runner, launch_choices, launch_seat
 from .usage import probe
 
 def main(argv: list[str] | None = None) -> int:
@@ -75,6 +76,13 @@ def main(argv: list[str] | None = None) -> int:
     jn.add_argument("--title")
     jn.add_argument("--effort")
     jn.add_argument("--as", dest="author", help="authoring seat (neuron-authored)")
+    jn.add_argument("--launch", action="store_true", help="split exactly one fresh chair into the active supported pane host")
+
+    ch = sub.add_parser("choices", help="list installed harnesses, known worktrees, seats, and active-pane support")
+
+    ln = sub.add_parser("launch", help="split one already-joined fresh chair into the active pane host")
+    ln.add_argument("--seat", required=True, help="fresh join/swap chair session_id")
+    ln.add_argument("--dry-run", action="store_true")
 
     sw = sub.add_parser("swap")
     sw.add_argument("--seat", required=True, help="chair session_id (identity survives the swap)")
@@ -203,6 +211,15 @@ def main(argv: list[str] | None = None) -> int:
             if args.cmd == "join":
                 card = join(root, args.to, session_id=args.session_id, worktree=args.worktree,
                             model=args.model, title=args.title, effort=args.effort, author=args.author)
+                if args.launch:
+                    launched = launch_seat(
+                        root,
+                        card["seat"]["session_id"],
+                        runner=active_pane_runner,
+                    )
+                    card["launch"] = launched
+                    card["ok"] = bool(card.get("ok")) and bool(launched.get("ok"))
+                    card["next"] = "seated" if launched.get("ok") else "launch"
             elif args.cmd == "swap":
                 card = swap(root, args.seat, to=args.to, handoff=args.handoff,
                             author=args.author, model=args.model)
@@ -212,7 +229,15 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps({"ok": False, "error": str(e)}))
             return 1
         print(json.dumps(card))
-        return 0
+        return 0 if card.get("ok") else 1
+    if args.cmd == "choices":
+        card = launch_choices(root)
+        print(json.dumps(card))
+        return 0 if card.get("ok") else 1
+    if args.cmd == "launch":
+        card = launch_seat(root, args.seat, runner=None if args.dry_run else active_pane_runner)
+        print(json.dumps(card))
+        return 0 if card.get("ok") else 1
     if args.cmd == "seats":
         print(json.dumps(list_seats(root, convoy_id=args.convoy_id)))
         return 0
