@@ -40,7 +40,9 @@ Effort keys are harness-scoped and must not be merged:
   - Inspected upstream Codex docs expose `model_reasoning_effort` and `-c/--config`; this repo run could not execute `codex --help` (binary not present).  
   - Max/Ultra are treated as `more-reasoning` (TUI path), with no Convoy-specific CLI key documented here.
 - **Claude**: `low`, `medium`, `high`, `xhigh`, `max` (`--effort` per Claude CLI docs).
-- **Grok / cursor-agent / agy**: no verified effort CLI in this repo run; keep unknown as `null`.
+- **Grok**: `low`, `medium`, `high`, `xhigh` via `--reasoning-effort` (alias `--effort`; live `--help` 2026-09-01).
+- **agy**: `low`, `medium`, `high` via `--effort` (live `--help` 2026-09-01).
+- **cursor-agent**: no verified effort CLI; keep unknown as `null`.
 - **Hermes / Pi**: harnesses are model-agnostic; effort belongs to the model they drive, so harness-level effort stays `null`.
 
 ### Fully supported neurons (code-true contract)
@@ -51,9 +53,9 @@ Effort keys are harness-scoped and must not be merged:
 | `claude` | `claude` | `claude --resume <vendor-id?>` | Writes PATH ungate block; installs `neuron-identity`; writes project `.claude/settings.json`, merges user `~/.claude/settings.json` skip key, and writes `~/.claude.json` trust project keys. | Native CLI on PATH. Live send refuses named resume/session tokens (`no-steal`). |
 | `codex` | `codex` | `codex resume <vendor-id?>` (**not** `--resume`) | Writes PATH ungate block; installs `neuron-identity`. No Claude settings writes. | Native CLI on PATH. Live send refuses named resume/session tokens (`no-steal`). |
 | `cursor-agent` | `cursor-agent` | `cursor-agent --resume <vendor-id?>` | Writes PATH ungate block; installs `neuron-identity`. | Native CLI on PATH. Live send refuses named resume/session tokens (`no-steal`). |
-| `agy` | `agy` | `agy --resume <vendor-id?>` | Writes PATH ungate block; installs `neuron-identity`. | Native CLI on PATH. Live send refuses named resume/session tokens (`no-steal`). |
-| `hermes` | `hermes` | `hermes --resume <vendor-id?>` | Writes PATH ungate block; installs `neuron-identity`. | Native CLI on PATH. Live send refuses named resume/session tokens (`no-steal`). |
-| `pi` | `pi` | `pi --resume <vendor-id?>` | Writes PATH ungate block; installs `neuron-identity`. | Native CLI on PATH. Live send refuses named resume/session tokens (`no-steal`). |
+| `agy` | `agy` | `agy --conversation <vendor-id?>` (live `--help` 2026-09-01: no `--resume`) | Writes PATH ungate block; installs `neuron-identity`. | Native CLI on PATH. Live send refuses named resume/session tokens (`no-steal`). |
+| `hermes` | `hermes` | `hermes --resume <vendor-id?>` (live `--help` 2026-09-01) | Writes PATH ungate block; installs `neuron-identity`. | Native CLI on PATH. Live send refuses named resume/session tokens (`no-steal`). |
+| `pi` | `pi` | `pi --resume <vendor-id?>` (flag verified live; `--resume` opens a session picker — direct-id resume unverified) | Writes PATH ungate block; installs `neuron-identity`. | Native CLI on PATH. Live send refuses named resume/session tokens (`no-steal`). |
 
 Notes tied to code/tests:
 

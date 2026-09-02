@@ -145,6 +145,9 @@ def native_runner(
     if isinstance(rid, str) and rid.strip():
         if harness == "codex":
             cmd.extend(["resume", rid.strip()])
+        elif harness == "agy":
+            # agy --help has no --resume; it resumes via --conversation <ID>
+            cmd.extend(["--conversation", rid.strip()])
         else:
             cmd.extend(["--resume", rid.strip()])
     try:
@@ -187,6 +190,18 @@ def native_runner(
         "label": label,
         "argv": cmd,
     }
+
+
+def runner_kind(run: Runner) -> str | None:
+    """Identity-based runner discriminator stamped on every synapse row so the
+    SoT can distinguish a native vendor send from a fake ACK."""
+    if run is native_runner:
+        return "native"
+    if run is fake_runner:
+        return "fake"
+    if run is ola_runner:
+        return "ola"
+    return getattr(run, "__name__", None)
 
 
 def send_one(
@@ -378,7 +393,9 @@ def send_one(
     extra = {"label": label, "worktree": str(cwd_root), **state}
     if sid and lookup(root, sid) is None:
         register(root, sid, to, extra=extra)
-    hook(root, kind="synapse", summary="send " + to, instance_id=sid, extra={"to": to, "ok": card.get("ok"), "dry_run": False, **extra})
+    argv = card.get("argv")
+    argv0 = argv[0] if isinstance(argv, list) and argv else None
+    hook(root, kind="synapse", summary="send " + to, instance_id=sid, extra={"to": to, "ok": card.get("ok"), "dry_run": False, "runner": runner_kind(run), "argv0": argv0, **extra})
     card["pointers"] = packed
     card["stdin"] = message
     card["usage_remaining"] = normalize_usage_remaining(usage.get("usage_remaining"))
