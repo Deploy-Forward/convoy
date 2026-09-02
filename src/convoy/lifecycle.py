@@ -16,7 +16,7 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from .convoy import list_seats, read_thread, seat as write_seat, update_seat
+from .convoy import list_seats, read_thread, seat as write_seat, set_lead, update_seat
 from .layer import hook
 
 
@@ -100,6 +100,28 @@ def swap(
         changes["model"] = model
     seat_row = update_seat(root, session_id, **changes)
     return {"ok": True, "seat": seat_row, "token": token, "row": row, "next": "bring-up"}
+
+
+def pass_lead(root: Path, session_id: str, author: str) -> dict[str, Any]:
+    """Pass lead status to an IDENTIFIED neuron (a chair), neuron-authored.
+
+    Stamps kind=lead (from=author, to=chair) so the graph can mark the lead
+    and every neuron's place card can name it; then writes the legacy
+    `.convoy/lead` harness file so bring-up keeps its meaning. The conductor
+    asks for a lead change via stamp; it never authors one (hook refuses)."""
+    sid = str(session_id or "").strip()
+    who = str(author or "").strip()
+    if not who:
+        raise ValueError("refuse lead pass without an author")
+    target = _require_seat(root, sid)
+    harness = str(target.get("to") or "").strip().lower()
+    row = hook(
+        root, "lead", "lead -> " + sid + " (" + harness + ")",
+        instance_id=sid, author=who, to=sid,
+        extra={"lead": sid, "harness": harness},
+    )
+    out = set_lead(root, harness)
+    return {"ok": True, "lead_chair": sid, "lead": harness, "convoy_id": out.get("convoy_id"), "row": row}
 
 
 def seated_ack(root: Path, session_id: str, token: str) -> dict[str, Any]:

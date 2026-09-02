@@ -13,8 +13,9 @@ from .onboard import onboard as run_onboard
 from .context import pack
 from .convoy import attach, bind, ensure_id, list_seats, read_id, read_lead, seat, set_lead, CONDUCTOR
 from .glance import build_glance, run_tray
+from .graph import build_graph, neighborhood
 from .layer import SCHEMA_VERSION, conductor_stamp, feed_since, hook
-from .lifecycle import join, seated_ack, swap
+from .lifecycle import join, pass_lead, seated_ack, swap
 from .pane_host import close_managed_pane
 from .synapse import fake_runner, native_runner, send_many, send_one
 from .targeted_launch import active_pane_runner, launch_choices, launch_seat
@@ -106,6 +107,9 @@ def main(argv: list[str] | None = None) -> int:
     sd.add_argument("--seat", required=True)
     sd.add_argument("--token", required=True, help="token from the join/swap row (proof-of-life echo)")
 
+    gr = sub.add_parser("graph", help="read-only ontology of the thread: chairs, occupants, talk, resume availability (never tokens)")
+    gr.add_argument("--neuron", help="one chair's neighborhood: its connected parties + the thread pointer to resume from")
+
     sl = sub.add_parser("seats")
     sl.add_argument("--convoy-id")
 
@@ -116,7 +120,8 @@ def main(argv: list[str] | None = None) -> int:
     bn.add_argument("--thread", required=True)
 
     ld = sub.add_parser("lead")
-    ld.add_argument("--to")
+    ld.add_argument("--to", help="a chair session_id (identified neuron; needs --as) or, legacy, a harness name")
+    ld.add_argument("--as", dest="author", help="the neuron passing lead (neuron-authored; the conductor asks via stamp)")
 
     for name in ("bring-up", "open"):
         bu = sub.add_parser(name)
@@ -274,6 +279,14 @@ def main(argv: list[str] | None = None) -> int:
     if args.cmd == "seats":
         print(json.dumps(list_seats(root, convoy_id=args.convoy_id)))
         return 0
+    if args.cmd == "graph":
+        try:
+            card = neighborhood(root, args.neuron) if args.neuron else build_graph(root)
+        except ValueError as e:
+            print(json.dumps({"ok": False, "error": str(e)}))
+            return 1
+        print(json.dumps(card))
+        return 0
     if args.cmd == "attach":
         card = attach(root, convoy_id=args.convoy_id)
         print(json.dumps(card))
@@ -281,12 +294,19 @@ def main(argv: list[str] | None = None) -> int:
     if args.cmd == "lead":
         if args.to:
             try:
-                print(json.dumps(set_lead(root, args.to)))
+                is_chair = any(s.get("session_id") == args.to for s in list_seats(root))
+                if is_chair:
+                    if not args.author:
+                        raise ValueError("refuse lead pass to a chair without --as <author chair>")
+                    print(json.dumps(pass_lead(root, args.to, author=args.author)))
+                else:
+                    print(json.dumps(set_lead(root, args.to)))
                 return 0
             except ValueError as e:
                 print(json.dumps({"ok": False, "error": str(e)}))
                 return 1
-        print(json.dumps({"conductor": CONDUCTOR, "lead": read_lead(root), "convoy_id": read_id(root)}))
+        lead_chair = next((n["session_id"] for n in build_graph(root)["nodes"] if n["kind"] == "chair" and n.get("lead")), None)
+        print(json.dumps({"conductor": CONDUCTOR, "lead": read_lead(root), "lead_chair": lead_chair, "convoy_id": read_id(root)}))
         return 0
     if args.cmd == "bind":
         try:
