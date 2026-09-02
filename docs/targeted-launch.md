@@ -52,7 +52,12 @@ joined -> consent-needed? -> launch-claimed -> pane-host -> process-started
   authored by the new chair closes the proof-of-life loop.
 - Vendor gates remain vendor-specific. Live evidence showed Codex consuming the
   boot prompt immediately, while Grok required explicit project trust first.
-  Convoy must never accept that decision for the user.
+  Convoy must never accept that decision for the user. A later grok-to-grok
+  run showed the opposite inspect result on a brand-new worktree (`Project
+  trusted: yes`) after a sibling Grok chair had already been trusted: Convoy
+  probed, skipped `--trust`, and launched. Trust is vendor-sticky per folder
+  (and can already be yes on a new git worktree); it is not inferred from
+  another chair.
 
 Consent is a separate turn: Convoy creates an expiring request containing the
 exact action/chair/harness/resolved worktree and returns its warning. The skill

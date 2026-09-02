@@ -146,6 +146,35 @@ class ConsentRail(unittest.TestCase):
         latest = {s["session_id"]: s for s in list_seats(self.root)}["grok-gated"]
         self.assertTrue(latest["trust_worktree"])
 
+    @mock.patch("convoy.targeted_launch.ensure_first_run", return_value={"ok": True})
+    @mock.patch("convoy.bringup.shutil.which", return_value="C:\\Tools\\grok.exe")
+    def test_trusted_grok_launches_without_trust_flag_or_consent(
+        self, _which_harness, _prepare
+    ):
+        """Live grok-to-grok: inspect-yes on a new worktree must not pause or pass --trust."""
+        row = join(
+            self.root,
+            "grok",
+            session_id="grok-trusted",
+            worktree=str(self.worktree),
+        )["seat"]
+        calls = []
+        launched = launch_seat(
+            self.root,
+            row["session_id"],
+            runner=lambda argv: calls.append(argv) or {"ok": True, "pid": 45},
+            env={"WT_SESSION": "window"},
+            which=_which("wt"),
+            platform_name="nt",
+            trust_probe=lambda _seat: True,
+        )
+        self.assertTrue(launched["ok"])
+        self.assertEqual(len(calls), 1)
+        self.assertNotIn("--trust", launched["harness_argv"])
+        self.assertIn("convoy.pane_host", launched["argv"])
+        latest = {s["session_id"]: s for s in list_seats(self.root)}["grok-trusted"]
+        self.assertFalse(bool(latest.get("trust_worktree")))
+
     def test_consent_cli_grants_only_an_existing_request(self):
         waiting = request_consent(
             self.root,
