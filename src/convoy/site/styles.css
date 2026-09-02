@@ -252,6 +252,7 @@ a {
 
 .hero-grid {
   position: relative;
+  isolation: isolate;
   display: grid;
   grid-template-columns: 1fr;
   align-items: center;
@@ -263,54 +264,25 @@ a {
 .hero-copy,
 .hero-quiet {
   position: relative;
-  z-index: 2;
+  z-index: 1;
 }
 
-.hero-atmosphere {
+.mosaic-clip {
   position: absolute;
   inset: 0;
-  z-index: 1;
-  pointer-events: none;
+  z-index: 0;
   overflow: hidden;
+  pointer-events: none;
 }
 
-.hero-atmosphere::before,
-.hero-atmosphere::after {
-  content: "";
+#df-mosaic {
   position: absolute;
-  inset: -10%;
-}
-
-.hero-atmosphere::before {
-  opacity: 0.1;
-  background:
-    linear-gradient(var(--accent), var(--accent)) 8% 16% / 16px 1px no-repeat,
-    linear-gradient(var(--accent), var(--accent)) 8% 16% / 1px 16px no-repeat,
-    linear-gradient(var(--accent), var(--accent)) 30% 24% / 16px 1px no-repeat,
-    linear-gradient(var(--accent), var(--accent)) 46% 34% / 1px 14px no-repeat,
-    linear-gradient(var(--accent), var(--accent)) 69% 12% / 14px 1px no-repeat,
-    linear-gradient(var(--accent), var(--accent)) 76% 28% / 1px 16px no-repeat,
-    linear-gradient(var(--accent), var(--accent)) 86% 18% / 15px 1px no-repeat,
-    linear-gradient(var(--accent), var(--accent)) 90% 41% / 1px 14px no-repeat,
-    linear-gradient(var(--accent), var(--accent)) 20% 66% / 16px 1px no-repeat,
-    linear-gradient(var(--accent), var(--accent)) 38% 78% / 1px 16px no-repeat,
-    linear-gradient(var(--accent), var(--accent)) 64% 64% / 13px 1px no-repeat,
-    linear-gradient(var(--accent), var(--accent)) 81% 72% / 1px 15px no-repeat;
-  animation: df-drift 13s var(--ease) infinite alternate, df-pulse 9s ease-in-out infinite;
-}
-
-.hero-atmosphere::after {
-  opacity: 0.14;
-  background:
-    linear-gradient(rgba(29, 78, 216, 0.2), rgba(29, 78, 216, 0.2)) 12% 14% / 8px 8px no-repeat,
-    linear-gradient(rgba(29, 78, 216, 0.2), rgba(29, 78, 216, 0.2)) 34% 28% / 6px 6px no-repeat,
-    linear-gradient(rgba(29, 78, 216, 0.2), rgba(29, 78, 216, 0.2)) 58% 10% / 8px 8px no-repeat,
-    linear-gradient(rgba(29, 78, 216, 0.2), rgba(29, 78, 216, 0.2)) 74% 26% / 6px 6px no-repeat,
-    linear-gradient(rgba(29, 78, 216, 0.2), rgba(29, 78, 216, 0.2)) 89% 16% / 8px 8px no-repeat,
-    linear-gradient(rgba(29, 78, 216, 0.2), rgba(29, 78, 216, 0.2)) 24% 70% / 8px 8px no-repeat,
-    linear-gradient(rgba(29, 78, 216, 0.2), rgba(29, 78, 216, 0.2)) 47% 82% / 6px 6px no-repeat,
-    linear-gradient(rgba(29, 78, 216, 0.2), rgba(29, 78, 216, 0.2)) 68% 68% / 8px 8px no-repeat;
-  animation: df-drift-soft 17s var(--ease) infinite alternate;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  -webkit-mask-image: linear-gradient(to bottom, black 0%, black 30%, transparent 78%);
+  mask-image: linear-gradient(to bottom, black 0%, black 30%, transparent 78%);
 }
 
 .hero-kicker {
@@ -672,43 +644,5 @@ html.js body.reveal-ready [data-reveal].is-inview {
   [data-reveal] {
     opacity: 1 !important;
     transform: none !important;
-  }
-}
-
-html.js .hero-atmosphere::before,
-html.js .hero-atmosphere::after {
-  animation-play-state: paused;
-}
-
-html.js .hero.is-active .hero-atmosphere::before,
-html.js .hero.is-active .hero-atmosphere::after {
-  animation-play-state: running;
-}
-
-@keyframes df-drift {
-  from {
-    transform: translate3d(0, 0, 0);
-  }
-  to {
-    transform: translate3d(-14px, 8px, 0);
-  }
-}
-
-@keyframes df-drift-soft {
-  from {
-    transform: translate3d(0, 0, 0);
-  }
-  to {
-    transform: translate3d(12px, -10px, 0);
-  }
-}
-
-@keyframes df-pulse {
-  0%,
-  100% {
-    opacity: 0.08;
-  }
-  50% {
-    opacity: 0.16;
   }
 }
