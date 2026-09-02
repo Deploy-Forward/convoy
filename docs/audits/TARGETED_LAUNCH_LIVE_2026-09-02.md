@@ -1,8 +1,8 @@
 # Targeted one-chair launch: live evidence (2026-09-02)
 
-Status: **Codex launch/seated PASS; Windows Terminal close RED**. Grok launch
-reached a vendor trust gate and is pending explicit user consent. One-time
-seated tokens are intentionally excluded from this document.
+Status: **Codex launch/seated PASS; Grok launch/seated PASS after user
+trust; Windows Terminal close RED** (managed-host process teardown GREEN).
+One-time seated tokens are intentionally excluded from this document.
 
 ## Implementation lineage
 
@@ -113,6 +113,27 @@ Grok reached a useful intermediate state:
 This is not a launch failure: terminal placement and native Grok startup both
 succeeded. It is a first-run authorization gate that Convoy must surface and
 leave to the user; it must not silently accept a security/trust prompt.
+
+### Grok seated follow-up (`grok-lead-fable-opus`)
+
+A later Grok chair completed the loop after the user granted worktree trust.
+This is a distinct chair from `grok-pane-proof-fable-opus` (that proof pane
+remains pending seated). Facts from vendor `summary.json` and the thread feed,
+not self-report:
+
+| Stage | Evidence |
+| --- | --- |
+| Separate checkout | `C:\Users\marco\ola\convoy-wt-grok-lead` |
+| Chair registration | `grok-lead-fable-opus` join `2026-09-02T22:25:12.867692Z` |
+| Vendor session | `01a06445-3964-7db3-adad-b3bb6164f4c9` (`cwd` matches the checkout) |
+| Live model | `summary.current_model_id=grok-4.6`; assistant turns `model_id=grok-4.6-build`; effort `xhigh` |
+| Trust | seat row `trust_worktree=true` after the user-owned Project trusted gate |
+| Proof of life | `seated grok-lead-fable-opus` at `2026-09-02T22:37:44.356871Z`, authored by that chair |
+
+This is the missing Grok half of DoD items 2/4/5: one chair, one pane, one
+native process, independent `seated` after a surfaced vendor gate. It does
+not convert Windows Terminal visual close to GREEN, and it is not
+stranger-machine evidence.
 
 ## Knowledge added to the product contract
 
