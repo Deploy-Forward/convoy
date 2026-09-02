@@ -11,3 +11,17 @@ HTTP_MCP_STATUS.md
 ConvoyLayer.ps1
 node_modules/
 .wrangler/
+
+# Convoy's own first-run writes these into every seat worktree (CANON:
+# ensure_first_run installs neuron-identity into .grok/skills, .claude/skills
+# and an AGENTS.md pointer). This repo is itself a seat worktree for the agents
+# building it, so here they are generated artifacts, not repo content.
+# If a curated AGENTS.md is ever wanted, `git add -f` it.
+.claude/
+.grok/
+AGENTS.md
+
+# Per-session operator notes (seed / handoff prompts). Machine-specific paths,
+# never repo content.
+SEED.md
+PRIOR_THREAD.md
