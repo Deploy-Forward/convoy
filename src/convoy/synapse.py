@@ -278,7 +278,7 @@ def send_one(
         }
         # v2: the feed row carries the whole ask card so siblings pulling
         # feed --since see the remedy, not just the caller.
-        hook(root, kind="refuse", summary=to + " limited", instance_id=resolved_instance_id, extra={"to": to, "raw": usage.get("raw"), "ask": ask})
+        hook(root, kind="refuse", summary=to + " limited", instance_id=resolved_instance_id, author=None, extra={"to": to, "raw": usage.get("raw"), "ask": ask})
         return {
             "ok": False,
             "to": to,
@@ -300,6 +300,7 @@ def send_one(
             kind="refuse",
             summary=to + " live resume refused",
             instance_id=resolved_instance_id,
+            author=None,
             extra={"to": to, "reason": "no-steal-live-resume"},
         )
         return {
@@ -395,7 +396,9 @@ def send_one(
         register(root, sid, to, extra=extra)
     argv = card.get("argv")
     argv0 = argv[0] if isinstance(argv, list) and argv else None
-    hook(root, kind="synapse", summary="send " + to, instance_id=sid, extra={"to": to, "ok": card.get("ok"), "dry_run": False, "runner": runner_kind(run), "argv0": argv0, **extra})
+    # instance_id here is the TARGET/spawned session (the row's subject), not
+    # the sender — author=None records "sender unknown" instead of a lie.
+    hook(root, kind="synapse", summary="send " + to, instance_id=sid, author=None, extra={"to": to, "ok": card.get("ok"), "dry_run": False, "runner": runner_kind(run), "argv0": argv0, **extra})
     card["pointers"] = packed
     card["stdin"] = message
     card["usage_remaining"] = normalize_usage_remaining(usage.get("usage_remaining"))
