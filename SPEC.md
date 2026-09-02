@@ -58,6 +58,43 @@ Locked from the fable-opus stress findings (ORCH_SEND.md; OPUS1/OPUS2_STRESS.md)
 
 Unit: `test/customer1/feed_note_provenance_test.py` (15 tests, GREEN 2026-09-01, suite 199).
 
+### Seat lifecycle: join / swap / seated (ratified by Marco 2026-09-02)
+
+The seat is the chair; the neuron is the occupant. Chair identity is
+`session_id`, full stop — `resume_key` hashes `(convoy_id, thread, to,
+worktree)` and legitimately changes when the occupant's harness changes: it
+is a resume MAP key, never seat identity.
+
+- **`swap --seat S --to H [--model M] --handoff F --as AUTHOR`** replaces the
+  occupant, never the chair. NEURON-authored always (the conductor asks via
+  `stamp`; `from: grok-bot` has no legal author path on a swap row). Ordered,
+  fail-closed: fresh handoff file required → kind `swap` row stamps FIRST
+  (`from`=author, `to`=chair, `swap_to`, `token`, `memory: "convoy-state"`)
+  → field-preserving `update_seat` (never bare `seat()`: whole-row last-wins
+  blanks unpassed fields) with `resume` AND `vendor_session_id` nulled on
+  EVERY swap — Marco's ordering lock (close only after proof of life) + the
+  no-steal lock forbid two live processes on one vendor session, so **no
+  swap ever carries a vendor transcript; swap memory is Convoy state,
+  always** → `bring_up` with a one-shot `boot_prompt` delivered as an
+  initial POSITIONAL prompt (blessed exception; not `-p` — the session stays
+  interactive): read thread.md + handoff, echo the token.
+- **`seated --seat S --token T`**: proof-of-life — the replacement echoes the
+  token as kind `seated` and the boot prompt clears. The outgoing pane must
+  not close before this row exists; then "safe to close" + optional `hide`.
+  The outgoing neuron MAY exit itself; **Convoy never closes a window.** The
+  latest `seated` row per session_id names the chair's current occupant.
+- **`join --to H [...]`**: a new chair — `seat` + boot prompt + kind `join`
+  row. Newcomer rehydrates from thread state, never a vendor transcript.
+- **Token-to-harness binding:** seat rows carry `resume_for` (minting
+  harness, attributed); `resume_target` returns a token only on match, BOTH
+  `vendor_session_id` and `resume` guarded — a stale token can never ride
+  another harness's argv (cross-harness impossible by construction). Legacy
+  rows without `resume_for` are whole-row writes: minted under their own
+  `to`. `live_on_branch` dedupes by session_id: one chair is one agent.
+
+Unit: `test/customer1/seat_lifecycle_test.py` (15 tests, GREEN 2026-09-02,
+suite 232).
+
 ### Locked layer statement
 
 > Grok Bot is the opposite layer from Herdr and CNVS. This Grok Bot chat is the conductor. MCP is how the conductor attaches (`roster`, `onboard`, `send`, `feed`, `context`, `bring_up`/`open`, `terminals`; tree also has `install` and `hide`). Convoy is the SoT: one visible thread, one `cvy_id`, one tied repo, seats/neuron sessions that stay isolated. Default `send` is headless on purpose. `bring_up` is the terminal view, isolated n-pane, and only uses vendor resume ids. Same-branch overlap is refused. Pointers in, compact card out.
