@@ -95,21 +95,6 @@ _SITE_ASSETS: dict[str, tuple[str, str]] = {
     "/fonts/OFL-jetbrains-mono.txt": ("fonts/OFL-jetbrains-mono.txt", "text/plain; charset=utf-8"),
 }
 
-_SITE_ASSETS: dict[str, tuple[str, str]] = {
-    "/": ("index.html", "text/html; charset=utf-8"),
-    "/styles.css": ("styles.css", "text/css; charset=utf-8"),
-    "/app.js": ("app.js", "text/javascript; charset=utf-8"),
-    "/favicon.svg": ("favicon.svg", "image/svg+xml; charset=utf-8"),
-    "/favicon.ico": ("favicon.ico", "image/x-icon"),
-    "/favicon-96.png": ("favicon-96.png", "image/png"),
-    "/apple-touch-icon.png": ("apple-touch-icon.png", "image/png"),
-    "/og.png": ("og.png", "image/png"),
-    "/fonts/work-sans-latin.woff2": ("fonts/work-sans-latin.woff2", "font/woff2"),
-    "/fonts/jetbrains-mono-latin.woff2": ("fonts/jetbrains-mono-latin.woff2", "font/woff2"),
-    "/fonts/OFL-work-sans.txt": ("fonts/OFL-work-sans.txt", "text/plain; charset=utf-8"),
-    "/fonts/OFL-jetbrains-mono.txt": ("fonts/OFL-jetbrains-mono.txt", "text/plain; charset=utf-8"),
-}
-
 
 def _schema(properties: dict[str, Any], required: list[str] | None = None) -> dict[str, Any]:
     out: dict[str, Any] = {"type": "object", "properties": properties, "additionalProperties": False}
