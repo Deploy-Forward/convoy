@@ -59,7 +59,7 @@ class FeedAddresseeAndHonestFrom(unittest.TestCase):
         self.assertFalse(card["ok"])
 
     def test_conductor_stamp_from_stays_grok_bot(self):
-        row = conductor_stamp(self.root, "decision", instance_id="a487bca8-agent-id")
+        row = conductor_stamp(self.root, "decision", instance_id="conductor-agent-id")
         self.assertEqual(row["from"], "grok-bot")
 
     def test_grok_bot_is_a_valid_addressee(self):
@@ -240,13 +240,13 @@ class ChipSeatFields(unittest.TestCase):
             "fable-seat",
             worktree=r"C:\wt\fable",
             model="claude-fable-5",
-            resume="7909b37a-c27d-4468-a3df-475cf3d48652",
+            resume="00000000-0000-4000-8000-000000000001",
             effort="high",
         )
         row = self._glance_seat()
         self.assertEqual(row["model"], "claude-fable-5")
         self.assertEqual(row["effort"], "high")
-        self.assertEqual(row["resume"], "7909b37a-c27d-4468-a3df-475cf3d48652")
+        self.assertEqual(row["resume"], "00000000-0000-4000-8000-000000000001")
         self.assertEqual(row["worktree"], r"C:\wt\fable")
 
     def test_unknown_effort_and_resume_stay_off_the_card(self):
