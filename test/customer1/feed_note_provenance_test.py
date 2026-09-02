@@ -79,6 +79,54 @@ class FeedAddresseeAndHonestFrom(unittest.TestCase):
         self.assertIn("grok-bot", str(card["error"]))
 
 
+class SynapseAuthorNotRecipient(unittest.TestCase):
+    """OPUS-2 verified defect: synapse rows carried the RECIPIENT in `from`
+    (hook promoted instance_id — the spawned/target session — to author).
+    `from` is authorship: absent-when-unknown beats a recorded lie."""
+
+    def setUp(self):
+        self.root = Path(tempfile.mkdtemp())
+
+    def _last_row(self):
+        return feed_since(self.root, "1970-01-01T00:00:00.000000Z")[-1]
+
+    def test_synapse_row_does_not_claim_target_as_author(self):
+        card = send_one(self.root, "grok", "hi")
+        self.assertTrue(card["ok"])
+        row = self._last_row()
+        self.assertEqual(row["kind"], "synapse")
+        self.assertEqual(row["instance_id"], "spawned-grok")
+        self.assertNotIn("from", row)
+
+    def test_refuse_row_does_not_claim_target_as_author(self):
+        def probe(_to):
+            return {"usage_remaining": None, "limited": True, "raw": "session 100%"}
+
+        card = send_one(self.root, "claude", "hi", probe_fn=probe)
+        self.assertTrue(card.get("refused"))
+        row = self._last_row()
+        self.assertEqual(row["kind"], "refuse")
+        self.assertNotIn("from", row)
+
+    def test_note_rows_keep_author_from_instance_id(self):
+        row = hook(self.root, "note", "authored", instance_id="fable-fable-opus")
+        self.assertEqual(row["from"], "fable-fable-opus")
+
+    def test_send_to_conductor_alias_named_subject_still_stamps(self):
+        # The authorship refusal must not apply to the row SUBJECT: a send
+        # targeting a seat unluckily named like the conductor must complete
+        # and stamp — never raise post-runner leaving a hop with zero rows.
+        from convoy.registry import register
+
+        register(self.root, "Grok-Bot", "claude")
+        card = send_one(self.root, "claude", "ping", instance_id="Grok-Bot")
+        self.assertTrue(card["ok"])
+        row = self._last_row()
+        self.assertEqual(row["kind"], "synapse")
+        self.assertEqual(row["instance_id"], "Grok-Bot")
+        self.assertNotIn("from", row)
+
+
 class NeuronNoteAndMcpTool(unittest.TestCase):
     """MCP `note`: the neuron-side write, symmetric to `stamp` but with an
     honest `from` (the writing seat), one compact clamped line, never grok-bot."""
@@ -273,7 +321,11 @@ class ServerBuildId(unittest.TestCase):
             ["git", "-C", str(pkg_dir), "describe", "--always", "--dirty"],
             capture_output=True, text=True,
         ).stdout.strip()
-        self.assertTrue(build, "test requires a git checkout")
+        if not build:
+            # A packaged/exported tree (git archive) has no .git — exactly the
+            # deploy shape where the build stamp is legitimately absent (N-4).
+            # Skip keeps the suite signal honest there instead of a false RED.
+            self.skipTest("no git checkout: build stamp legitimately absent")
         resp = handle_rpc(Path(tempfile.mkdtemp()), {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}})
         version = resp["result"]["serverInfo"]["version"]
         self.assertEqual(version, "0.1.0+" + build)

@@ -43,15 +43,26 @@ def _is_conductor_alias(val: Any) -> bool:
     return val.strip().lower().replace("_", "").replace("-", "") == "grokbot"
 
 
-def hook(root: Path, kind: str, summary: str, instance_id: str | None = None, extra: dict[str, Any] | None = None, to: str | None = None) -> dict[str, Any]:
-    if _is_conductor_alias(instance_id):
+_AUTHOR_IS_INSTANCE = object()
+
+
+def hook(root: Path, kind: str, summary: str, instance_id: str | None = None, extra: dict[str, Any] | None = None, to: str | None = None, author: Any = _AUTHOR_IS_INSTANCE) -> dict[str, Any]:
+    # `from` is AUTHORSHIP, `instance_id` is the row's subject. They coincide
+    # on note-family rows (default), but a synapse/refuse row's instance_id is
+    # the TARGET session — passing author=None there records "sender unknown"
+    # instead of promoting the recipient to author (OPUS-2 verified defect).
+    if author is _AUTHOR_IS_INSTANCE:
+        author = instance_id
+    # The refusal is an AUTHORSHIP rule: it tests author only. instance_id is
+    # the row's subject and may legitimately name any seat — refusing it here
+    # would raise post-runner on synapse rows, discarding the card and leaving
+    # a hop with zero feed rows (opus-1/opus-2 pre-merge finding). Constraining
+    # subject names belongs at seat/register write time, where nothing has run.
+    if _is_conductor_alias(author):
         raise ValueError("refuse grok-bot as author; conductor identity is stamp-only")
     event = {"ts": utc_now(), "kind": kind, "instance_id": instance_id, "summary": summary}
-    # v2.1 additive: honest author `from` (the writing seat) and optional
-    # addressee `to`. grok-bot is a reserved addressee, never an author here —
-    # conductor_stamp overrides `from` via extra.
-    if instance_id:
-        event["from"] = instance_id
+    if author:
+        event["from"] = author
     if to:
         event["to"] = to
     if extra:
