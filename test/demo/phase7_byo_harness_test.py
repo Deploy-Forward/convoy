@@ -74,7 +74,7 @@ class Phase7ByoHarness(unittest.TestCase):
     def test_isolated_wt_argv_n2_real_posix_stubs(self):
         seats = self._grok_claude()
         with mock.patch("convoy.bringup.subprocess.Popen") as popen:
-            argv = isolated_wt_argv("customer1", seats, wt=WT)
+            argv = isolated_wt_argv("demo", seats, wt=WT)
         popen.assert_not_called()
         self.assertEqual(argv[0], WT)
         self.assertEqual(argv[1:4], ["--window", "new", "nt"])
@@ -122,7 +122,7 @@ class Phase7ByoHarness(unittest.TestCase):
         self.assertFalse(os.path.isabs(got))
 
     def test_live_runner_popen_mocked_no_real_wt(self):
-        argv = isolated_wt_argv("customer1", self._grok_claude(), wt=WT)
+        argv = isolated_wt_argv("demo", self._grok_claude(), wt=WT)
         proc = mock.Mock()
         proc.pid = 11
         with mock.patch("convoy.bringup.subprocess.Popen", return_value=proc) as popen:
@@ -144,7 +144,7 @@ class Phase7ByoHarness(unittest.TestCase):
             {"to": "grok", "session_id": "sess-2", "resume": "sess-2", "worktree": str(self.wt_g2), "exe": GROK},
         ]
         with mock.patch("convoy.bringup.subprocess.Popen") as popen:
-            argv = isolated_wt_argv("customer1", seats, wt=WT)
+            argv = isolated_wt_argv("demo", seats, wt=WT)
         popen.assert_not_called()
         self.assertEqual(argv.count("--resume"), 2)
         self.assertEqual(argv.count(GROK), 2)
@@ -169,7 +169,7 @@ class Phase7ByoHarness(unittest.TestCase):
             "exe": wrapper_exe,
         }]
         with self.assertRaises(ValueError) as ctx:
-            isolated_wt_argv("customer1", seats, wt=WT)
+            isolated_wt_argv("demo", seats, wt=WT)
         self.assertIn("ola-brain", str(ctx.exception).lower())
         with self.assertRaises(ValueError):
             _absolute_harness("ola-brain")
@@ -180,7 +180,7 @@ class Phase7ByoHarness(unittest.TestCase):
 
     def test_readme_documents_star_test_py_not_default_pattern(self):
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
-        self.assertIn("test/customer1", readme)
+        self.assertIn("test/demo", readme)
         self.assertIn("*_test.py", readme)
         self.assertFalse(Path(__file__).name.startswith("test"))
         self.assertTrue(Path(__file__).name.endswith("_test.py"))

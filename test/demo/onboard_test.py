@@ -68,13 +68,13 @@ class OnboardTests(unittest.TestCase):
             card = onboard(
                 self.root,
                 ["grok", "claude"],
-                thread="customer1",
+                thread="demo",
                 checkout_root=str(self.checkout),
             )
         self.assertTrue(card["ok"], card)
         self.assertEqual(card["root"], str(self.checkout.resolve()))
-        self.assertEqual(card["thread"], "customer1")
-        self.assertEqual(read_thread(self.checkout), "customer1")
+        self.assertEqual(card["thread"], "demo")
+        self.assertEqual(read_thread(self.checkout), "demo")
         self.assertEqual(read_id(self.checkout), card["convoy_id"])
         self.assertTrue(card["thread_bind"]["changed"])
         self.assertEqual([h["to"] for h in card["harnesses"]], ["grok", "claude"])

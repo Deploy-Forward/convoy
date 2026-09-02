@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run customer1 tests. unittest default pattern test*.py misses *_test.py."""
+"""Run demo tests. unittest default pattern test*.py misses *_test.py."""
 from __future__ import annotations
 
 import sys
@@ -13,7 +13,7 @@ if str(SRC) not in sys.path:
 
 
 def main() -> int:
-    start = ROOT / "test" / "customer1"
+    start = ROOT / "test" / "demo"
     suite = unittest.defaultTestLoader.discover(str(start), pattern="*_test.py")
     result = unittest.TextTestRunner(verbosity=2).run(suite)
     return 0 if result.wasSuccessful() else 1

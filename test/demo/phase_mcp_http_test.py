@@ -44,11 +44,11 @@ class PhaseMcpHttp(unittest.TestCase):
         (self.root / ".ola" / "brief.md").write_text("brief-pointer")
         self.wt_g = Path(tempfile.mkdtemp())
         self.wt_c = Path(tempfile.mkdtemp())
-        self.thread = "customer1"
+        self.thread = "demo"
         self.cid = ensure_id(self.root)
         bind(self.root, self.thread)
         self.g = seat(self.root, "grok", "sess-grok", worktree=str(self.wt_g), model="explicit-grok", resume="sess-grok")
-        self.c = seat(self.root, "claude", "sess-claude", worktree=str(self.wt_c), model="Fable 5", resume="sess-claude")
+        self.c = seat(self.root, "claude", "sess-claude", worktree=str(self.wt_c), model="claude-fable-5", resume="sess-claude")
         self.fake_home = Path(tempfile.mkdtemp())
         self._home_patcher = mock.patch("convoy.bringup.Path.home", return_value=self.fake_home)
         self._home_patcher.start()

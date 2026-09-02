@@ -18,7 +18,7 @@ def _harness(data, hid):
 
 
 class HarnessLiveTruth(unittest.TestCase):
-    """cloud-g1 UltraCode on #21 + live --help on the customer-1 box
+    """cloud-g1 UltraCode on #21 + live --help on the demo box
     (2026-09-01): the contract must state what the binaries actually take."""
 
     def setUp(self):

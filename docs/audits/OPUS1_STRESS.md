@@ -1,7 +1,7 @@
 # OPUS-1 adversarial stress: SPEC.md DoD truth vs this tree
 
 **Auditor:** opus-1-fable-opus (neuron on thread `fable-opus`)
-**Worktree:** `C:\Users\dev\ola\convoy-wt-opus` · **branch:** `fable-opus-opus` · **HEAD:** `b29c79b`
+**Worktree:** `<audit-worktree>` · **branch:** `fable-opus-opus` · **HEAD:** `b29c79b`
 **Run date:** 2026-09-01 (UTC stamps below are verbatim from artifacts)
 **Scope:** CODE + SPEC DoD truth only. MCP live-surface audit is opus-2's scope; conductor/orchestration is Fable's.
 **Rule applied:** GREEN only with passing code/tests I ran, or a timestamped artifact I read. Everything else RED or `null`. No fixes, no branches, no SPEC edits were made.
@@ -22,8 +22,8 @@ The **locked native-send / structured-talk DoD block is honest** — it says RED
 | Tree inventory | `ls src/convoy`, `find . -name "*.ps1"` | 17 modules + `harness_skills`; **zero `.ps1` files** |
 | Runner wiring | `cli.py:249`, `mcp_http.py:346`, `synapse.py:119` | live ⇒ `native_runner` on both paths |
 | No-steal gate | `cli.py:250`, `mcp_http.py:356`, `synapse.py:283` | `allow_interactive_resume = not live` at both callers |
-| Live layer (customer 1) | read-only `C:\Users\dev\ola\da-integration\.convoy\{feed,seats,registry}.jsonl`, `id` | 30 feed rows, 2026-08-28 → 2026-09-01 |
-| This thread's layer | `C:\Users\dev\ola\fable-opus-root\.convoy\feed.jsonl` | my own ack row `2026-09-01T16:27:34.919938Z` |
+| Live layer (demo) | read-only `<demo-root>/.convoy/{feed,seats,registry}.jsonl`, `id` | 30 feed rows, 2026-08-28 → 2026-09-01 |
+| This thread's layer | `<audit-thread-root>/.convoy/feed.jsonl` | my own ack row `2026-09-01T16:27:34.919938Z` |
 | Code timeline | `git log -S` on `synapse.py` | `native_runner` = `acba4e3` **2026-08-30** (#4); `no-steal-live-resume` = `273a345` **2026-08-31** (#12) |
 
 ## RED list
@@ -48,7 +48,7 @@ The **locked native-send / structured-talk DoD block is honest** — it says RED
 
 **R10 — every dated live GREEN in the Phase table predates the current contract.** Table rows 1-7 are all stamped `2026-08-28`. `native_runner` landed **2026-08-30** (`acba4e3`), the no-steal lock **2026-08-31** (`273a345`). SPEC:378 and SPEC:709 confirm the 08-28 runs went through `ola-brain side-chat send` — the exact wrapper the canonical lock now names a refuse target. So no GREEN in that table is evidence for DoD item 1 (native BYO send). They are evidence about a code path that has since been forbidden.
 
-**R11 — no artifact anywhere proves a live native vendor send, and the layer cannot tell one from a fake.** `synapse.py:384` stamps `dry_run: False` and records `to/ok/label/worktree/git_*` — but never which runner ran, no argv, no `live` flag. `fake_runner` mints `session_id = "spawned-" + to` (`synapse.py:74`). The three most recent non-dry rows in the customer-1 feed are `spawned-agy` (`2026-08-31T00:32:29Z`), `spawned-cursor-agent` (`2026-08-31T00:32:51Z`) — fake-runner shapes, recorded as `ok: true, dry_run: false`. A reader of the SoT cannot distinguish a real vendor turn from an ACK string. This is the single most launch-relevant finding: the audit trail can be honest-looking and empty.
+**R11 — no artifact anywhere proves a live native vendor send, and the layer cannot tell one from a fake.** `synapse.py:384` stamps `dry_run: False` and records `to/ok/label/worktree/git_*` — but never which runner ran, no argv, no `live` flag. `fake_runner` mints `session_id = "spawned-" + to` (`synapse.py:74`). The three most recent non-dry rows in the demo feed are `spawned-agy` (`2026-08-31T00:32:29Z`), `spawned-cursor-agent` (`2026-08-31T00:32:51Z`) — fake-runner shapes, recorded as `ok: true, dry_run: false`. A reader of the SoT cannot distinguish a real vendor turn from an ACK string. This is the single most launch-relevant finding: the audit trail can be honest-looking and empty.
 
 **R12 — the "Honesty bar / This tree today" table is stale and incomplete.** It opens "This tree today (`/workspace/convoy`, not a landed GitHub checkout)" — it *is* landed (`b29c79b`, merge of PR #24). It lists 8 paths and omits 8 shipped modules (`bringup.py`, `convoy.py`, `gitstate.py`, `glance.py`, `harness_contract.py`, `identity.py`, `install.py`, `registry.py`) plus `harness_skills/`, and names 2 of 22 test modules. (Corrected 2026-09-01: this line first said "24 test files"; the directory holds 22 `*_test.py` modules plus `__init__.py` and `README.md`.) The section whose stated job is "if a function is not in `src/convoy/`, it is not GREEN" does not describe `src/convoy/`.
 
@@ -57,17 +57,17 @@ The **locked native-send / structured-talk DoD block is honest** — it says RED
 ## GREEN (verified by me at b29c79b)
 
 - **Suite:** 184 tests pass, 0 failures.
-- **All five "Current code honesty" bullets (SPEC:86-91) hold** — `send` live⇒native routing; PATH exec + wrapper refuse in `native_runner`; live-resume refusal (with R13's caveat); `TOOLS` contains `onboard`/`hide`/`install` (14 entries incl. aliases); wrapper-name refusal in `bringup.py` (`:98-117`, `:241`, `:658`) and `install.py` (`:61`, `:101`).
+- **All five "Current code honesty" bullets (SPEC:86-91) hold** — `send` live⇒native routing; PATH exec + wrapper refuse in `native_runner`; live-resume refusal (with R13's caveat); `TOOLS` contains `onboard`/`hide`/`install` (current entries from live tools/list); wrapper-name refusal in `bringup.py` (`:98-117`, `:241`, `:658`) and `install.py` (`:61`, `:101`).
 - **Feed contract v2 matches code:** `SCHEMA_VERSION = 2` (`layer.py:23`) on `feed`/CLI/attach envelopes; `conductor_stamp` clamps to one line ≤500 chars and marks `truncated: true` (`layer.py:70-86`); `refuse` rows carry the full `ask` card (`synapse.py:262-271`); `transcript` is a pointer field only.
-- **Phase 2 live claim corroborates exactly:** SPEC's c1-locked `2026-08-28T14:42:46.975866Z` is a real row in `da-integration/.convoy/feed.jsonl`.
-- **Phase 6 `send-dry` claim corroborates exactly:** `dry-grok-51884583` and `dry-claude-5a173460`, two rows, `14:42:47.669895Z` / `14:42:47.724691Z`.
-- **Phase 7 attach claim corroborates:** `.convoy/id` = `cvy_KE0tAyDLOnqEuWxYHjpsbQ`, three `attach` rows (`23:38:35Z`, `23:38:36Z`, `23:44:36Z`), both seats in `seats.jsonl` with distinct `resume_key`s.
+- **Phase 2 live claim corroborates exactly:** SPEC's demo-locked `2026-08-28T14:42:46.975866Z` is a real row in `<demo-root>/.convoy/feed.jsonl`.
+- **Phase 6 `send-dry` claim corroborates exactly:** `<dry-grok-session>` and `<dry-claude-session>`, two rows, `14:42:47.669895Z` / `14:42:47.724691Z`.
+- **Phase 7 attach claim corroborates:** `.convoy/id` = `<demo-convoy-id>`, three `attach` rows (`23:38:35Z`, `23:38:36Z`, `23:44:36Z`), both seats in `seats.jsonl` with distinct `resume_key`s.
 - **The locked DoD block's own status is honest:** items 1-3 are RED/PARTIAL and nothing in the tree or artifacts contradicts that.
-- **Live CLI works on this thread today:** my ack row `2026-09-01T16:27:34.919938Z` in `fable-opus-root/.convoy/feed.jsonl`.
+- **Live CLI works on this thread today:** my ack row `2026-09-01T16:27:34.919938Z` in `<audit-thread-root>/.convoy/feed.jsonl`.
 
 ## NULL (unprovable from my scope — not GREEN, not RED)
 
-- Everything about the deployed `https://convoy.bot/mcp` process: tool count, feed version, whether the no-steal lock is live there. Fable's feed row `2026-09-01T20:10:13.541928Z` reports 13 tools, no `stamp`, v1 feed description — **peer-reported, second-hand, I did not probe it.** It is consistent with my count (14 tools here minus `stamp` = 13), which would mean the deployment predates feed-v2. Assigned to opus-2.
+- Everything about the deployed `https://convoy.bot/mcp` process: tool count, feed version, whether the no-steal lock is live there. Fable's feed row `2026-09-01T20:10:13.541928Z` reported no `stamp` and a v1 feed description — **peer-reported, second-hand, I did not probe it.** Treat tool sets as live `tools/list` data, not a frozen count in docs. Assigned to opus-2.
 - DoD item 2 (structured talk, two neurons on one `cvy_id` visible to a second client) and item 3 (stranger attach): no artifact, no test. `null`.
 - Phase 7 SPEC:764 "RED live (parent): two attach stamps, `feed --since`" — the feed now *has* three attach rows, so this RED may itself be stale, but I cannot tie those rows to a parent-thread bind. `null`.
 
@@ -85,7 +85,7 @@ Increment called by Marco via the conductor (GREEN.md), scoped by lead to R1-R10
 |---|---|
 | R1 | Honesty-bar MCP row rewritten: live `send` routes to `native_runner`; RED is now stated as "no live vendor execution proven on the public URL", not "routes to `ola_runner`". The matching "We do not" bullet was rewritten the same way. |
 | R2 | `synapse.py` inventory row rewritten — `ola_runner` is labelled the **retired** ola-brain path, unreachable from CLI or MCP. SPEC:349's "until live vendor PATH execution replaces `ola_runner`" now says the swap already happened (`acba4e3`, 2026-08-30) and what is missing is live proof. |
-| R3 | Customer-1 log bullet: "no `context.py`" replaced with a dated correction — `context.py` ships (`pack` / `stdin_for`), imported by `synapse.py` and `mcp_http.py`; `registry.parse_session_id` has no UUID regex. |
+| R3 | Demo-log bullet: "no `context.py`" replaced with a dated correction — `context.py` ships (`pack` / `stdin_for`), imported by `synapse.py` and `mcp_http.py`; `registry.parse_session_id` has no UUID regex. |
 | R4 | "Feature branch understanding: RED" → GREEN code + unit + live artifact (`gitstate.git_state()` merged into every synapse row; `pr_number: 167` on `2026-08-31T11:58:40.211558Z`). |
 | R5 | "Worktree understanding: RED" → GREEN code + unit (stamped on every row, passed as `cwd` into the runner); live **native** dual-worktree hop kept explicitly `null`. |
 | R6 | SPEC:181 now states `ConvoyLayer.ps1` is **not in this repo** (`find . -name "*.ps1"` returns nothing at `b29c79b`) and exists only on the Aether box. The Phase 6 "copy at `/workspace/convoy/ConvoyLayer.ps1`" parenthetical is gone. The Phase 5 roster-field GREEN no longer rests on `Invoke-AgentChannel.ps1`; it cites `usage.normalize_usage_remaining` + `harness_contract.usage_remaining_null_until_live_probe` with their tests. |
