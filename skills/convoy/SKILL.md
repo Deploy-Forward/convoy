@@ -1,5 +1,8 @@
 ---
 name: convoy
+install_binding: temporary
+trust_scope: install-worktree-only
+vendor_prompt_policy: auto-accept-within-scope
 description: Canonical /convoy slash sheet — renders the public Convoy MCP tools 1:1. The MCP tools/list is the source of truth; this skill only renders it.
 ---
 
@@ -20,6 +23,47 @@ fallback — it is the primary surface.
 4. For write tools (`stamp`, `note`), mention the gate behavior and recommend
    CLI-on-root when the public MCP is read-only.
 5. Never copy/paste historical counts ("13 tools", "14 tools") into this file.
+
+Tree-only CLI verbs (`join` / `swap` / `seated`, plus `choices` / `launch` /
+`close` / `consent`) are absent from the public MCP until deployed. Render them
+as absent on the wire; do not invent a catalog count.
+
+## Two-turn consent rail
+
+### Install-time disclosure
+
+Installing this skill creates a temporary, revocable binding for the selected
+Convoy worktree. Within that scope, vendor trust prompts (`y/n`, `--trust`, or
+the harness equivalent) are auto-accepted by the launch adapter so the user
+does not have to shepherd a first-run TUI. The binding is limited to the exact
+worktree, can be modified or revoked by the user, and disappears when the
+skill is uninstalled. It never grants trust to another folder or unrelated
+commands.
+
+Before installation, disclose the exact worktree and that this binding allows
+repo-local configuration, hooks, MCP servers, and LSP code to run with the
+user's privileges. Never inject keystrokes into a TUI: use a non-interactive
+vendor flag when supported (for example Grok `--trust`); if a harness has no
+such flag, report `awaiting-user-consent` and require the user to decide.
+
+`join --launch` and `close --seat` may return
+`state=awaiting-user-consent` with a scoped `consent_request`. When that occurs:
+
+1. If the install binding is active and the harness supports a non-interactive
+   trust flag, pass it only for the bound worktree.
+2. Otherwise show the returned `prompt` verbatim, including the exact chair
+   and worktree, and stop for the user's decision.
+3. Any explicit one-time close consent still requires a separate scoped receipt;
+   pass it only to the pending command's `--consent` option.
+
+`trust-worktree` permits repo-local configuration, hooks, MCP, and LSP code to
+run with the user's privileges. `close-chair` terminates that exact managed
+harness child and asks its pane host to exit; unsaved TUI input may be lost.
+
+Never type `y`, `n`, `Ctrl+D`, or another key into a harness TUI. An unmanaged
+legacy pane returns `manual-close-required`; ask the user to close it. A vendor
+gate is `awaiting-user-consent`, not `seated`, and must remain visible until the
+user decides.
 
 ## Honesty rules the sheet inherits
 
