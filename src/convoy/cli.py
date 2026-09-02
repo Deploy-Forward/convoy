@@ -13,6 +13,7 @@ from .context import pack
 from .convoy import attach, bind, ensure_id, list_seats, read_id, read_lead, seat, set_lead, CONDUCTOR
 from .glance import build_glance, run_tray
 from .layer import SCHEMA_VERSION, conductor_stamp, feed_since, hook
+from .lifecycle import join, seated_ack, swap
 from .synapse import fake_runner, native_runner, send_many, send_one
 from .usage import probe
 
@@ -65,6 +66,26 @@ def main(argv: list[str] | None = None) -> int:
     se.add_argument("--title", help="optional pane title to restore on bring-up")
     se.add_argument("--agent", help="optional agent file path used for native resume")
     se.add_argument("--effort", help="declared effort for this seat (real-or-null; Convoy never sets vendor effort flags)")
+
+    jn = sub.add_parser("join")
+    jn.add_argument("--to", required=True, help="harness for the new chair")
+    jn.add_argument("--session-id")
+    jn.add_argument("--worktree")
+    jn.add_argument("--model")
+    jn.add_argument("--title")
+    jn.add_argument("--effort")
+    jn.add_argument("--as", dest="author", help="authoring seat (neuron-authored)")
+
+    sw = sub.add_parser("swap")
+    sw.add_argument("--seat", required=True, help="chair session_id (identity survives the swap)")
+    sw.add_argument("--to", required=True, help="replacement harness")
+    sw.add_argument("--model")
+    sw.add_argument("--handoff", required=True, help="fresh .ola/*handoff* file written by the outgoing neuron")
+    sw.add_argument("--as", dest="author", required=True, help="outgoing neuron's session_id (neuron-authored; conductor asks via stamp)")
+
+    sd = sub.add_parser("seated")
+    sd.add_argument("--seat", required=True)
+    sd.add_argument("--token", required=True, help="token from the join/swap row (proof-of-life echo)")
 
     sl = sub.add_parser("seats")
     sl.add_argument("--convoy-id")
@@ -176,6 +197,21 @@ def main(argv: list[str] | None = None) -> int:
             effort=args.effort,
         )
         print(json.dumps(row))
+        return 0
+    if args.cmd in ("join", "swap", "seated"):
+        try:
+            if args.cmd == "join":
+                card = join(root, args.to, session_id=args.session_id, worktree=args.worktree,
+                            model=args.model, title=args.title, effort=args.effort, author=args.author)
+            elif args.cmd == "swap":
+                card = swap(root, args.seat, to=args.to, handoff=args.handoff,
+                            author=args.author, model=args.model)
+            else:
+                card = seated_ack(root, args.seat, token=args.token)
+        except ValueError as e:
+            print(json.dumps({"ok": False, "error": str(e)}))
+            return 1
+        print(json.dumps(card))
         return 0
     if args.cmd == "seats":
         print(json.dumps(list_seats(root, convoy_id=args.convoy_id)))
