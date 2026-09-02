@@ -1,8 +1,9 @@
 # Targeted one-chair launch: live evidence (2026-09-02)
 
-Status: **Codex launch/seated PASS; Grok launch/seated PASS after user
-trust; Windows Terminal close RED** (managed-host process teardown GREEN).
-One-time seated tokens are intentionally excluded from this document.
+Status: **Codex launch/seated PASS; Grok launch/seated PASS; grok-to-grok
+managed close GREEN for process teardown; Windows Terminal visual close RED**.
+One-time seated tokens and one-time consent values are excluded from this
+document.
 
 ## Implementation lineage
 
@@ -135,6 +136,46 @@ native process, independent `seated` after a surfaced vendor gate. It does
 not convert Windows Terminal visual close to GREEN, and it is not
 stranger-machine evidence.
 
+## Grok-to-grok replication (`grok-lead` → `grok-side`)
+
+Caller chair `grok-lead-fable-opus` (Grok PID `62572`, pane host `105008`)
+invoked the same `join --launch` path Codex used, targeting a second Grok
+neuron. No root-wide `bring-up`, keyboard injection, or vendor resume token.
+
+Safe command shape:
+
+```text
+python -m convoy --root C:\Users\marco\ola\fable-opus-root join \
+  --to grok \
+  --worktree C:\Users\marco\ola\convoy-wt-grok-side \
+  --title grok-side \
+  --launch \
+  --as grok-lead-fable-opus
+```
+
+| Stage | Evidence |
+| --- | --- |
+| Separate checkout | Detached worktree `C:\Users\marco\ola\convoy-wt-grok-side` at `9a0591d` |
+| Trust preflight | `grok inspect` in that new folder reported `Project trusted: yes` *before* launch. Convoy therefore did not pause for `trust-worktree` and did **not** pass `--trust`. The earlier `grok-pane-proof` folder, which was `Project trusted: no` at 21:28Z, now also inspects as yes. |
+| Chair registration | `grok-side-fable-opus` join `2026-09-02T22:48:38.627109Z` |
+| Terminal dispatch | `windows-terminal` `split-pane`; launcher PID `96188`; inner argv is `python -m convoy.pane_host --seat grok-side-fable-opus` |
+| Harness process | New `grok.exe` PID `115188` (`--agent` convoy-neuron, no `--trust`), parent pane host `109636`; caller Grok PID `62572` remained alive |
+| Host WT_SESSION | Pane-host state recorded `e0005a43-3a5b-4516-a1d7-27f54835da99`, distinct from the caller pane's `WT_SESSION=e60f446b-66e0-4f3f-a9f9-18b9b9c76dd6` |
+| Independent proof of life | `seated grok-side-fable-opus` authored by that chair at `2026-09-02T22:49:02.053715Z` (~24s after join) |
+| Vendor TUI identity | After process exit, `summary.json` `id=01a0644f-63f6-7260-8a5e-e47748fa67ff`, `cwd` exactly the side worktree, `current_model_id=grok-4.6` |
+| Repeat launch | `launch --seat grok-side-fable-opus` refused: chair is not a fresh join/swap |
+
+Close used the managed-host rail (same as `managed-close-proof-fable-opus`):
+`close --seat` → scoped `close-chair` consent → host acknowledged and exited.
+At `2026-09-02T22:49:35.987777Z` host status was `close-request-acknowledged`.
+PIDs `115188`, `109636`, and wrapper `105356` were absent; caller `62572` and
+its host `105008` were still alive. Seat row: `launch_state=closed-by-consent`,
+`process_state=exited`, `pane_state=close-dispatched`. `pane_closed` stayed
+JSON `null` — process teardown is not visual pane proof.
+
+This is **GREEN for grok-to-grok same-harness x2** on create/seated/managed
+process close. It does not change Windows Terminal visual close.
+
 ## Knowledge added to the product contract
 
 The first live pass exposed two dimensions that unit-only launch tests miss:
@@ -146,6 +187,11 @@ The first live pass exposed two dimensions that unit-only launch tests miss:
    boot prompt immediately; Grok first required project trust. The common state
    machine is `joined -> process-started -> vendor-gate? -> seated`, and only
    `seated` is cross-harness readiness.
+3. **Grok trust is vendor-sticky, not chair-sticky.** After one Grok worktree
+   is trusted, a *brand-new* git worktree of the same repo can already inspect
+   as `Project trusted: yes`. Convoy must still probe `grok inspect` per
+   worktree and must not inject `--trust` when inspect already says yes. It
+   also must not skip the probe because a sibling Grok chair was trusted.
 
 For Windows Terminal, the next implementation decision is explicit: either
 ship a lifecycle host that owns the child process and exits zero after an exact
