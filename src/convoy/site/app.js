@@ -92,20 +92,22 @@
 
   function parseTools(payload) {
     if (!payload || typeof payload !== "object") {
-      return [];
+      throw new Error("invalid JSON-RPC payload");
+    }
+    if (payload.error && typeof payload.error === "object") {
+      throw new Error(String(payload.error.message || "JSON-RPC error"));
     }
     const result = payload.result;
-    if (result && typeof result === "object" && Array.isArray(result.tools)) {
-      return result.tools;
+    if (!result || typeof result !== "object" || !Array.isArray(result.tools)) {
+      throw new Error("tools/list missing result.tools");
     }
-    return [];
+    return result.tools;
   }
 
-  async function postRpc(method, id, params, extraHeaders) {
+  async function postRpc(method, id, params) {
     const headers = {
       "Content-Type": "application/json",
       Accept: "application/json, text/event-stream",
-      ...(extraHeaders || {}),
     };
     const response = await fetch("/mcp", {
       method: "POST",
@@ -114,7 +116,7 @@
         jsonrpc: "2.0",
         id,
         method,
-        ...(params ? { params } : {}),
+        params: params || {},
       }),
     });
     if (!response.ok) {
@@ -128,17 +130,8 @@
     if (wireToolsCache) {
       return wireToolsCache;
     }
-    const init = await postRpc("initialize", "site-init", {
-      protocolVersion: "2025-03-26",
-      capabilities: {},
-      clientInfo: { name: "convoy-site", version: "1.0.0" },
-    });
-    const sessionId = init.headers.get("Mcp-Session-Id") || init.headers.get("mcp-session-id");
-    const list = await postRpc("tools/list", "site-tools-list", null, sessionId ? { "Mcp-Session-Id": sessionId } : undefined);
+    const list = await postRpc("tools/list", "site-tools-list", {});
     const tools = parseTools(list.json);
-    if (!Array.isArray(tools)) {
-      throw new Error("invalid tools/list payload");
-    }
     wireToolsCache = tools;
     return tools;
   }
