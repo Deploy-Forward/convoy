@@ -10,6 +10,9 @@ readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
 
+[project.scripts]
+convoy = "convoy.cli:main"
+
 [tool.setuptools.packages.find]
 where = ["src"]
 

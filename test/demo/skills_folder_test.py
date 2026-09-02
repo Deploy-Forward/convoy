@@ -27,6 +27,8 @@ class SkillsFolderContract(unittest.TestCase):
         self.assertTrue(sheet.is_file(), "skills/convoy/SKILL.md missing")
         text = sheet.read_text(encoding="utf-8")
         self.assertIn("name: convoy", text)
+        self.assertIn("install_binding: temporary", text)
+        self.assertIn("vendor_prompt_policy: auto-accept-within-scope", text)
         # the sheet is a snapshot unless it says when it was rendered
         self.assertIn("rendered from live tools/list", text)
         # the single most confusing public fact must be stated
