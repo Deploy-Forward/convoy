@@ -104,10 +104,11 @@ needs a packaged executable/runtime before a skill can invoke it.
 Creation and closure are separate capabilities. The Windows Terminal CLI can
 create a split but does not expose its `closePane` action. A killed TUI may leave
 an exited pane visible under graceful `closeOnExit`, so absent process IDs are
-not pane-close proof. Until Convoy has an exact pane-control protocol, the user
-must close that pane cleanly (`Ctrl+D` in the exited pane or the configured
-`closePane` binding). First-run harness trust prompts are also user decisions;
-Convoy surfaces them and never auto-accepts them.
+not pane-close proof. New targeted launches therefore use a Convoy lifecycle
+host: after a separate, scoped `close-chair` consent it terminates only its owned
+child tree and exits zero. Legacy panes still require `Ctrl+D` or the configured
+`closePane` binding. First-run harness trust prompts are also user decisions;
+Convoy returns an `awaiting-user-consent` card and never auto-accepts them.
 
 ## How it works
 

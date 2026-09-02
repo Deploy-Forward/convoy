@@ -7,6 +7,7 @@ import sys
 from pathlib import Path
 
 from .bringup import bring_up, hide_windows, live_applier, live_runner, terminals
+from .consent import grant_consent
 from .install import install as install_harness
 from .onboard import onboard as run_onboard
 from .context import pack
@@ -14,6 +15,7 @@ from .convoy import attach, bind, ensure_id, list_seats, read_id, read_lead, sea
 from .glance import build_glance, run_tray
 from .layer import SCHEMA_VERSION, conductor_stamp, feed_since, hook
 from .lifecycle import join, seated_ack, swap
+from .pane_host import close_managed_pane
 from .synapse import fake_runner, native_runner, send_many, send_one
 from .targeted_launch import active_pane_runner, launch_choices, launch_seat
 from .usage import probe
@@ -77,12 +79,21 @@ def main(argv: list[str] | None = None) -> int:
     jn.add_argument("--effort")
     jn.add_argument("--as", dest="author", help="authoring seat (neuron-authored)")
     jn.add_argument("--launch", action="store_true", help="split exactly one fresh chair into the active supported pane host")
+    jn.add_argument("--consent", help="one-time scoped consent returned by `convoy consent --grant`")
 
     ch = sub.add_parser("choices", help="list installed harnesses, known worktrees, seats, and active-pane support")
 
     ln = sub.add_parser("launch", help="split one already-joined fresh chair into the active pane host")
     ln.add_argument("--seat", required=True, help="fresh join/swap chair session_id")
     ln.add_argument("--dry-run", action="store_true")
+    ln.add_argument("--consent", help="one-time scoped consent returned by `convoy consent --grant`")
+
+    cs = sub.add_parser("consent", help="grant a prior consent request after the user explicitly approves it")
+    cs.add_argument("--grant", required=True, metavar="REQUEST_ID")
+
+    cl = sub.add_parser("close", help="request closure of one exact Convoy-managed pane")
+    cl.add_argument("--seat", required=True)
+    cl.add_argument("--consent", help="one-time close-chair consent")
 
     sw = sub.add_parser("swap")
     sw.add_argument("--seat", required=True, help="chair session_id (identity survives the swap)")
@@ -216,10 +227,16 @@ def main(argv: list[str] | None = None) -> int:
                         root,
                         card["seat"]["session_id"],
                         runner=active_pane_runner,
+                        consent=args.consent,
                     )
                     card["launch"] = launched
                     card["ok"] = bool(card.get("ok")) and bool(launched.get("ok"))
-                    card["next"] = "seated" if launched.get("ok") else "launch"
+                    if launched.get("ok"):
+                        card["next"] = "seated"
+                    elif launched.get("state") == "awaiting-user-consent":
+                        card["next"] = "consent"
+                    else:
+                        card["next"] = "launch"
             elif args.cmd == "swap":
                 card = swap(root, args.seat, to=args.to, handoff=args.handoff,
                             author=args.author, model=args.model)
@@ -235,7 +252,23 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(card))
         return 0 if card.get("ok") else 1
     if args.cmd == "launch":
-        card = launch_seat(root, args.seat, runner=None if args.dry_run else active_pane_runner)
+        card = launch_seat(
+            root,
+            args.seat,
+            runner=None if args.dry_run else active_pane_runner,
+            consent=args.consent,
+        )
+        print(json.dumps(card))
+        return 0 if card.get("ok") else 1
+    if args.cmd == "consent":
+        try:
+            card = grant_consent(root, args.grant)
+        except ValueError as e:
+            card = {"ok": False, "error": str(e)}
+        print(json.dumps(card))
+        return 0 if card.get("ok") else 1
+    if args.cmd == "close":
+        card = close_managed_pane(root, args.seat, consent=args.consent)
         print(json.dumps(card))
         return 0 if card.get("ok") else 1
     if args.cmd == "seats":

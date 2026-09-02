@@ -12,10 +12,12 @@ import os
 import shlex
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping
 
 from .bringup import (
+    _harness_bin,
     _is_abs_exe,
     _pane_title,
     _seat_with_agent,
@@ -23,6 +25,7 @@ from .bringup import (
     resume_argv,
     resume_target,
 )
+from .consent import consume_consent, request_consent
 from .convoy import list_seats, update_seat
 from .harness_contract import harness_entries, harness_exec
 
@@ -85,16 +88,46 @@ def terminal_capability(
     }
 
 
-def active_pane_argv(seat: dict[str, Any], capability: dict[str, Any]) -> list[str]:
+def pane_child_argv(seat: dict[str, Any]) -> list[str]:
+    """Native harness argv executed by the lifecycle host."""
+    inner = resume_argv(seat)
+    if _harness_bin(str(seat.get("to") or "")) == "grok" and seat.get("trust_worktree"):
+        if "--trust" not in inner:
+            inner.insert(1, "--trust")
+    return inner
+
+
+def managed_host_argv(root: Path, seat: dict[str, Any]) -> list[str]:
+    sid = str(seat.get("session_id") or "").strip()
+    if not sid:
+        raise ValueError("managed pane host requires a chair session_id")
+    return [
+        str(Path(sys.executable).resolve()),
+        "-m",
+        "convoy.pane_host",
+        "--root",
+        str(Path(root).resolve()),
+        "--seat",
+        sid,
+    ]
+
+
+def active_pane_argv(
+    seat: dict[str, Any],
+    capability: dict[str, Any],
+    *,
+    root: Path | None = None,
+) -> list[str]:
     """Build one terminal split command containing one harness invocation."""
     if not capability.get("can_split"):
         raise ValueError(str(capability.get("reason") or "terminal cannot split"))
     worktree = str(seat.get("worktree") or "").strip()
     if not worktree:
         raise ValueError("refuse targeted launch without a worktree")
-    inner = resume_argv(seat)
-    if not inner or not _is_abs_exe(str(inner[0])):
+    harness_argv = pane_child_argv(seat)
+    if not harness_argv or not _is_abs_exe(str(harness_argv[0])):
         raise ValueError("refuse targeted launch without an absolute harness executable")
+    inner = managed_host_argv(root, seat) if root is not None else harness_argv
 
     terminal = str(capability.get("executable") or "").strip()
     if not terminal:
@@ -147,6 +180,32 @@ def _seat_for_launch(root: Path, session_id: str) -> dict[str, Any]:
     raise ValueError("unknown seat: " + sid)
 
 
+def grok_project_trusted(seat: dict[str, Any]) -> bool:
+    """Ask Grok's read-only inspect command; never infer or edit its trust store."""
+    if _harness_bin(str(seat.get("to") or "")) != "grok":
+        return True
+    worktree = str(seat.get("worktree") or "").strip()
+    executable = pane_child_argv({**seat, "trust_worktree": False})[0]
+    try:
+        result = subprocess.run(
+            [executable, "inspect"],
+            cwd=worktree,
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise ValueError("Grok trust preflight failed: " + str(exc)) from exc
+    combined = (result.stdout or "") + "\n" + (result.stderr or "")
+    lowered = combined.lower()
+    if "project trusted: yes" in lowered:
+        return True
+    if "project trusted: no" in lowered:
+        return False
+    raise ValueError("Grok trust preflight returned no project trust state")
+
+
 def _claim_path(root: Path, session_id: str) -> Path:
     digest = hashlib.sha256(session_id.encode("utf-8")).hexdigest()
     return Path(root) / ".convoy" / "launch-claims" / (digest + ".json")
@@ -175,6 +234,8 @@ def launch_seat(
     env: Mapping[str, str] | None = None,
     which: Which = shutil.which,
     platform_name: str | None = None,
+    consent: str | None = None,
+    trust_probe: Callable[[dict[str, Any]], bool] = grok_project_trusted,
 ) -> dict[str, Any]:
     """Plan or launch one fresh join/swap chair.
 
@@ -192,6 +253,25 @@ def launch_seat(
             raise ValueError("refuse targeted launch without a worktree")
         if not Path(worktree).is_dir():
             raise ValueError("refuse missing worktree: " + worktree)
+        if not trust_probe(row) and not row.get("trust_worktree"):
+            if not consent:
+                waiting = request_consent(
+                    root,
+                    "trust-worktree",
+                    session_id=session_id,
+                    to=str(row.get("to") or ""),
+                    worktree=worktree,
+                )
+                return {"session_id": session_id, **waiting}
+            consume_consent(
+                root,
+                consent,
+                "trust-worktree",
+                session_id=session_id,
+                to=str(row.get("to") or ""),
+                worktree=worktree,
+            )
+            row = update_seat(root, session_id, trust_worktree=True)
         capability = terminal_capability(env=env, which=which, platform_name=platform_name)
         if not capability.get("can_split"):
             raise ValueError(
@@ -205,7 +285,8 @@ def launch_seat(
             if first_run.get("ok") is False:
                 raise ValueError(str(first_run.get("error") or "first-run preparation failed"))
             effective = _seat_with_agent(root, row, first_run)
-        argv = active_pane_argv(effective, capability)
+        harness_argv = pane_child_argv(effective)
+        argv = active_pane_argv(effective, capability, root=root)
         card: dict[str, Any] = {
             "ok": True,
             "session_id": session_id,
@@ -217,6 +298,7 @@ def launch_seat(
             "can_close_exact": bool(capability.get("can_close_exact")),
             "close_reason": capability.get("close_reason"),
             "argv": argv,
+            "harness_argv": harness_argv,
             "dry_run": runner is None,
         }
         if runner is None:
