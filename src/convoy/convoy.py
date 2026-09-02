@@ -93,6 +93,7 @@ def seat(
     resume: str | None = None,
     title: str | None = None,
     agent: str | None = None,
+    effort: str | None = None,
 ) -> dict[str, Any]:
     if not session_id:
         raise ValueError("refuse empty session_id")
@@ -109,6 +110,9 @@ def seat(
         "session_id": session_id,
         "worktree": wt,
         "model": model,
+        # Effort is the seat's declared level, real-or-null (chip front matter).
+        # Convoy stores it; it never sets vendor effort flags.
+        "effort": effort.strip() if isinstance(effort, str) and effort.strip() else None,
         "resume": resume_val,
         "title": title_val,
         "agent": agent_val,
