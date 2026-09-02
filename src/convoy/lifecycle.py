@@ -35,9 +35,13 @@ def _boot_prompt(root: Path, session_id: str, token: str, handoff: str) -> str:
     # The seated-ack delivery mechanism (opus-2): an initial positional prompt
     # — NOT -p print mode; the session stays interactive. One line: read, ack,
     # continue. bring_up never packs, so the handoff pointer rides here.
+    thread_path = Path(root) / "thread.md"
+    handoff_path = Path(handoff)
+    if not handoff_path.is_absolute():
+        handoff_path = Path(root) / handoff_path
     return (
         "You are the new occupant of Convoy seat '" + session_id + "'. "
-        "Read thread.md and " + handoff + ". Then run: "
+        "Read " + str(thread_path) + " and " + str(handoff_path) + ". Then run: "
         "python -m convoy --root " + str(root) + " seated --seat " + session_id +
         " --token " + token + " — then continue the seat's work."
     )
@@ -55,6 +59,8 @@ def join(
 ) -> dict[str, Any]:
     """Add a new chair: seat + boot prompt + kind=join row (token minted)."""
     sid = (session_id or "").strip() or ((title or to) + "-" + (read_thread(root) or "thread"))
+    if any(row.get("session_id") == sid for row in list_seats(root)):
+        raise ValueError("refuse join: chair already exists: " + sid)
     token = _mint_token()
     write_seat(root, to, sid, worktree=worktree, model=model, title=title, effort=effort)
     seat_row = update_seat(root, sid, boot_prompt=_boot_prompt(root, sid, token, "thread.md"))
