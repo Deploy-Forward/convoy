@@ -163,7 +163,7 @@ class Phase7FirstRun(unittest.TestCase):
 
     def test_ensure_first_run_writes_trust_for_both_windows_slash_spellings(self):
         wt = Path(tempfile.mkdtemp())
-        variants = [r"C:\Users\marco\ola\da-integration", "C:/Users/marco/ola/da-integration"]
+        variants = [r"C:\Users\dev\ola\da-integration", "C:/Users/dev/ola/da-integration"]
         with mock.patch("convoy.bringup._project_path_variants", return_value=variants):
             card = ensure_first_run({"to": "claude", "worktree": str(wt)})
         self.assertTrue(card.get("ok"))

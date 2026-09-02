@@ -52,7 +52,7 @@ class Phase1ThreadedContext(unittest.TestCase):
         raw = "grok-session-phase1thread: Marco, load the brief\nPHASE1_T1"
         self.assertEqual(parse_session_id(raw), "grok-session-phase1thread")
         self.assertEqual(parse_session_id('{"instance_id":"grok-session-json"}'), "grok-session-json")
-        self.assertIsNone(parse_session_id("01a048ee-3072-7011-b996-6ae068bbed4d"))
+        self.assertIsNone(parse_session_id("00000000-0000-4000-8000-000000000002"))
         self.assertIsNone(parse_session_id("error: not a session"))
 
     def test_parse_agents_jsonl_fallback(self):

@@ -1,7 +1,7 @@
 # OPUS-1 adversarial stress: SPEC.md DoD truth vs this tree
 
 **Auditor:** opus-1-fable-opus (neuron on thread `fable-opus`)
-**Worktree:** `C:\Users\marco\ola\convoy-wt-opus` · **branch:** `fable-opus-opus` · **HEAD:** `b29c79b`
+**Worktree:** `C:\Users\dev\ola\convoy-wt-opus` · **branch:** `fable-opus-opus` · **HEAD:** `b29c79b`
 **Run date:** 2026-09-01 (UTC stamps below are verbatim from artifacts)
 **Scope:** CODE + SPEC DoD truth only. MCP live-surface audit is opus-2's scope; conductor/orchestration is Fable's.
 **Rule applied:** GREEN only with passing code/tests I ran, or a timestamped artifact I read. Everything else RED or `null`. No fixes, no branches, no SPEC edits were made.
@@ -22,8 +22,8 @@ The **locked native-send / structured-talk DoD block is honest** — it says RED
 | Tree inventory | `ls src/convoy`, `find . -name "*.ps1"` | 17 modules + `harness_skills`; **zero `.ps1` files** |
 | Runner wiring | `cli.py:249`, `mcp_http.py:346`, `synapse.py:119` | live ⇒ `native_runner` on both paths |
 | No-steal gate | `cli.py:250`, `mcp_http.py:356`, `synapse.py:283` | `allow_interactive_resume = not live` at both callers |
-| Live layer (customer 1) | read-only `C:\Users\marco\ola\da-integration\.convoy\{feed,seats,registry}.jsonl`, `id` | 30 feed rows, 2026-08-28 → 2026-09-01 |
-| This thread's layer | `C:\Users\marco\ola\fable-opus-root\.convoy\feed.jsonl` | my own ack row `2026-09-01T16:27:34.919938Z` |
+| Live layer (customer 1) | read-only `C:\Users\dev\ola\da-integration\.convoy\{feed,seats,registry}.jsonl`, `id` | 30 feed rows, 2026-08-28 → 2026-09-01 |
+| This thread's layer | `C:\Users\dev\ola\fable-opus-root\.convoy\feed.jsonl` | my own ack row `2026-09-01T16:27:34.919938Z` |
 | Code timeline | `git log -S` on `synapse.py` | `native_runner` = `acba4e3` **2026-08-30** (#4); `no-steal-live-resume` = `273a345` **2026-08-31** (#12) |
 
 ## RED list
