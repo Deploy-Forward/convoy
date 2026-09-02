@@ -14,6 +14,7 @@ from .context import pack
 from .convoy import attach, bind, ensure_id, list_seats, read_id, read_lead, seat, set_lead, CONDUCTOR
 from .glance import build_glance, run_tray
 from .graph import build_graph, neighborhood
+from .graph_html import render_html, resume_neuron
 from .layer import SCHEMA_VERSION, conductor_stamp, feed_since, hook
 from .lifecycle import join, pass_lead, seated_ack, swap
 from .pane_host import close_managed_pane
@@ -109,6 +110,13 @@ def main(argv: list[str] | None = None) -> int:
 
     gr = sub.add_parser("graph", help="read-only ontology of the thread: chairs, occupants, talk, resume availability (never tokens)")
     gr.add_argument("--neuron", help="one chair's neighborhood: its connected parties + the thread pointer to resume from")
+    gr.add_argument("--html", action="store_true", help="render the graph as a self-contained local page (thread side panel + per-chair resume command; no tokens)")
+    gr.add_argument("--out", help="file to write with --html (default .convoy/graph.html under the root)")
+    gr.add_argument("--also-root", action="append", default=[], help="another root whose thread the page should also show")
+
+    rs = sub.add_parser("resume", help="resume one neuron at its most recent place: native argv + cwd (dry) or --go to spawn once")
+    rs.add_argument("--neuron", required=True, help="chair session_id")
+    rs.add_argument("--go", action="store_true", help="spawn in the chair's worktree, inheriting this terminal; refuses when a live body holds the chair")
 
     sl = sub.add_parser("seats")
     sl.add_argument("--convoy-id")
@@ -280,6 +288,14 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(list_seats(root, convoy_id=args.convoy_id)))
         return 0
     if args.cmd == "graph":
+        if args.html:
+            roots = [root] + [Path(r) for r in args.also_root]
+            threads = [{"root": str(r), "graph": build_graph(r)} for r in roots]
+            out = Path(args.out) if args.out else (root / ".convoy" / "graph.html")
+            out.parent.mkdir(parents=True, exist_ok=True)
+            out.write_text(render_html(threads), encoding="utf-8")
+            print(json.dumps({"ok": True, "path": str(out), "threads": len(threads)}))
+            return 0
         try:
             card = neighborhood(root, args.neuron) if args.neuron else build_graph(root)
         except ValueError as e:
@@ -287,6 +303,14 @@ def main(argv: list[str] | None = None) -> int:
             return 1
         print(json.dumps(card))
         return 0
+    if args.cmd == "resume":
+        try:
+            card = resume_neuron(root, args.neuron, go=args.go)
+        except ValueError as e:
+            print(json.dumps({"ok": False, "error": str(e)}))
+            return 1
+        print(json.dumps(card))
+        return 0 if card.get("ok") else 1
     if args.cmd == "attach":
         card = attach(root, convoy_id=args.convoy_id)
         print(json.dumps(card))
