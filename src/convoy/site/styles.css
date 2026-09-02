@@ -320,7 +320,7 @@ a {
 }
 
 .lede code,
-.how-copy code,
+.harness-copy code,
 .wire-live-meta code,
 .wire-live-list code,
 .honesty-line code,
@@ -384,19 +384,71 @@ a {
   padding-bottom: 1rem;
 }
 
+.how-shell {
+  justify-content: flex-start;
+  align-items: stretch;
+  padding-top: clamp(1.3rem, 4vw, 2rem);
+  padding-bottom: clamp(1.3rem, 4vw, 2rem);
+}
+
+.how-title {
+  margin: 0;
+  max-width: 16ch;
+  color: var(--ink);
+  font: 700 clamp(2rem, 9.5vw, 4.7rem) / 0.95 var(--sans);
+  letter-spacing: -0.03em;
+}
+
+.how-lede {
+  margin: 0.82rem 0 0;
+  max-width: 56ch;
+  color: var(--gray-600);
+  font-size: clamp(0.98rem, 2.8vw, 1.24rem);
+}
+
+.harness-board {
+  margin-top: clamp(0.9rem, 3vw, 1.5rem);
+  border: 1px solid var(--line);
+  display: grid;
+  grid-template-columns: 1fr;
+  background: rgba(255, 255, 255, 0.66);
+}
+
+.harness-cell {
+  min-height: clamp(250px, 56vw, 340px);
+  padding: clamp(1rem, 4vw, 1.7rem);
+  display: flex;
+  flex-direction: column;
+}
+
+.harness-cell + .harness-cell {
+  border-top: 1px solid var(--line);
+}
+
+.harness-step {
+  margin: 0;
+  color: var(--gray-500);
+  font-size: 0.66rem;
+  letter-spacing: 0.11em;
+}
+
+.harness-word {
+  margin: auto 0 0;
+  color: var(--ink);
+  font: 700 clamp(2rem, 12vw, 3.4rem) / 0.92 var(--sans);
+  letter-spacing: -0.03em;
+}
+
+.harness-copy {
+  margin: auto 0 0;
+  max-width: 30ch;
+  color: var(--gray-700);
+  font-size: 0.97rem;
+}
+
 h2 {
   margin: 0 0 0.85rem;
   font: 700 clamp(1.1rem, 5vw, 1.45rem) / 1.1 var(--mono);
-}
-
-.how-copy {
-  margin: 0;
-  max-width: 72ch;
-  color: var(--gray-700);
-}
-
-.how-copy + .how-copy {
-  margin-top: 0.64rem;
 }
 
 .wire-live {
@@ -622,6 +674,28 @@ html.js body.reveal-ready [data-reveal].is-inview {
     width: 120px;
     height: 120px;
     border-color: rgba(29, 78, 216, 0.15);
+  }
+
+  .how-title {
+    max-width: 14ch;
+  }
+
+  .harness-board {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .harness-cell {
+    min-height: 360px;
+    padding: 1.5rem 1.45rem 1.32rem;
+  }
+
+  .harness-cell + .harness-cell {
+    border-top: 0;
+    border-left: 1px solid var(--line);
+  }
+
+  .harness-word {
+    font-size: clamp(2.5rem, 3.8vw, 4rem);
   }
 }
 

@@ -79,11 +79,26 @@
     </section>
 
     <section id="how" class="beat ruled-block how-beat">
-      <div class="shell section">
-        <h2 data-reveal>How it works</h2>
-        <p class="how-copy" data-reveal>Attach one MCP root at <code>https://convoy.bot/mcp</code>. A named thread is a <code>--root</code> binding, not a second MCP URL.</p>
-        <p class="how-copy" data-reveal>Bring your own harnesses. Convoy reports PATH truth on the process-bound root and does not invent a roster.</p>
-        <p class="how-copy" data-reveal>One process, one bound thread. Pointers in, compact cards back.</p>
+      <div class="shell section how-shell">
+        <h2 class="how-title" data-reveal>From attach to a bound thread, in three short steps.</h2>
+        <p class="how-lede" data-reveal>No deployment theatre. One MCP, your harnesses, one process.</p>
+        <section class="harness-board" data-reveal aria-label="Attach, harness, and bound thread mechanics">
+          <article class="harness-cell">
+            <p class="harness-step mono">01</p>
+            <h3 class="harness-word">Attach</h3>
+            <p class="harness-copy">One MCP root at <code>https://convoy.bot/mcp</code>. A named thread is a <code>--root</code> binding, not a second MCP URL.</p>
+          </article>
+          <article class="harness-cell">
+            <p class="harness-step mono">02</p>
+            <h3 class="harness-word">Harness</h3>
+            <p class="harness-copy">Bring your own. Convoy reports PATH truth on the bound process and does not invent a roster.</p>
+          </article>
+          <article class="harness-cell">
+            <p class="harness-step mono">03</p>
+            <h3 class="harness-word">Bound</h3>
+            <p class="harness-copy">One process, one thread. Pointers in, compact cards back. Skills call the MCP; they do not invent tools.</p>
+          </article>
+        </section>
         <section class="wire-live" data-reveal aria-labelledby="wire-live-heading">
           <h3 class="mono wire-live-heading" id="wire-live-heading">Live verbs on the wire</h3>
           <p class="wire-live-meta">Rendered from <code>tools/list</code> on <code>/mcp</code>. If it is not on the wire, it does not exist.</p>
