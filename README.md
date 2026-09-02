@@ -32,18 +32,11 @@ Machine-readable contract: `src/convoy/harness_effort.json` (loaded by MCP-facin
 
 ### Keyed effort language (locked)
 
-Effort keys are harness-scoped and must not be merged:
-
-- **Codex**: `low`, `medium`, `high`, `extra-high`, `more-reasoning`  
-  - Product key `extra-high` maps to vendor `xhigh`.  
-  - TUI lock (gpt-5.6-sol): `low` (fast/lighter), `medium` (default balance), `high` (deeper), `extra-high` (xhigh), `more-reasoning` (Max/Ultra path).  
-  - Inspected upstream Codex docs expose `model_reasoning_effort` and `-c/--config`; this repo run could not execute `codex --help` (binary not present).  
-  - Max/Ultra are treated as `more-reasoning` (TUI path), with no Convoy-specific CLI key documented here.
-- **Claude**: `low`, `medium`, `high`, `xhigh`, `max` (`--effort` per Claude CLI docs).
-- **Grok**: `low`, `medium`, `high`, `xhigh` via `--reasoning-effort` (alias `--effort`; live `--help` 2026-09-01).
-- **agy**: `low`, `medium`, `high` via `--effort` (live `--help` 2026-09-01).
-- **cursor-agent**: no verified effort CLI; keep unknown as `null`.
-- **Hermes / Pi**: harnesses are model-agnostic; effort belongs to the model they drive, so harness-level effort stays `null`.
+Effort keys are harness-scoped and must not be merged. The locked key space
+lives in **CANON.md** ("Effort keys are harness-scoped") and the
+machine-readable source of truth is `src/convoy/harness_effort.json` — this
+README deliberately does not restate the table, so there is exactly one place
+for it to drift from the code: none.
 
 ### Fully supported neurons (code-true contract)
 

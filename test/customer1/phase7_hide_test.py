@@ -179,12 +179,12 @@ class Phase7Hide(unittest.TestCase):
         with self.assertRaises(ValueError):
             _live_argv(["ola-brain", "side-chat", "send", "claude", "hi"])
         with self.assertRaises(ValueError):
-            _live_argv(["claude", "-d", r"C:\Users\marco\ola\ola-brain", "--", abs_claude, "--resume", "sess-claude"])
+            _live_argv(["claude", "-d", r"C:\Users\dev\ola\ola-brain", "--", abs_claude, "--resume", "sess-claude"])
         with self.assertRaises(ValueError):
             _live_argv(["wt", "-d", r"C:\tmp", "--", abs_claude, "--resume", "sess-claude"])
         with self.assertRaises(ValueError):
             _live_argv(["claude", "--resume", "sess-claude"])
-        out = _live_argv([wt, "--window", "new", "nt", "--title", "claude-0", "-d", r"C:\Users\marco\ola\ola-brain", abs_claude, "--resume", "sess-claude"])
+        out = _live_argv([wt, "--window", "new", "nt", "--title", "claude-0", "-d", r"C:\Users\dev\ola\ola-brain", abs_claude, "--resume", "sess-claude"])
         self.assertEqual(out[0], wt)
         self.assertEqual(out[1:4], ["--window", "new", "nt"])
         self.assertNotIn("--", out)
