@@ -112,6 +112,20 @@ class SynapseAuthorNotRecipient(unittest.TestCase):
         row = hook(self.root, "note", "authored", instance_id="fable-fable-opus")
         self.assertEqual(row["from"], "fable-fable-opus")
 
+    def test_send_to_conductor_alias_named_subject_still_stamps(self):
+        # The authorship refusal must not apply to the row SUBJECT: a send
+        # targeting a seat unluckily named like the conductor must complete
+        # and stamp — never raise post-runner leaving a hop with zero rows.
+        from convoy.registry import register
+
+        register(self.root, "Grok-Bot", "claude")
+        card = send_one(self.root, "claude", "ping", instance_id="Grok-Bot")
+        self.assertTrue(card["ok"])
+        row = self._last_row()
+        self.assertEqual(row["kind"], "synapse")
+        self.assertEqual(row["instance_id"], "Grok-Bot")
+        self.assertNotIn("from", row)
+
 
 class NeuronNoteAndMcpTool(unittest.TestCase):
     """MCP `note`: the neuron-side write, symmetric to `stamp` but with an
@@ -307,7 +321,11 @@ class ServerBuildId(unittest.TestCase):
             ["git", "-C", str(pkg_dir), "describe", "--always", "--dirty"],
             capture_output=True, text=True,
         ).stdout.strip()
-        self.assertTrue(build, "test requires a git checkout")
+        if not build:
+            # A packaged/exported tree (git archive) has no .git — exactly the
+            # deploy shape where the build stamp is legitimately absent (N-4).
+            # Skip keeps the suite signal honest there instead of a false RED.
+            self.skipTest("no git checkout: build stamp legitimately absent")
         resp = handle_rpc(Path(tempfile.mkdtemp()), {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}})
         version = resp["result"]["serverInfo"]["version"]
         self.assertEqual(version, "0.1.0+" + build)

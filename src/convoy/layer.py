@@ -53,7 +53,12 @@ def hook(root: Path, kind: str, summary: str, instance_id: str | None = None, ex
     # instead of promoting the recipient to author (OPUS-2 verified defect).
     if author is _AUTHOR_IS_INSTANCE:
         author = instance_id
-    if _is_conductor_alias(instance_id) or _is_conductor_alias(author):
+    # The refusal is an AUTHORSHIP rule: it tests author only. instance_id is
+    # the row's subject and may legitimately name any seat — refusing it here
+    # would raise post-runner on synapse rows, discarding the card and leaving
+    # a hop with zero feed rows (opus-1/opus-2 pre-merge finding). Constraining
+    # subject names belongs at seat/register write time, where nothing has run.
+    if _is_conductor_alias(author):
         raise ValueError("refuse grok-bot as author; conductor identity is stamp-only")
     event = {"ts": utc_now(), "kind": kind, "instance_id": instance_id, "summary": summary}
     if author:
