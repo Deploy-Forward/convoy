@@ -111,14 +111,60 @@
     <section class="beat ruled-block neurons-beat">
       <div class="shell section neurons-shell">
         <h2 data-reveal>BYO neurons</h2>
-        <p class="neuron-line" data-reveal>Convoy does not ship wrapper identities. Harness availability is process-bound and wire-reported from the attached MCP root.</p>
+        <article class="neurons-plate" data-reveal aria-label="BYO neurons wire truth">
+          <p class="neurons-kicker mono">Attached MCP root truth</p>
+          <p class="neuron-line">Convoy does not ship wrapper identities.</p>
+          <p class="neuron-line">Harness availability is process-bound and wire-reported from the attached MCP root.</p>
+        </article>
       </div>
     </section>
 
     <section class="beat ruled-block honesty-beat">
       <div class="shell section honesty-shell">
         <h2 data-reveal>Honesty</h2>
-        <p class="honesty-line" data-reveal>One process, one bound thread. Unknown values are JSON <code>null</code>. BYO harness, no wraps. Public process tools can lag in-tree additions.</p>
+        <section class="honesty-carousel" data-reveal aria-label="Honesty" role="region" aria-roledescription="carousel">
+          <div class="honesty-controls">
+            <button class="honesty-nav" id="honesty-prev" type="button" aria-label="Previous slide">Prev</button>
+            <p class="honesty-live mono" id="honesty-live" aria-live="polite" aria-atomic="true"></p>
+            <button class="honesty-nav" id="honesty-next" type="button" aria-label="Next slide">Next</button>
+          </div>
+          <div class="honesty-scroller" id="honesty-scroller" tabindex="0" aria-label="Honesty slides">
+            <article class="honesty-slide" data-word="Bound" id="honesty-slide-1">
+              <div class="honesty-slide-inner">
+                <p class="honesty-step mono">01</p>
+                <h3 class="honesty-word">Bound</h3>
+                <p class="honesty-line">One process, one bound thread.</p>
+              </div>
+            </article>
+            <article class="honesty-slide" data-word="Null" id="honesty-slide-2">
+              <div class="honesty-slide-inner">
+                <p class="honesty-step mono">02</p>
+                <h3 class="honesty-word">Null</h3>
+                <p class="honesty-line">Unknown values are JSON <code>null</code>.</p>
+              </div>
+            </article>
+            <article class="honesty-slide" data-word="BYO" id="honesty-slide-3">
+              <div class="honesty-slide-inner">
+                <p class="honesty-step mono">03</p>
+                <h3 class="honesty-word">BYO</h3>
+                <p class="honesty-line">BYO harness, no wraps.</p>
+              </div>
+            </article>
+            <article class="honesty-slide" data-word="Lag" id="honesty-slide-4">
+              <div class="honesty-slide-inner">
+                <p class="honesty-step mono">04</p>
+                <h3 class="honesty-word">Lag</h3>
+                <p class="honesty-line">Public process tools can lag in-tree additions.</p>
+              </div>
+            </article>
+          </div>
+          <div class="honesty-dots" aria-label="Choose honesty slide">
+            <button class="honesty-dot" type="button" aria-label="Go to slide 1, Bound" data-slide="0"></button>
+            <button class="honesty-dot" type="button" aria-label="Go to slide 2, Null" data-slide="1"></button>
+            <button class="honesty-dot" type="button" aria-label="Go to slide 3, BYO" data-slide="2"></button>
+            <button class="honesty-dot" type="button" aria-label="Go to slide 4, Lag" data-slide="3"></button>
+          </div>
+        </section>
         <footer class="footer" data-reveal>
           <a class="mono footer-house" href="https://deployforward.dev">Deploy Forward</a>
           <a href="https://github.com/Deploy-Forward/convoy">GitHub</a>

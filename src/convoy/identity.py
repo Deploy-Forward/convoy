@@ -1,6 +1,8 @@
 """Install harness self-identity skills into a neuron worktree.
 
-Canonical text lives in convoy/harness_skills/neuron-identity/SKILL.md.
+Canonical text lives at skills/neuron-identity/SKILL.md (repo top level);
+convoy/harness_skills/neuron-identity/SKILL.md is the packaged mirror this
+module resolves at runtime — a byte-equality test keeps the two identical.
 Copies land where grok and claude actually load skills. AGENTS.md gets a
 short pointer block so Codex (and grok project rules) see the same contract.
 Never writes ~/.grok or ~/.claude user-global skills. Never ola-brain.
