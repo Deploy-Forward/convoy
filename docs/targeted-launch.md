@@ -6,6 +6,8 @@
 convoy choices
 convoy join --to <harness> --worktree <path> --launch
 convoy launch --seat <fresh-chair> [--dry-run]
+convoy consent --grant <request-id>
+convoy close --seat <chair> [--consent <one-time-value>]
 ```
 
 `choices` is the memory-free discovery surface. It lists safe chair projections,
@@ -33,12 +35,12 @@ macOS and Linux are supported when the caller is inside tmux. Terminal.app,
 iTerm2, WezTerm, kitty, and other hosts require explicit future adapters; a
 model must not infer or simulate them.
 
-## Chair and readiness state
+## Chair, consent, and readiness state
 
 ```text
-joined -> launch-claimed -> process-started -> vendor-gate? -> seated
-                                      |                         |
-                                      +-> launch-failed         +-> exited
+joined -> consent-needed? -> launch-claimed -> pane-host -> process-started
+              |                                              |
+              +-> explicit grant -> launch                   +-> vendor-gate? -> seated
 ```
 
 - A chair is launchable only while it has a one-shot join/swap boot prompt and
@@ -52,6 +54,12 @@ joined -> launch-claimed -> process-started -> vendor-gate? -> seated
   boot prompt immediately, while Grok required explicit project trust first.
   Convoy must never accept that decision for the user.
 
+Consent is a separate turn: Convoy creates an expiring request containing the
+exact action/chair/harness/resolved worktree and returns its warning. The skill
+must show it and stop. Only a later explicit user approval authorizes
+`consent --grant`; the resulting value is hashed at rest, scoped, atomically
+consumed, and cannot be reused.
+
 ## Close is a separate definition of done
 
 Process exit and pane exit are different facts. Windows Terminal may keep a
@@ -61,8 +69,12 @@ restart`. Therefore:
 - absent PIDs are insufficient close evidence;
 - a chair can be `process_state=exited` while
   `pane_state=stale-awaiting-user-close`;
-- Windows Terminal close remains manual until Convoy has an exact control
-  protocol or a lifecycle host that can end the pane command successfully;
+- New targeted launches run a Convoy lifecycle host as the pane command. It
+  starts one native harness with inherited TUI handles and never reads its
+  bytes. After scoped `close-chair` consent, the host terminates only its owned
+  child tree and returns zero so a graceful Windows Terminal profile can remove
+  the pane;
+- legacy panes launched before the lifecycle host remain manual-close only;
 - tmux close becomes implementable only after launch captures and stores the
   new pane id (`split-window -P -F '#{pane_id}'`).
 

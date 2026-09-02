@@ -85,6 +85,17 @@ must press `Ctrl+D` in that exact pane. Windows Terminal's CLI exposes
 inject a keystroke into an ambiguously targeted TUI. Future close DoD must
 require visual/pane-topology evidence, not only absent PIDs.
 
+### Managed-host follow-up
+
+A second Codex run used `managed-close-proof-fable-opus` and the same one-chair
+dispatch. Its host recorded the exact child ownership, accepted a separate
+`close-chair` consent receipt, terminated only that child tree, and exited
+normally. The host/child PIDs were both absent afterward while caller PID
+`14556` remained alive. This is **GREEN for owned process teardown** and proves
+the lifecycle host closes its side of the contract; it is not, by itself,
+visual proof that Windows Terminal removed the pane. The old direct pane
+remains a separately tracked **manual-close-required** failure.
+
 ## Cross-harness replication
 
 Grok reached a useful intermediate state:
