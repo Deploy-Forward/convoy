@@ -34,11 +34,11 @@ class Phase7Hide(unittest.TestCase):
         (self.root / ".ola" / "brief.md").write_text("SECRET_BRIEF")
         self.wt_g = Path(tempfile.mkdtemp())
         self.wt_c = Path(tempfile.mkdtemp())
-        self.thread = "customer1"
+        self.thread = "demo"
         self.cid = ensure_id(self.root)
         bind(self.root, self.thread)
         self.g = seat(self.root, "grok", "sess-grok", worktree=str(self.wt_g), model="explicit-grok", resume="sess-grok")
-        self.c = seat(self.root, "claude", "sess-claude", worktree=str(self.wt_c), model="Fable 5", resume="sess-claude")
+        self.c = seat(self.root, "claude", "sess-claude", worktree=str(self.wt_c), model="claude-fable-5", resume="sess-claude")
 
     def test_hide_mock_applier_records_minimize_no_mint(self):
         recorded = []
@@ -179,12 +179,12 @@ class Phase7Hide(unittest.TestCase):
         with self.assertRaises(ValueError):
             _live_argv(["ola-brain", "side-chat", "send", "claude", "hi"])
         with self.assertRaises(ValueError):
-            _live_argv(["claude", "-d", r"C:\Users\dev\ola\ola-brain", "--", abs_claude, "--resume", "sess-claude"])
+            _live_argv(["claude", "-d", r"C:\Users\demo\workspace\ola-brain", "--", abs_claude, "--resume", "sess-claude"])
         with self.assertRaises(ValueError):
             _live_argv(["wt", "-d", r"C:\tmp", "--", abs_claude, "--resume", "sess-claude"])
         with self.assertRaises(ValueError):
             _live_argv(["claude", "--resume", "sess-claude"])
-        out = _live_argv([wt, "--window", "new", "nt", "--title", "claude-0", "-d", r"C:\Users\dev\ola\ola-brain", abs_claude, "--resume", "sess-claude"])
+        out = _live_argv([wt, "--window", "new", "nt", "--title", "claude-0", "-d", r"C:\Users\demo\workspace\ola-brain", abs_claude, "--resume", "sess-claude"])
         self.assertEqual(out[0], wt)
         self.assertEqual(out[1:4], ["--window", "new", "nt"])
         self.assertNotIn("--", out)

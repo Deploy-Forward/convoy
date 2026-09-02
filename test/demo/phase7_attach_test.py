@@ -324,7 +324,7 @@ class Phase7Attach(unittest.TestCase):
     def test_attach_seats_surface_usage(self):
         _run(self.root, "init")
         seat(self.root, "grok", "sess-grok", worktree=str(self.wt_g), model="explicit-grok")
-        seat(self.root, "claude", "sess-claude", worktree=str(self.wt_c), model="Fable 5")
+        seat(self.root, "claude", "sess-claude", worktree=str(self.wt_c), model="claude-fable-5")
         def stub(to):
             if to == "grok":
                 return {"usage_remaining": None, "limited": False, "raw": None}
