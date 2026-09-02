@@ -266,7 +266,18 @@ def is_conductor(to: Any) -> bool:
 
 
 def resume_target(seat: dict[str, Any]) -> str | None:
-    """Vendor id passed to --resume/resume subcommand. Never invent."""
+    """Vendor id passed to --resume/resume subcommand. Never invent.
+
+    Token-to-harness binding (opus-2 RED at baa6a55): a token is returned only
+    when the row's resume_for matches its current `to` — BOTH keys guarded, so
+    nulling `resume` on swap cannot leave a vendor_session_id shadow riding
+    another harness's argv. Rows without resume_for predate the field: their
+    whole-row write means the token was minted under the row's own `to`."""
+    rf = seat.get("resume_for")
+    if isinstance(rf, str) and rf.strip():
+        to = str(seat.get("to") or "").strip()
+        if rf.strip() != to:
+            return None
     for key in ("vendor_session_id", "resume"):
         val = seat.get(key)
         if isinstance(val, str) and val.strip():
@@ -311,6 +322,16 @@ def resume_argv(seat: dict[str, Any]) -> list[str]:
             argv.extend(["--conversation", sid])
         else:
             argv.extend(["--resume", sid])
+    # Blessed exception (seat-lifecycle, ratified 2026-09-02): join/swap set a
+    # one-shot boot_prompt delivered as an initial POSITIONAL prompt — every
+    # harness documents one; the session stays interactive (this is not -p).
+    # It is the seated-ack delivery mechanism; seated_ack clears the field.
+    bp = seat.get("boot_prompt")
+    if isinstance(bp, str) and bp.strip():
+        if _harness_bin(to) == "agy":
+            argv.extend(["--prompt", bp])
+        else:
+            argv.append(bp)
     return argv
 
 
