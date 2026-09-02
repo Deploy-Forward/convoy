@@ -5,8 +5,7 @@ description: Canonical /convoy slash sheet — renders the public Convoy MCP too
 
 # /convoy — the canonical sheet
 
-Slash maps 1:1 onto the public MCP tools. This sheet is rendered from live
-tools/list and must never hardcode a frozen catalog.
+Slash maps 1:1 onto the public MCP tools. This sheet is rendered from live tools/list and must never hardcode a frozen catalog.
 
 **The single most important fact:** the public MCP process is bound to
 **one root** (one thread). `feed` / `context` over the public URL answer for
