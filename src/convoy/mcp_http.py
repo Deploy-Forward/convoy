@@ -8,7 +8,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shutil
+import subprocess
 import sys
 from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -33,19 +35,65 @@ from .context import pack
 from .convoy import list_seats, read_thread
 from .glance import build_glance
 from .gitstate import git_state
-from .layer import SCHEMA_VERSION, conductor_stamp, feed_since
+from .layer import SCHEMA_VERSION, conductor_stamp, feed_since, neuron_note
 from .synapse import fake_runner, native_runner, send_one
 from .usage import normalize_usage_remaining, probe
 
 PROTOCOL_LATEST = "2025-03-26"
 PROTOCOL_SUPPORTED = frozenset({PROTOCOL_LATEST, "2024-11-05"})
 SERVER_NAME = "convoy"
-SERVER_VERSION = "0.1.0"
+_BASE_VERSION = "0.1.0"
+
+
+def _server_version(repo_dir: Path | None = None) -> str:
+    """Base version plus `git describe --always --dirty` when the package sits
+    in a git checkout, so deploy drift — including a patched-in-place deploy —
+    is detectable in one initialize call. Unknown stays the bare base version —
+    never an invented sha. SubprocessError is caught too: TimeoutExpired is NOT
+    an OSError, and a hung git must not stop the server from importing."""
+    try:
+        r = subprocess.run(
+            ["git", "-C", str(repo_dir or Path(__file__).resolve().parent), "describe", "--always", "--dirty"],
+            capture_output=True, text=True, timeout=10,
+        )
+        build = (r.stdout or "").strip()
+        if r.returncode == 0 and build:
+            return _BASE_VERSION + "+" + build
+    except (OSError, subprocess.SubprocessError):
+        pass
+    return _BASE_VERSION
+
+
+SERVER_VERSION = _server_version()
 HOME_LINE = "convoy.bot · a grok-bot native mcp · one process ↔ one bound thread"
 
 HARNESSES = tuple((row["id"], str(row.get("name") or row["id"])) for row in harness_entries(mcp_supported_only=True))
 
-_TOOL_NAMES = ("roster", "glance", "onboard", "terminals", "context", "send", "feed", "stamp", "bring_up", "open", "hide", "minimize", "background", "install")
+_TOOL_NAMES = ("roster", "glance", "onboard", "terminals", "context", "send", "feed", "stamp", "note", "bring_up", "open", "hide", "minimize", "background", "install")
+
+# N-5 gate: SoT write tools are never exposed on an ungated public process.
+# RPC-layer only — CLI and in-process call_tool stay usable; a gated/loopback
+# deploy opts in via CONVOY_MCP_WRITE_TOOLS=1.
+_WRITE_TOOLS = frozenset({"stamp", "note"})
+
+
+def _write_tools_enabled() -> bool:
+    return os.environ.get("CONVOY_MCP_WRITE_TOOLS", "").strip() == "1"
+
+_SITE_ASSETS: dict[str, tuple[str, str]] = {
+    "/": ("index.html", "text/html; charset=utf-8"),
+    "/styles.css": ("styles.css", "text/css; charset=utf-8"),
+    "/app.js": ("app.js", "text/javascript; charset=utf-8"),
+    "/favicon.svg": ("favicon.svg", "image/svg+xml; charset=utf-8"),
+    "/favicon.ico": ("favicon.ico", "image/x-icon"),
+    "/favicon-96.png": ("favicon-96.png", "image/png"),
+    "/apple-touch-icon.png": ("apple-touch-icon.png", "image/png"),
+    "/og.png": ("og.png", "image/png"),
+    "/fonts/work-sans-latin.woff2": ("fonts/work-sans-latin.woff2", "font/woff2"),
+    "/fonts/jetbrains-mono-latin.woff2": ("fonts/jetbrains-mono-latin.woff2", "font/woff2"),
+    "/fonts/OFL-work-sans.txt": ("fonts/OFL-work-sans.txt", "text/plain; charset=utf-8"),
+    "/fonts/OFL-jetbrains-mono.txt": ("fonts/OFL-jetbrains-mono.txt", "text/plain; charset=utf-8"),
+}
 
 _SITE_ASSETS: dict[str, tuple[str, str]] = {
     "/": ("index.html", "text/html; charset=utf-8"),
@@ -155,6 +203,18 @@ TOOLS: list[dict[str, Any]] = [
         ),
     },
     {
+        "name": "note",
+        "description": "Neuron note: ONE compact line into the thread feed (kind=note) with an attributed from — the writing seat's claimed instance_id (the bus does not authenticate authorship), never grok-bot or an alias of it (conductor lines are stamp). Optional to addresses one seat or grok-bot. Same one-line clamp as stamp; this is the hosted-neuron write path.",
+        "inputSchema": _schema(
+            {
+                "summary": {"type": "string", "description": "Compact one-line note"},
+                "instance_id": {"type": "string", "description": "The writing seat's instance_id (honest from; never grok-bot)"},
+                "to": {"type": "string", "description": "Optional addressee: a seat instance_id or grok-bot"},
+            },
+            required=["summary", "instance_id"],
+        ),
+    },
+    {
         "name": "bring_up",
         "description": "Resume seated neurons visibly. dry_run defaults true so a public URL cannot pop windows. Pass dry_run false to spawn.",
         "inputSchema": _schema({
@@ -207,7 +267,7 @@ TOOLS: list[dict[str, Any]] = [
         "description": "Opt-in vendor harness download. dry_run defaults true. Live needs opt_in true. Only x.ai, claude.ai, chatgpt.com, cursor.com, antigravity.google. Never a wrap. Some MCP-supported harnesses are BYO-only and may not have a cataloged installer. affiliate is always JSON null.",
         "inputSchema": _schema(
             {
-                "to": {"type": "string", "description": "grok, claude, codex, cursor-agent, agy/antigravity, hermes, or pi"},
+                "to": {"type": "string", "description": "grok, claude, codex, cursor-agent, or agy/antigravity. BYO-only harnesses without a vendor installer are refused here (onboard still accepts them when present)."},
                 "dry_run": {"type": "boolean", "default": True},
                 "opt_in": {"type": "boolean", "default": False},
             },
@@ -393,6 +453,17 @@ def call_tool(root: Path, name: str, arguments: dict[str, Any] | None) -> dict[s
         except ValueError as e:
             return {"ok": False, "error": str(e)}
         return {"ok": True, "schema_version": SCHEMA_VERSION, **row}
+    if name == "note":
+        try:
+            row = neuron_note(
+                root,
+                str(args.get("summary") or ""),
+                instance_id=_opt_str(args, "instance_id"),
+                to=_opt_str(args, "to"),
+            )
+        except ValueError as e:
+            return {"ok": False, "error": str(e)}
+        return {"ok": True, "schema_version": SCHEMA_VERSION, **row}
     if name in ("bring_up", "open"):
         dry = _opt_bool(args, "dry_run", True)
         runner = None if dry else live_runner
@@ -466,7 +537,8 @@ def handle_rpc(root: Path, msg: dict[str, Any]) -> dict[str, Any] | None:
         if method == "tools/list":
             if is_notification:
                 return None
-            return {"jsonrpc": "2.0", "id": rpc_id, "result": {"tools": TOOLS}}
+            listed = TOOLS if _write_tools_enabled() else [t for t in TOOLS if t["name"] not in _WRITE_TOOLS]
+            return {"jsonrpc": "2.0", "id": rpc_id, "result": {"tools": listed}}
         if method == "tools/call":
             if is_notification:
                 return None
@@ -479,6 +551,9 @@ def handle_rpc(root: Path, msg: dict[str, Any]) -> dict[str, Any] | None:
                     arguments = raw_args
             if name not in {t["name"] for t in TOOLS} and name != "open":
                 payload = {"ok": False, "error": "tool not found: " + name}
+                is_err = True
+            elif name in _WRITE_TOOLS and not _write_tools_enabled():
+                payload = {"ok": False, "error": "write tool disabled on this process: " + name + " (set CONVOY_MCP_WRITE_TOOLS=1 on a gated/loopback deploy)"}
                 is_err = True
             else:
                 payload = call_tool(root, name, arguments)

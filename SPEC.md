@@ -42,6 +42,22 @@ One MCP endpoint. What is versioned is the feed contract, not the URL — a name
   - `refuse` — the feed row now carries the full `ask` card (`action: bring_up`, `handoff: .ola/*handoff*`, text), so a sibling pulling `feed --since` sees the remedy without having been the caller.
 - Pack stays pointers. Unknown stays JSON `null`. Neurons pull the thread (`feed --since`); nothing in v2 mints a sibling session or steals a TUI.
 
+### Feed contract v2.1 (2026-09-01, additive — stress-test increment)
+
+Locked from the fable-opus stress findings (ORCH_SEND.md; OPUS1/OPUS2_STRESS.md). Additive only; v1/v2 rows keep flowing.
+
+- **Attributed author `from` + addressee `to` on rows.** `layer.hook` writes `from` = `instance_id` when given and optional `to` (a seat instance_id or `grok-bot`). `from` records the writing seat's **claimed** instance_id; the bus does not authenticate authorship (anything that can write the file or call the tool can claim any seat — authenticating writers is a future increment, not this one). `grok-bot` is a reserved addressee, never an author: `hook` refuses conductor aliases as `instance_id` (normalized — case/spacing/`_`/`-` variants like `Grok-Bot`, `grok_bot`, `grokbot` all refuse) — conductor identity is `stamp`-only (`conductor_stamp` still writes `from: "grok-bot"`). CLI: `hook ... --to X`.
+- **`to` disambiguation (pre-existing key, two meanings).** On `note`/`conductor` rows `to` is the addressee. On `synapse`/`refuse` rows `to` remains what it always was: the send-target harness name. Readers filtering "rows addressed to me" must filter on kind `note`/`conductor` first; a bare `row["to"]=="claude"` filter also matches every send to the claude harness.
+- **`note` — the neuron-side write, symmetric to `stamp`.** `layer.neuron_note` / MCP tool `note` (args `summary`, `instance_id` required, `to` optional): kind `note`, same one-line ≤500 clamp as stamp (`truncated: true` on clamp), refuses anonymous or conductor-alias authors. This is the hosted-neuron write path; local neurons may keep using CLI `hook note`.
+- **Runner provenance on synapse rows.** Every synapse row stamps `runner` (`"native"`/`"fake"`/`"ola"` by function identity via `synapse.runner_kind`, else the runner's name) and `argv0` (from the card's argv, JSON `null` when absent) — so the SoT can distinguish a native vendor send from a fake ACK. Rows without these fields predate v2.1 and are not evidence of a native send.
+- **Build id on the wire.** `initialize` `serverInfo.version` is `0.1.0+<git describe --always --dirty>` when the package sits in a git checkout (`-dirty` marks a patched-in-place deploy), bare `0.1.0` when unknown (never an invented sha). A hung/missing git degrades to the bare version — it must never stop the server (`OSError` and `SubprocessError` both caught). Scope honesty: one-call drift detection holds only for git-checkout deploys; the bare-`0.1.0` fallback is indistinguishable from a pre-v2.1 deploy.
+- **One process ↔ one bound root (R-05 resolution, option B).** The public MCP stays bound to exactly one root (customer 1: da-integration). Other threads are CLI/file on their own `--root`; an empty MCP `feed` for an unbound thread is the contract working, not a product fail. No root selector on the public URL (arbitrary-path read hole). Rebinding customer 1 to flip a test GREEN is refused.
+- **Public write-tool gate (N-5).** The RPC layer never exposes SoT write tools (`stamp`, `note`) on an ungated process: they are absent from `tools/list` and refused on `tools/call` unless `CONVOY_MCP_WRITE_TOOLS=1` is set (a gated/loopback deploy opts in). CLI and in-process `call_tool` are not gated. The public convoy.bot process stays read-only for the bus until a real writer gate (shared-secret/OAuth) exists; N-5 stays RED on the wire until then.
+- **Chip front matter (conductor render contract).** The chip a neuron message surfaces with (`harness / model / effort / session% / week% / convoy_id / vendor session id / worktree / summary`) renders from two existing reads, no jsonl archaeology: the `note` row carries `summary`/`from`/`to`; the glance by-thread seat card carries `to` (harness), `model`, `effort`, `resume` (vendor id), `worktree`, `session_pct` (from the headless `claude -p /usage` probe via `usage.surface`); `week%` comes from glance **Overall** (locked: never duplicated per-thread). `effort` is a declared seat field (`seat --effort`, real-or-null) — Convoy stores it and never sets vendor effort flags; unknown `effort`/`resume`/`model` are omitted from the card, never "unknown". No probe ⇒ usage stays null.
+- **`notify` stays JSON `null` per harness** until a documented injection point is proven live. Not a tool, not a promise.
+
+Unit: `test/customer1/feed_note_provenance_test.py` (15 tests, GREEN 2026-09-01, suite 199).
+
 ### Locked layer statement
 
 > Grok Bot is the opposite layer from Herdr and CNVS. This Grok Bot chat is the conductor. MCP is how the conductor attaches (`roster`, `onboard`, `send`, `feed`, `context`, `bring_up`/`open`, `terminals`; tree also has `install` and `hide`). Convoy is the SoT: one visible thread, one `cvy_id`, one tied repo, seats/neuron sessions that stay isolated. Default `send` is headless on purpose. `bring_up` is the terminal view, isolated n-pane, and only uses vendor resume ids. Same-branch overlap is refused. Pointers in, compact card out.
@@ -86,7 +102,7 @@ OSS/public vs closed/platform lock:
 
 - `src/convoy/mcp_http.py` `call_tool("send", ...)` sets `runner = native_runner if live else fake_runner`.
 - `src/convoy/synapse.py` `native_runner` executes vendor binaries on PATH; wrapper names are refused.
-- `src/convoy/synapse.py` refuses live resumed send (`session_id`/`resume`) to avoid spawning a second interactive `--resume` process (documented RED no-steal lock).
+- Live resumed send is refused at **both** send entry points: `cli.py` and `mcp_http.py` each pass `allow_interactive_resume=not live` into `synapse.send_one`, which refuses any `session_id` / `resume` on a live send rather than spawning a second interactive `--resume` process (documented RED no-steal lock). Refusal is enforced at both callers; 4 tests in `test/customer1/phase_mcp_http_test.py` cover it.
 - `src/convoy/mcp_http.py` `TOOLS` includes `onboard`, `hide`, and `install` (plus aliases), but a deployed process can still expose the 7-tool snapshot (`roster`, `send`, `feed`, `context`, `bring_up`, `open`, `terminals`).
 - `src/convoy/bringup.py` and `src/convoy/install.py` refuse wrapper names (`ola-brain`, `side-chat`, `UltraCode-Shim`) for those tool paths.
 
@@ -178,7 +194,7 @@ Transport: HTTP MCP at `https://convoy.bot/mcp` (or a user daemon reachable from
 
 2026-08-28 wire snapshot (customer 1): Shell on Aether-Deployed `machineId` `64a3fdd5-2c54-4038-8984-019382b68a78` running `C:\.grok\Invoke-AgentChannel.ps1` and `C:\.grok\ConvoyLayer.ps1` wrapping `ola-brain.exe`. MCP catalog had no Convoy plugin at that time. Status then: **RED** for HTTP MCP, **GREEN** for PC CLI hop.
 
-The copy of `ConvoyLayer.ps1` in this tree (`/workspace/convoy/ConvoyLayer.ps1`) is the same contract: `hook`, `feed-since`, `send-dry`. In this repo, default `python -m convoy send` uses a fake runner and `--live` uses native vendor binaries on PATH. Live resumed send is currently refused (RED no-steal lock) to avoid launching a second interactive resume process. HTTP MCP server code is in `src/convoy/mcp_http.py` (`python -m convoy mcp --root ROOT --port 8788`). Do not treat this paragraph as current attach status; use the canonical split above.
+`ConvoyLayer.ps1` is **not in this repo** (`find . -name "*.ps1"` at `b29c79b` returns nothing, audited 2026-09-01). It exists only on the Aether box, where it carried the 2026-08-28 contract: `hook`, `feed-since`, `send-dry`. Do not cite it as in-tree evidence. In this repo, default `python -m convoy send` uses `fake_runner` and `--live` uses `synapse.native_runner` (vendor binary on PATH). Live resumed send is refused at both entry points (RED no-steal lock) to avoid launching a second interactive resume process. HTTP MCP server code is in `src/convoy/mcp_http.py` (`python -m convoy mcp --root ROOT --port 8788`). Do not treat this paragraph as current attach status; use the canonical split above.
 
 ### Required MCP tools and JSON cards
 
@@ -346,7 +362,7 @@ If a field is unknown, write `unknown` or JSON `null`. Do not fill it from memor
 
 ### Definition of done (legacy attach checklist)
 
-Historical attach checklist only. Current canonical DoD is the native-send + structured-talk block above: attach/roster/feed may be PARTIAL GREEN, while native `send` remains RED until live vendor PATH execution replaces `ola_runner`.
+Historical attach checklist only. Current canonical DoD is the native-send + structured-talk block above: attach/roster/feed may be PARTIAL GREEN, while native `send` remains RED until a live vendor PATH execution is proven on `https://convoy.bot/mcp`. The code swap already happened (`native_runner`, `acba4e3`, 2026-08-30); what is missing is live proof, not the implementation.
 
 ---
 
@@ -357,13 +373,15 @@ Step N is Phase N. Do not start Phase N+1 until Phase N Definition of done is GR
 
 | Phase | Name | Status |
 |---|---|---|
-| 1 | Threaded context | GREEN 2026-08-28 Aether auto-register grok-session-phase1autoreg |
-| 2 | Temporally aware | GREEN 2026-08-28 CLI feed --since (utf-8-sig) |
-| 3 | Feature branch | GREEN 2026-08-28 branch integration/convoy-web-poc-20260828 PR 167 |
-| 4 | Worktree | GREEN 2026-08-28 |
-| 5 | Usage remaining | GREEN 2026-08-28 |
-| 6 | Parallel native send | GREEN 2026-08-28 grok-session-phase6bgrok + claude-session-phase6bclaude |
-| 7 | Durable convoy_id / attach / bring-up | bind+attach stamps GREEN 2026-08-28 `cvy_KE0tAyDLOnqEuWxYHjpsbQ` thread `customer1`; resume hop RED silent hang; bring-up dry-run unit this fold; live TUI RED. Not Phase 8. |
+| 1 | Threaded context | Unit GREEN (`phase1_threaded_context_test.py`). Live 2026-08-28 Aether auto-register `grok-session-phase1autoreg` is **retired-path evidence** (ola-brain `side-chat send`, pre-`native_runner`). Native path not re-proven live: `null`. |
+| 2 | Temporally aware | GREEN. Unit `temporal_hooks_test.py`; live row `2026-08-28T14:42:46.975866Z` re-read in `da-integration\.convoy\feed.jsonl` on 2026-09-01. Runner-independent: the stamp path did not change with `native_runner`. |
+| 3 | Feature branch | GREEN code + unit: `gitstate.git_state()` runs `git rev-parse --abbrev-ref HEAD`, `git rev-parse HEAD`, `gh pr view --json number`; `phase3_branch_test.py`. Live artifact: `git_branch integration/convoy-web-poc-20260828` + `pr_number: 167` on feed rows through `2026-08-31T12:00:12.490736Z`. |
+| 4 | Worktree | Unit GREEN (`phase4_worktree_test.py`); worktree is stamped on every synapse row and passed as `cwd` into the runner. Live **native** dual-worktree hop unproven: `null` (the 2026-08-28 dual hop was the retired ola-brain path). |
+| 5 | Usage remaining | **PARTIAL.** GREEN: unknown normalizes to JSON `null` — never `0`, never invented dollars (`usage.normalize_usage_remaining`, `harness_contract.usage_remaining_null_until_live_probe`, `phase5_usage_test.py`, `glance_test.py`); `claude -p /usage` and `codex` probes parse (2026-08-28). BLOCKED: grok, `cursor-agent`, `agy` expose no remaining quota at all — see the Phase 5 section. This row is not "usage remaining per harness". |
+| 6 | Parallel native send | Unit GREEN (`parallel_agents_test.py`); Aether `send-dry` GREEN (`dry-grok-51884583`, `dry-claude-5a173460`, two rows `2026-08-28T14:42:47Z`). Live dual 2026-08-28 11:59 ET (`grok-session-phase6bgrok` + `claude-session-phase6bclaude`) is **retired-path evidence** (ola-brain). Native parallel live: `null`. |
+| 7 | Durable convoy_id / attach / bring-up | bind+attach GREEN 2026-08-28 `cvy_KE0tAyDLOnqEuWxYHjpsbQ` thread `customer1` — 3 attach rows and both seats (distinct `resume_key`) re-read 2026-09-01. Live resume hop is RED **by design** since 2026-08-31 (`273a345` no-steal lock), not a hang to fix. Live TUI bring-up RED. Not Phase 8. |
+
+**Provenance of the 2026-08-28 GREENs (audited 2026-09-01 at `b29c79b`).** Every live run dated 2026-08-28 went through `ola-brain side-chat send` (`ola_runner`). `native_runner` — vendor binary on PATH — landed 2026-08-30 (`acba4e3`, PR #4); the no-steal live-resume lock landed 2026-08-31 (`273a345`, PR #12). The canonical lock names `ola-brain` a refuse target, so those runs are evidence about a **retired path**: they are not proof of DoD item 1 (native BYO send). No live native vendor send is recorded on any Convoy layer read on 2026-09-01. Unknown stays `null`.
 
 MCP attach status is split: attach/roster/context/feed can be PARTIAL GREEN while native `send` is still RED. This remains a Phase 7 hole, not a Phase 8 launch.
 
@@ -521,9 +539,8 @@ Each live instance carries `branch` + `pr` on the layer. The thread can say whic
 ### Successful functions
 
 - **GREEN unit:** `test/customer1/phase3_branch_test.py`. Non-git pack is JSON null, never `"main"`. Two send_one roots (`feat-a`, `feat-b`) stamp two different `git_branch` fields.
-- **in flight:** live `git rev-parse` / `gh pr view` on Aether da-integration.
-- Probes: `git rev-parse --abbrev-ref HEAD`, `git rev-parse HEAD`, `gh pr view --json number`. Never a remembered branch name.
-- Probes, when implemented: `git rev-parse --abbrev-ref HEAD` and `gh pr view`. Never a remembered branch name.
+- **GREEN code (corrected 2026-09-01, `b29c79b`):** `src/convoy/gitstate.py` `git_state()` shells all three probes — `git rev-parse --abbrev-ref HEAD`, `git rev-parse HEAD`, `gh pr view --json number -q .number` — and `synapse.send_one` merges the result into every synapse row and registry entry. Never a remembered branch name; non-git is JSON `null`.
+- **Live artifact:** `da-integration\.convoy\feed.jsonl` rows carry `git_branch: integration/convoy-web-poc-20260828`, `git_sha: 76874008c529cb908aded8de681af52d372cdd80`, `pr_number: 167` (re-read 2026-09-01). The earlier "in flight / when implemented" wording was stale.
 
 ### Pseudo-code
 
@@ -576,8 +593,9 @@ A synapse records its worktree / checkout path. Two agents on one branch without
 ### Successful functions
 
 - **GREEN unit:** `test/customer1/phase4_worktree_test.py`. Non-git worktree is JSON null. Second send on the same branch without `--worktree` returns explicit error. Two `--worktree` paths do not share cwd.
-- CLI: `send --worktree <path>`. `ola_runner` passes `--worktree` for grok/cursor-agent. MCP still RED.
-- Live dual hop is Phase 6. Not started.
+- **GREEN code (corrected 2026-09-01, `b29c79b`):** CLI `send --worktree <path>`; the worktree is stamped on every synapse row and passed as `cwd` into the runner (`synapse.send_one` -> `native_runner(cwd=...)`). The retired `ola_runner` `--worktree` argv note is history.
+- MCP `send` accepts `worktree`; live MCP proof on `https://convoy.bot/mcp` is still `null`.
+- Live **native** dual-worktree hop: `null`. The 2026-08-28 dual hop was the retired ola-brain path (Phase 6).
 
 ### Pseudo-code
 
@@ -631,7 +649,8 @@ Probe the way the harness actually exposes limits **before** spawn. Unknown is `
 
 - **GREEN probe:** `claude -p /usage` JSON. 5-hour session 100% used, reset 11:30 AM America/New_York 2026-08-28, week 69%, Fable week 70%.
 - **GREEN probe:** `codex login status` logged in ChatGPT; `codex doctor` silent on quota; `codex exec /status` stdin closed ⇒ `Your workspace is out of credits.` Hop without probe hung.
-- **GREEN roster field:** `usageRemaining` JSON `null` (`Invoke-AgentChannel.ps1` never guesses).
+- **GREEN roster field:** unknown `usage_remaining` is JSON `null`, never `0`, never invented dollars. In-tree proof: `usage.normalize_usage_remaining`, `harness_contract.usage_remaining_null_until_live_probe`, covered by `phase5_usage_test.py` and `glance_test.py`. (`Invoke-AgentChannel.ps1` was the 2026-08-28 Aether-side source and is **not in this repo** — do not cite it as in-tree evidence.)
+- **Scope note (2026-09-01):** what is GREEN here is the honesty rule (unknown stays `null`), not per-harness remaining quota. The phase table row says PARTIAL for that reason.
 - **RED:** grok has no `/usage` subcommand (`models` / `doctor` / `login` only); probe aborted.
 - **RED:** `cursor-agent status` logged in `marcoantonioruffinelli@gmail.com`, no remaining quota in `status` / `about`.
 - **RED:** `agy.exe` present with `-p`, not on ola-brain agents list. Gemini auth unknown.
@@ -705,7 +724,7 @@ Two live harnesses, two `session_id`s, two hook rows, two compact cards in this 
 ### Successful functions
 
 - **GREEN** fake runner: `python -m convoy send --to grok --to claude` (`src/convoy/synapse.py` `fake_runner` + `send_many` via `ThreadPoolExecutor`). Unit: `test/customer1/parallel_agents_test.py` (`test_two_synapses_own_session_ids`). Distinct `session_id` values; CLI returns 2 if parallel send merged ids.
-- **GREEN** Aether `send-dry`: `dry-grok-51884583` and `dry-claude-5a173460`. Two distinct ids, two hook rows. Implemented in `C:\.grok\ConvoyLayer.ps1` `Send-Dry` (and the copy at `/workspace/convoy/ConvoyLayer.ps1`).
+- **GREEN** Aether `send-dry`: `dry-grok-51884583` and `dry-claude-5a173460`. Two distinct ids, two hook rows. Implemented in `C:\.grok\ConvoyLayer.ps1` `Send-Dry` (Aether-side only; no copy of that script exists in this repo).
 - **GREEN** live dual 2026-08-28 11:59 AM ET: `send --live --to grok --to claude --label phase6b` with two worktrees. session_ids `grok-session-phase6bgrok` (da-integration, PR 167) and `claude-session-phase6bclaude` (ola-brain `feat/side-chat`). Both bodies PHASE6B. First try failed on grok cp1252 decode + ola-brain `--worktree` argv; UTF-8 replace + cwd-only worktree fixed it. Codex not hopped (probe timeout refuse).
 
 ### Pseudo-code
@@ -871,9 +890,9 @@ Grok Bot is customer 1. Tests live in `test/customer1/`. These tests must fail u
 - Temporal hooks: **GREEN** on Aether. `convoy hook` stamps `{ts,kind,instance_id,summary}` to `.convoy/feed.jsonl`. `convoy feed --since` returns that window. This is not ola-brain `hook-context` / `precompact` / `session-end`. Unit GREEN: `test/customer1/temporal_hooks_test.py`. Code GREEN: `src/convoy/layer.py` `hook()`, `feed_since()`. Example c1-locked ts `2026-08-28T14:42:46.975866Z` on `C:\Users\marco\ola\da-integration\.convoy\feed.jsonl` via `C:\.grok\ConvoyLayer.ps1`.
 - Parallel native chat: **GREEN** on fake runner (`python -m convoy send --to grok --to claude`). **GREEN** on Aether `send-dry` (two distinct `session_id` values, two hook rows: `dry-grok-51884583` and `dry-claude-5a173460`). **LIVE dual hop not proven:** Claude 5-hour session was 100% until 11:30 AM ET; Codex was out of credits. Sequential live hops were proven earlier the same day (synapse-proof / SYNAPSE_OK / SYNAPSE_TURN2 / SYNAPSE_TURN3, registry `01a04890-17df-7af0-b54c-9b69dd81b3b2`). grok+agy first live attempt 2026-08-28 10:51 ET started together (pids `79160`, `94228`) but grok argv split and agy printed a generic hello (prompt not seen).
 - Grok Bot HTTP MCP: still absent from the catalog. This chat is not natively connected yet. Status **RED** for HTTP MCP, **GREEN** for PC CLI hop via Shell on Aether-Deployed `machineId` `64a3fdd5-2c54-4038-8984-019382b68a78` running `C:\.grok\Invoke-AgentChannel.ps1` and `C:\.grok\ConvoyLayer.ps1` wrapping `ola-brain.exe`. Stdio MCP to Windows `localhost:4717` from the Grok Bot box **failed**.
-- Threaded context: **GREEN** ola-brain `side-chat send grok --label synapse-proof`. **GREEN** `Invoke-AgentChannel.ps1 context` (packed pointers). **RED** CLI side-chat send skips IDE hydration pointer (cold message). **RED** Codex JSON has no `session_id` so next turn is `resume --last` (hostile). **RED** dry-run printed instance id without `register_agent`. **RED** this tree: `layer.py` is feed only; no `context.py`; `ola_runner` regex-guesses `session_id`.
-- Feature branch understanding: **RED**. Not in `layer.py` events today.
-- Worktree understanding: **RED** for Convoy. Need to pass through to harness CLI.
+- Threaded context: **GREEN** ola-brain `side-chat send grok --label synapse-proof`. **GREEN** `Invoke-AgentChannel.ps1 context` (packed pointers). **RED** CLI side-chat send skips IDE hydration pointer (cold message). **RED** Codex JSON has no `session_id` so next turn is `resume --last` (hostile). **RED** dry-run printed instance id without `register_agent`. **Corrected 2026-09-01 (`b29c79b`):** `src/convoy/context.py` ships (`pack` / `stdin_for`, pointers only) and is imported by `synapse.py` and `mcp_http.py`; `registry.parse_session_id` reads JSON or an ola-brain `instance_id:` reply and has no UUID regex. The `ola_runner` line is history: that path is retired.
+- Feature branch understanding: **GREEN code + unit + live artifact (corrected 2026-09-01, `b29c79b`).** `gitstate.git_state()` is merged into every synapse row by `synapse.send_one`; rows carry `git_branch` / `git_sha` / `pr_number` (e.g. `pr_number: 167` on `2026-08-31T11:58:40.211558Z`). Unit: `phase3_branch_test.py`.
+- Worktree understanding: **GREEN code + unit (corrected 2026-09-01, `b29c79b`).** The worktree is stamped on every synapse row and passed as `cwd` into the runner. Unit: `phase4_worktree_test.py`. Live **native** dual-worktree hop stays `null`.
 - Usage remaining: **GREEN** probes as logged below. **GREEN** roster `usageRemaining` JSON `null` (never guesses). Live Claude 100% and Codex out of credits blocked the dual hop. Grok / cursor-agent / agy / Gemini probes do not expose remaining quota.
 - Usage probes (same day): `claude -p /usage` JSON, 5-hour session 100% used, reset 11:30 AM America/New_York, week 69%, Fable week 70%. `codex login status` logged in ChatGPT; `codex doctor` silent on quota; `codex exec /status` stdin closed ⇒ `Your workspace is out of credits.` Hop without probe hung. grok has no `/usage` (models/doctor/login only); probe aborted. `cursor-agent status` logged in `marcoantonioruffinelli@gmail.com`, no remaining quota in status/about. `agy.exe` present with `-p`, not on ola-brain agents list. Gemini auth unknown.
 
@@ -883,21 +902,31 @@ Grok Bot is customer 1. Tests live in `test/customer1/`. These tests must fail u
 
 Claims in this file must be true of **this tree** or of a named customer-1 run with a timestamp. If a function is not in `src/convoy/`, it is not GREEN for this tree.
 
-This tree today (`/workspace/convoy`, not a landed GitHub checkout):
+This tree at `b29c79b` — the landed public checkout of `Deploy-Forward/convoy` (merge of PR #24), inventory audited 2026-09-01: 17 modules under `src/convoy/`, 22 test modules under `test/customer1/`, **184 tests passing** (`PYTHONPATH=src python test/run.py`). No `.ps1` file exists anywhere in the repo.
 
 | Path | What it actually does |
 |---|---|
-| `src/convoy/layer.py` | `hook()`, `feed_since()`, `utc_now()`, `feed_path()`. Feed only. No branch, no worktree, no usage. |
-| `src/convoy/synapse.py` | `fake_runner`, `ola_runner`, `send_one/send_many`. `ola_runner` still shells `ola-brain side-chat send` for live mode; fake runner stays default. |
-| `src/convoy/cli.py` | CLI includes `onboard`, `context`, `send`, `roster`-adjacent probes, convoy id/attach/seat/bind helpers, and bring-up/hide/install paths. |
-| `src/convoy/context.py` | `pack()` pointers only. |
+| `src/convoy/__init__.py` | Package marker. |
+| `src/convoy/__main__.py` | `python -m convoy` entry: `raise SystemExit(cli.main())`. |
+| `src/convoy/bringup.py` | Phase 7 bring-up: `resume_argv` (native `[exe, --resume, id]`, never ola-brain / side-chat / grok `-p`/`-c`), `isolated_wt_argv`, `tile_rects`, `ensure_first_run`, `live_runner` (one `wt.exe` per named thread), `bring_up`, `terminals`, `hide`. Conductor grok-bot is not a window. |
+| `src/convoy/cli.py` | CLI: `context`, `send`, `hook`, `feed`, `stamp`, `glance`, `onboard`, `mcp`, convoy id/attach/seat/bind helpers, bring-up / hide / install paths. Live `send` sets `runner = native_runner` and `allow_interactive_resume = not live`. |
+| `src/convoy/context.py` | `pack()` / `stdin_for()`, `newest_handoff()`. Pointers only, never file contents, never a vendor transcript. |
+| `src/convoy/convoy.py` | Durable `convoy_id`: `ensure_id`, `read_id`, `bind`, `seat`, `list_seats`, `lookup_resume`, `attach`, `make_resume_key` (`cvr_` + sha256 prefix), lead. |
+| `src/convoy/gitstate.py` | `git_state()`: live `git rev-parse` + `gh pr view` probes. Non-git is JSON `null`. Never invents `main`. |
+| `src/convoy/glance.py` | `build_overall` / `build_by_thread` / `build_glance` / `discover_threads`, optional `run_tray`. Read-only view, not a second source of truth. |
+| `src/convoy/harness_contract.py` | Loads `harness_effort.json`: `canonical_harness_id`, `harness_exec`, `usage_probe_key`, `usage_remaining_null_until_live_probe`. |
+| `src/convoy/harness_effort.json` | The harness/effort contract data. |
+| `src/convoy/identity.py` | Installs the `neuron-identity` skill into a seat worktree so a launched model knows it is a neuron on a `cvy_id`. Never writes user-global `~/.grok` / `~/.claude` skills. |
+| `src/convoy/harness_skills/neuron-identity/` | The skill text that `identity.py` installs. |
+| `src/convoy/install.py` | Opt-in vendor install. Refuses unknown or wrapped harnesses and non-vendor hosts. Dry by default. |
+| `src/convoy/layer.py` | `hook()`, `feed_since()`, `conductor_stamp()`, `utc_now()`, `feed_path()`, `SCHEMA_VERSION = 2`. The module writes the feed; branch / worktree / usage reach a row as `extra` from the caller, not from here. Feed contract v2.1 adds `neuron_note` plus an **attributed** `from` and an addressee `to` — see that section, which is the source of truth for it (attributed, not authenticated: the bus records a claimed `instance_id`). |
+| `src/convoy/mcp_http.py` | JSON-RPC POST `/mcp`. `TOOLS` = `roster`, `glance`, `onboard`, `terminals`, `context`, `send`, `feed`, `stamp`, `bring_up`, `open`, `hide`, `minimize`, `background`, `install` (14 entries at `b29c79b`, incl. aliases; `+ note` = 15 with feed contract v2.1 — see that section). Live `send` routes to `native_runner` with `allow_interactive_resume=False`. Attach/read tools may be PARTIAL GREEN when bound; native `send` stays RED until a live vendor execution is proven on the public URL. |
 | `src/convoy/onboard.py` | Declared-harness onboarding: refuse wrappers, probe only named harnesses, optional thread bind, install hints, first-run PATH ungate. |
-| `src/convoy/usage.py` | `probe()`. Unknown remaining is JSON null. |
-| HTTP MCP server | `src/convoy/mcp_http.py` JSON-RPC POST `/mcp`. Attach/read tools may be PARTIAL GREEN when bound; native `send` is RED while `live=true` routes to `ola_runner`. |
-| `test/customer1/temporal_hooks_test.py` | GREEN unit for hook + feed window |
-| `test/customer1/parallel_agents_test.py` | GREEN unit for two fake synapses, two session ids |
-| `ConvoyLayer.ps1` | Aether contract copy: `hook`, `feed-since`, `send-dry` |
-| `pyproject.toml` | `convoy` 0.1.0, packages under `src` |
+| `src/convoy/registry.py` | Instance registry: `register`, `lookup`, `parse_session_id`, `parse_agents_jsonl`, `live_on_branch`. No printed `session_id` without a row. |
+| `src/convoy/synapse.py` | `fake_runner` (default), `native_runner` (`--live`: vendor binary on PATH, wrapper names refused, `cwd=worktree`), `send_one` / `send_many`. `ola_runner` is the **retired** ola-brain path — no longer reachable from the CLI or MCP; live mode is native on both. |
+| `src/convoy/usage.py` | `probe()`, `normalize_usage_remaining()`, `surface()`. Unknown remaining is JSON `null`; never invent `0`; grok remaining is always `null`. |
+| `test/run.py` + `test/customer1/` | 22 test modules, 184 tests, all passing at `b29c79b` (2026-09-01). |
+| `pyproject.toml` | `convoy` 0.1.0, packages under `src`, requires-python >= 3.11. |
 
 We do not:
 
@@ -906,7 +935,7 @@ We do not:
 - Merge native sessions. A synapse execs the harness CLI the human already signed into. The other CLI keeps its own `session_id` and its own meter.
 - Pretend a LAN stdio MCP to Windows `localhost:4717` is a Grok Bot MCP.
 - Invent usage numbers, branch names, session ids, or MCP attach.
-- Claim full HTTP MCP GREEN while native `send` still routes to `ola_runner`.
+- Claim full HTTP MCP GREEN on unit tests alone. Live `send` routes to `native_runner` in code (`acba4e3`); GREEN needs a timestamped live vendor execution on the public URL, not a passing suite.
 - Land this MCP in `Deploy-Forward/platform`.
 
 If a PR starts looking like UltraCode-Shim (OnlyTerp, https://github.com/OnlyTerp/UltraCode-Shim — local proxy, Claude Code stays the shell, `/model` ids must start with `claude` or `anthropic`, Grok becomes a backend, `grok_build` hits `cli-chat-proxy.grok.com`), it does not land in `deploy-forward/convoy`.

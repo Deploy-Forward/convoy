@@ -36,10 +36,10 @@ Do not collapse Codex and Claude into one enum.
 | Harness | Convoy effort key space | Documented vendor surface | Convoy status |
 | --- | --- | --- | --- |
 | `codex` | `low`, `medium`, `high`, `extra-high`, `more-reasoning` | Upstream Codex docs expose `model_reasoning_effort` with `xhigh` and allow `-c/--config` overrides; inspected docs do **not** show a dedicated `codex --effort` flag. | Convoy does not set effort flags. |
-| `claude` | `low`, `medium`, `high`, `xhigh`, `max` | Claude CLI docs expose `--effort low|medium|high|xhigh|max` (plus `ultracode`, outside this contract). | Convoy does not set effort flags. |
-| `grok` | `high` observed; else `null` | No documented Grok effort CLI was verified in this repo run. | Keep unknown values as `null`. |
+| `claude` | `low`, `medium`, `high`, `xhigh`, `max` | `claude --help` (customer-1 box, 2026-09-01): `--effort low|medium|high|xhigh|max`. Vendor docs also name `ultracode`; it is not in `--help` and Convoy never emits it (named as `docs_only_tokens` in the contract). | Convoy does not set effort flags. |
+| `grok` | `low`, `medium`, `high`, `xhigh` | `grok --help` (customer-1 box, 2026-09-01, grok 1.0.13): `--reasoning-effort <EFFORT>`, alias `--effort`; enum from live invalid-value reject (lead research). | Convoy does not set effort flags. |
 | `cursor-agent` | `null` | No effort control is documented in Convoy tree. | Keep `null`. |
-| `agy` | `null` | No effort control is documented in Convoy tree. | Keep `null`. |
+| `agy` | `low`, `medium`, `high` | `agy --help` (customer-1 box, 2026-09-01): `--effort low|medium|high`. Resume is `--conversation <ID>`; there is no `agy --resume`. | Convoy does not set effort flags. |
 | `hermes` | `null` (model-driven) | Harness is model-agnostic; effort belongs to the model being driven. | Keep `null` at harness level. |
 | `pi` | `null` (model-driven) | Harness is model-agnostic; effort belongs to the model being driven. | Keep `null` at harness level. |
 

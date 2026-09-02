@@ -41,8 +41,16 @@
       "effort": {
         "mode": "harness-scoped",
         "keys": [
-          "high"
-        ]
+          "low",
+          "medium",
+          "high",
+          "xhigh"
+        ],
+        "cli_flag": "--reasoning-effort",
+        "cli_flag_aliases": [
+          "--effort"
+        ],
+        "evidence": "grok --help (customer-1 box, 2026-09-01, grok 1.0.13); enum from live invalid-value reject in lead research (xhigh, high, medium, low)"
       }
     },
     {
@@ -64,7 +72,12 @@
           "high",
           "xhigh",
           "max"
-        ]
+        ],
+        "cli_flag": "--effort",
+        "docs_only_tokens": [
+          "ultracode"
+        ],
+        "evidence": "claude --help (customer-1 box, 2026-09-01) lists low|medium|high|xhigh|max; vendor docs also name ultracode, which is not in --help and is never emitted by Convoy"
       }
     },
     {
@@ -125,8 +138,14 @@
       "usage_probe": "agy",
       "usage_remaining_null_until_live_probe": true,
       "effort": {
-        "mode": "unknown",
-        "keys": null
+        "mode": "harness-scoped",
+        "keys": [
+          "low",
+          "medium",
+          "high"
+        ],
+        "cli_flag": "--effort",
+        "evidence": "agy --help (customer-1 box, 2026-09-01): --effort low|medium|high; resume is --conversation <ID>, there is no --resume flag"
       }
     },
     {
@@ -141,7 +160,8 @@
       "usage_remaining_null_until_live_probe": true,
       "effort": {
         "mode": "model-driven",
-        "keys": null
+        "keys": null,
+        "evidence": "hermes --help (customer-1 box, 2026-09-01): --resume SESSION / -r verified; effort belongs to the driven model"
       }
     },
     {
@@ -156,7 +176,18 @@
       "usage_remaining_null_until_live_probe": true,
       "effort": {
         "mode": "model-driven",
-        "keys": null
+        "keys": null,
+        "cli_flag": "--thinking",
+        "cli_values": [
+          "off",
+          "minimal",
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max"
+        ],
+        "evidence": "pi --help (customer-1 box, 2026-09-01): --thinking <level> for the driven model; model pattern also accepts :<thinking>. --resume is a session picker; direct-id resume unverified"
       }
     }
   ]
