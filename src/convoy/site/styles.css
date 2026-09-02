@@ -243,6 +243,8 @@ a {
 
 .hero {
   border-top: 0;
+  position: relative;
+  isolation: isolate;
 }
 
 .hero-grid,
@@ -251,8 +253,6 @@ a {
 }
 
 .hero-grid {
-  position: relative;
-  isolation: isolate;
   display: grid;
   grid-template-columns: 1fr;
   align-items: center;
