@@ -21,7 +21,7 @@ This folder is the **canonical public home**. The installed Python package
 ships its own copy under `src/convoy/harness_skills/` — that copy is what
 `identity.py` resolves at runtime (a top-level folder cannot be an importable
 package resource without claiming the generic `skills` namespace, which a
-public package must not do). A test (`test/customer1/skills_folder_test.py`)
+public package must not do). A test (`test/demo/skills_folder_test.py`)
 asserts the two copies are byte-identical: edit one without the other and the
 suite goes red.
 

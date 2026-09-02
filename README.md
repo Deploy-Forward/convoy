@@ -78,7 +78,7 @@ Notes tied to code/tests:
 
 ```bash
 # 1) Name installed harnesses and bind this root to one thread
-python -m convoy onboard --to grok --to claude --to codex --thread customer1
+python -m convoy onboard --to grok --to claude --to codex --thread demo
 
 # 2) Register seated neurons (session key + optional vendor resume token)
 python -m convoy seat --to grok --session-id seat-grok --worktree ../wt-grok --model gpt-5.6-sol --resume vendor-grok-uuid
@@ -94,7 +94,7 @@ python -m convoy send --to claude "Summarize open payment retry bugs and propose
 python -m convoy send --to codex --live "Draft unit tests for the retry planner."
 ```
 
-Development: `PYTHONPATH=src python3 test/run.py` (discovers `test/customer1/*_test.py`).  
+Development: `PYTHONPATH=src python3 test/run.py` (discovers `test/demo/*_test.py`).  
 License: MIT.
 
 ## Cloudflare split hosting (static site + MCP proxy)
