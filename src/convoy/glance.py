@@ -210,6 +210,14 @@ def build_by_thread(
         model = seat.get("model")
         if isinstance(model, str) and model.strip():
             row["model"] = model
+        # Chip front matter: effort + vendor resume id, omitted when unknown
+        # (never "unknown"). Week% stays on Overall per the glance contract.
+        effort = seat.get("effort")
+        if isinstance(effort, str) and effort.strip():
+            row["effort"] = effort
+        resume = seat.get("resume")
+        if isinstance(resume, str) and resume.strip():
+            row["resume"] = resume
         # Thread rows can show this seat's session meter, but no thread-level week budget.
         if isinstance(probe_row.get("session_pct"), int):
             row["session_pct"] = probe_row["session_pct"]

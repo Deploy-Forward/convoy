@@ -35,8 +35,25 @@ def feed_path(root: Path) -> Path:
     p.parent.mkdir(parents=True, exist_ok=True)
     return p
 
-def hook(root: Path, kind: str, summary: str, instance_id: str | None = None, extra: dict[str, Any] | None = None) -> dict[str, Any]:
+def _is_conductor_alias(val: Any) -> bool:
+    # Exact-match refusal is bypassable (Grok-Bot, grok_bot, grokbot):
+    # normalize case/spacing/separators before comparing.
+    if not isinstance(val, str):
+        return False
+    return val.strip().lower().replace("_", "").replace("-", "") == "grokbot"
+
+
+def hook(root: Path, kind: str, summary: str, instance_id: str | None = None, extra: dict[str, Any] | None = None, to: str | None = None) -> dict[str, Any]:
+    if _is_conductor_alias(instance_id):
+        raise ValueError("refuse grok-bot as author; conductor identity is stamp-only")
     event = {"ts": utc_now(), "kind": kind, "instance_id": instance_id, "summary": summary}
+    # v2.1 additive: honest author `from` (the writing seat) and optional
+    # addressee `to`. grok-bot is a reserved addressee, never an author here —
+    # conductor_stamp overrides `from` via extra.
+    if instance_id:
+        event["from"] = instance_id
+    if to:
+        event["to"] = to
     if extra:
         event.update(extra)
     path = feed_path(root)
@@ -48,6 +65,16 @@ def _blank_to_none(val: Any) -> str | None:
     if isinstance(val, str) and val.strip():
         return val.strip()
     return None
+
+
+def _compact(summary: str, who: str) -> tuple[str, bool]:
+    text = " ".join(str(summary or "").split())
+    if not text:
+        raise ValueError("refuse empty " + who + " summary")
+    truncated = len(text) > STAMP_MAX_CHARS
+    if truncated:
+        text = text[:STAMP_MAX_CHARS]
+    return text, truncated
 
 
 def conductor_stamp(
@@ -67,12 +94,7 @@ def conductor_stamp(
     most STAMP_MAX_CHARS (truncated=true marks a clamp — no silent loss).
     transcript is a pointer to where the bubble lives, never its bytes.
     """
-    text = " ".join(str(summary or "").split())
-    if not text:
-        raise ValueError("refuse empty conductor summary")
-    truncated = len(text) > STAMP_MAX_CHARS
-    if truncated:
-        text = text[:STAMP_MAX_CHARS]
+    text, truncated = _compact(summary, "conductor")
     extra: dict[str, Any] = {
         "from": _CONDUCTOR,
         "agent": _blank_to_none(agent),
@@ -84,6 +106,21 @@ def conductor_stamp(
     if truncated:
         extra["truncated"] = True
     return hook(root, "conductor", text, instance_id=_blank_to_none(instance_id), extra=extra)
+
+
+def neuron_note(root: Path, summary: str, instance_id: str | None = None, to: str | None = None) -> dict[str, Any]:
+    """One compact neuron line into the thread feed (kind=note).
+
+    Honest `from` is required: the writing seat's instance_id, never grok-bot
+    (conductor lines are stamp-only). Same one-line ≤ STAMP_MAX_CHARS clamp as
+    conductor_stamp; `to` is an optional addressee (a seat id or grok-bot).
+    """
+    author = _blank_to_none(instance_id)
+    if not author:
+        raise ValueError("refuse anonymous note: instance_id (the writing seat) is required")
+    text, truncated = _compact(summary, "note")
+    extra: dict[str, Any] = {"truncated": True} if truncated else {}
+    return hook(root, "note", text, instance_id=author, extra=extra or None, to=_blank_to_none(to))
 
 
 def feed_since(root: Path, since_iso: str) -> list[dict[str, Any]]:
