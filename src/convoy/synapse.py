@@ -10,7 +10,7 @@ from typing import Any, Callable
 
 from .context import pack, stdin_for
 from .gitstate import git_state
-from .inbox import enqueue, mark_consumed
+from .inbox import enqueue
 from .layer import hook
 from .usage import normalize_usage_remaining, probe
 from .convoy import list_seats, read_id, read_thread
@@ -247,12 +247,12 @@ def deliver_to_live_seat(
     native: dict[str, Any] | None = None
     if _native_harness_bin(to) == "codex" and resume_token:
         native = try_codex_queue(resume_token, body)
+    # `codex queue` exiting 0 is NOT proof codex consumed the message (a row
+    # was found sitting in codex's sqlite for a dead pane, 2026-09-03), so the
+    # inbox row stays PENDING until the receiver drains it, exactly as for
+    # every other harness. path_name records that a native route was used.
     path_name = "codex-queue" if native else "inbox"
     item = enqueue(root, sid, body, to=to, label=label, path_name=path_name)
-    if native:
-        # The body already went into codex's own queue; the inbox row is the
-        # SoT record of that send, not a second pending delivery.
-        mark_consumed(root, sid, item["token"], drain_id="codex-queue")
     delivery = native["delivery"] if native else "queued"
     runner = native["runner"] if native else "inbox"
     state = git_state(Path(packed.get("worktree") or root))

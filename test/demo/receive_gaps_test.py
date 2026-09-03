@@ -114,33 +114,83 @@ class StaleHookEntriesArePruned(unittest.TestCase):
         self.assertEqual((self.wt / ".claude" / "settings.json").read_text(encoding="utf-8"), before)
 
 
-class CodexQueueMarksItsRowConsumed(unittest.TestCase):
+class CodexQueueStillPendsForTheReceiver(unittest.TestCase):
+    """`codex queue` exiting 0 is not a receipt: a queued row was found sitting
+    in codex's own sqlite for a dead pane (audit 2026-09-03). Convoy's inbox
+    row therefore stays PENDING until the receiver drains it, exactly as for
+    every other harness, so the receive loop in neuron-receive/SKILL.md is the
+    same on all seven. The row records that a native route was also used."""
+
     def setUp(self):
         self.root = Path(tempfile.mkdtemp())
         ensure_id(self.root)
         bind(self.root, "t1")
         seat(self.root, "codex", "c-t1", worktree=str(self.root), resume="01codex")
 
-    def test_native_queue_leaves_no_pending_row_but_is_not_delivered(self):
+    def test_native_queue_is_recorded_but_the_row_still_awaits_a_drain(self):
         native = {"ok": True, "runner": "codex-queue", "delivery": "native-queued", "exit_code": 0}
         with mock.patch("convoy.synapse.try_codex_queue", return_value=native):
             card = send_one(self.root, "codex", "hello", runner=fake_runner, instance_id="c-t1",
                             allow_interactive_resume=False)
         self.assertEqual(card["delivery"], "native-queued")
         self.assertFalse(card["delivered"])
-        self.assertEqual(pending(self.root, "c-t1"), [])
+        waiting = pending(self.root, "c-t1")
+        self.assertEqual(len(waiting), 1)
+        self.assertEqual(waiting[0]["path"], "codex-queue")
         rows = [json.loads(l) for l in (self.root / ".convoy" / "inbox" / "c-t1.jsonl").read_text(encoding="utf-8").splitlines() if l.strip()]
-        markers = [r for r in rows if r.get("kind") == "consumed-marker"]
-        self.assertEqual(len(markers), 1)
-        self.assertEqual(markers[0]["drain_id"], "codex-queue")
-        self.assertEqual(markers[0]["token"], rows[0]["token"])
+        self.assertEqual([r for r in rows if r.get("kind") == "consumed-marker"], [])
 
-    def test_inbox_fallback_still_pends_when_queue_is_unavailable(self):
+    def test_inbox_fallback_pends_the_same_way_when_queue_is_unavailable(self):
         with mock.patch("convoy.synapse.try_codex_queue", return_value=None):
             card = send_one(self.root, "codex", "hello", runner=fake_runner, instance_id="c-t1",
                             allow_interactive_resume=False)
         self.assertEqual(card["delivery"], "queued")
-        self.assertEqual(len(pending(self.root, "c-t1")), 1)
+        waiting = pending(self.root, "c-t1")
+        self.assertEqual(len(waiting), 1)
+        self.assertEqual(waiting[0]["path"], "inbox")
+
+
+class LimitedIsTheSessionNotAnyHundred(unittest.TestCase):
+    """The single line that made the whole receive path unreplicable: a send
+    to any seated claude chair refused with "claude limited" on every machine
+    with Claude Code installed, because the fallback fired on ANY "100%" in
+    the /usage blob and a per-model weekly cap sits right beside a session at
+    8%. Proven by an adversarial clean-clone run, 2026-09-03."""
+
+    def test_a_weekly_cap_at_100_does_not_limit_a_fresh_session(self):
+        from convoy.usage import _parse_claude
+        blob = "\n".join(["Current session: 8%",
+                          "Current week (all models): 64%",
+                          "Current week (Opus): 100%",
+                          "Resets Sep 8, 11:30am (America/New_York)"])
+        self.assertFalse(_parse_claude(blob)[1])
+
+    def test_a_spent_session_still_limits(self):
+        from convoy.usage import _parse_claude
+        self.assertTrue(_parse_claude("Current session: 100%\nCurrent week (all models): 64%")[1])
+
+    def test_unparsed_text_falls_back_to_a_session_line_only(self):
+        from convoy.usage import _parse_claude
+        self.assertTrue(_parse_claude("usage for session is 100% used")[1])
+        self.assertFalse(_parse_claude("weekly cap reached 100% for opus")[1])
+
+    def test_a_live_send_to_a_claude_chair_is_not_refused_by_a_weekly_cap(self):
+        root = Path(tempfile.mkdtemp())
+        ensure_id(root)
+        bind(root, "t1")
+        seat(root, "claude", "a-t1", worktree=str(root), resume="claude-uuid")
+        blob = "Current session: 8%\nCurrent week (Opus): 100%"
+
+        def probe(_harness):
+            from convoy.usage import _parse_claude
+            remaining, limited = _parse_claude(blob)
+            return {"usage_remaining": remaining, "limited": limited, "raw": blob}
+
+        card = send_one(root, "claude", "PROOF", runner=fake_runner, instance_id="a-t1",
+                        probe_fn=probe, allow_interactive_resume=False)
+        self.assertFalse(card.get("refused"), card.get("error"))
+        self.assertEqual(card["delivery"], "queued")
+        self.assertEqual(len(pending(root, "a-t1")), 1)
 
 
 if __name__ == "__main__":
