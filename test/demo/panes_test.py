@@ -110,6 +110,48 @@ class MatchProcesses(unittest.TestCase):
         self.assertFalse(out.get("error"))
 
 
+class LivenessHasThreeStates(unittest.TestCase):
+    """Marco 2026-09-03, from a screenshot of two obviously running panes:
+    `panes` reported codex-fable-opus live=false while eight codex processes
+    were running. On Windows a codex body carries neither a token nor its
+    worktree in the command line and the OS exposes no cwd, so it cannot be
+    placed. Unknown must be null; false is a claim we cannot make, and this
+    session repeated it to the user."""
+
+    def setUp(self):
+        self.root = Path(tempfile.mkdtemp())
+        ensure_id(self.root)
+        bind(self.root, "t1")
+        seat(self.root, "codex", "c-t1", worktree="/w/codex", resume="tok-c")
+        seat(self.root, "claude", "idle-t1", worktree="/w/idle")
+
+    def test_unplaceable_harness_processes_make_liveness_unknown_not_false(self):
+        procs = [{"pid": 40, "ppid": 1, "cmdline": "node /x/codex.js", "cwd": None}]
+        by = {c["session_id"]: c for c in match_processes(self.root, procs)["chairs"]}
+        self.assertIsNone(by["c-t1"]["live"])
+        self.assertIn("could not be placed", by["c-t1"]["live_reason"])
+        self.assertEqual([u["pid"] for u in match_processes(self.root, procs)["unassigned"]], [40])
+        # a chair whose harness has no process at all is honestly not live
+        self.assertIs(by["idle-t1"]["live"], False)
+        self.assertIn("no claude process", by["idle-t1"]["live_reason"])
+
+    def test_a_matched_body_is_still_plain_true(self):
+        procs = [{"pid": 41, "ppid": 1, "cmdline": "codex resume tok-c", "cwd": None}]
+        by = {c["session_id"]: c for c in match_processes(self.root, procs)["chairs"]}
+        self.assertIs(by["c-t1"]["live"], True)
+
+    def test_the_no_steal_guard_refuses_on_unknown(self):
+        from convoy.panes import chair_liveness
+        procs = [{"pid": 40, "ppid": 1, "cmdline": "node /x/codex.js", "cwd": None}]
+        self.assertIsNone(chair_liveness(self.root, "c-t1", procs=procs))
+        self.assertTrue(chair_live(self.root, "c-t1", procs=procs), "unknown must read as live to a guard")
+        self.assertFalse(chair_live(self.root, "idle-t1", procs=procs))
+        card = resume_neuron(self.root, "c-t1", go=True, spawn=lambda a, c: 1,
+                             liveness=lambda root, sid: chair_live(root, sid, procs=procs))
+        self.assertFalse(card["ok"])
+        self.assertIn("live", card["error"])
+
+
 class Whoami(unittest.TestCase):
     """Marco 2026-09-03: detect -> if the detected body is a chair on THIS
     thread, let the agent identify itself, then send. `whoami` walks the

@@ -81,7 +81,11 @@ class ResumeNeuron(unittest.TestCase):
 
     def test_go_spawns_once_in_the_worktree_and_refuses_when_live(self):
         calls = []
-        card = resume_neuron(self.root, "a-t1", go=True, spawn=lambda argv, cwd: calls.append((argv, cwd)) or 4242)
+        # Liveness is explicit: the default probe reads the real machine, and
+        # since unknown now reads as live to a guard (no-steal fails safe),
+        # any codex/claude process on the host would refuse this spawn.
+        card = resume_neuron(self.root, "a-t1", go=True, liveness=lambda root, sid: False,
+                             spawn=lambda argv, cwd: calls.append((argv, cwd)) or 4242)
         self.assertTrue(card["spawned"])
         self.assertEqual(card["pid"], 4242)
         self.assertEqual(calls[0][1], str(self.root))

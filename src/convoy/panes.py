@@ -243,7 +243,7 @@ def match_processes(root: Path, procs: list[dict[str, Any]]) -> dict[str, Any]:
             claimed.add(b["pid"])
         chairs.append({
             "session_id": sid, "harness": harness, "worktree": s.get("worktree"),
-            "live": bool(found), "bodies": found, "duplicate": len(found) > 1,
+            "live": bool(found) or None, "bodies": found, "duplicate": len(found) > 1,
             "close": "managed-or-manual" if found else None,
         })
     # a helper whose ancestor is claimed belongs to that body; everything else
@@ -262,6 +262,30 @@ def match_processes(root: Path, procs: list[dict[str, Any]]) -> dict[str, Any]:
             hops += 1
         if not owned:
             unassigned.append({"pid": p["pid"], "harness": exe, "cwd": p.get("cwd"), "close": "manual-close-required"})
+    # A chair with no matched body is only NOT LIVE when no process of its
+    # harness is running unplaced. If unplaceable candidates exist, liveness
+    # is UNKNOWN (null), never false: on Windows a codex pane carries neither
+    # a token nor its worktree in the command line and the OS exposes no cwd,
+    # so eight live codex processes sat beside a chair reporting live=false
+    # (live 2026-09-03 — and this session reported that as "not live" to the
+    # user, which was inventing a fact).
+    by_harness: dict[str, int] = {}
+    for u in unassigned:
+        by_harness[u["harness"]] = by_harness.get(u["harness"], 0) + 1
+    for c in chairs:
+        if c["live"]:
+            c["live_reason"] = "matched " + str(len(c["bodies"])) + " body/bodies"
+            continue
+        n = by_harness.get(c["harness"], 0)
+        if n:
+            c["live"] = None
+            c["live_reason"] = (str(n) + " " + c["harness"] + " process(es) are running but could not be "
+                                "placed (no token or worktree in the command line" +
+                                ("; this OS exposes no process cwd" if os.name == "nt" else "") +
+                                "): liveness unknown, not false")
+        else:
+            c["live"] = False
+            c["live_reason"] = "no " + c["harness"] + " process is running"
     return {"ok": True, "chairs": chairs, "unassigned": unassigned}
 
 
@@ -359,5 +383,17 @@ def _safe_enumerate() -> list[dict[str, Any]]:
 
 
 def chair_live(root: Path, session_id: str, procs: list[dict[str, Any]] | None = None) -> bool:
+    """True when the chair is live OR its liveness is UNKNOWN. Callers are
+    no-steal guards: refusing on unknown is the safe answer, and inventing
+    `not live` is how a second body got launched on a live codex thread
+    (2026-09-03). Use chair_liveness() when you need the three states."""
+    return chair_liveness(root, session_id, procs) is not False
+
+
+def chair_liveness(root: Path, session_id: str, procs: list[dict[str, Any]] | None = None) -> bool | None:
+    """True / False / None(unknown) for one chair."""
     view = match_processes(Path(root), procs) if procs is not None else bodies(Path(root))
-    return any(c["session_id"] == session_id and c["live"] for c in view["chairs"])
+    for c in view["chairs"]:
+        if c["session_id"] == session_id:
+            return c["live"]
+    return False
