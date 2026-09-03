@@ -15,6 +15,7 @@ from .convoy import attach, bind, ensure_id, list_seats, read_id, read_lead, sea
 from .glance import build_glance, run_tray
 from .graph import build_graph, neighborhood
 from .graph_html import render_html, resume_neuron
+from .index import find_root, index_path, list_threads
 from .layer import SCHEMA_VERSION, conductor_stamp, feed_since, hook
 from .lifecycle import join, pass_lead, seated_ack, swap
 from .pane_host import close_managed_pane
@@ -114,6 +115,8 @@ def main(argv: list[str] | None = None) -> int:
     gr.add_argument("--out", help="file to write with --html (default .convoy/graph.html under the root)")
     gr.add_argument("--also-root", action="append", default=[], help="another root whose thread the page should also show")
 
+    sub.add_parser("threads", help="every Convoy thread this machine knows (the global index; present=false when a root is gone)")
+
     rs = sub.add_parser("resume", help="resume one neuron at its most recent place: native argv + cwd (dry) or --go to spawn once")
     rs.add_argument("--neuron", required=True, help="chair session_id")
     rs.add_argument("--go", action="store_true", help="spawn in the chair's worktree, inheriting this terminal; refuses when a live body holds the chair")
@@ -174,6 +177,12 @@ def main(argv: list[str] | None = None) -> int:
 
     args = p.parse_args(argv)
     root = Path(args.root).resolve()
+    # Chats launch from project subfolders: for read verbs, walk up to the
+    # nearest .convoy/id when the given root has none (never for writes).
+    if args.cmd in ("graph", "threads", "resume", "seats", "feed", "context", "glance") and not (root / ".convoy" / "id").is_file():
+        found = find_root(root)
+        if found is not None:
+            root = found
 
     if args.cmd == "hook":
         try:
@@ -289,7 +298,9 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.cmd == "graph":
         if args.html:
+            known = [Path(r["root"]) for r in list_threads() if r["present"]]
             roots = [root] + [Path(r) for r in args.also_root]
+            roots += [k for k in known if k.resolve() not in {r.resolve() for r in roots}]
             threads = [{"root": str(r), "graph": build_graph(r)} for r in roots]
             out = Path(args.out) if args.out else (root / ".convoy" / "graph.html")
             out.parent.mkdir(parents=True, exist_ok=True)
@@ -302,6 +313,9 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps({"ok": False, "error": str(e)}))
             return 1
         print(json.dumps(card))
+        return 0
+    if args.cmd == "threads":
+        print(json.dumps({"ok": True, "index": str(index_path()), "threads": list_threads()}))
         return 0
     if args.cmd == "resume":
         try:
