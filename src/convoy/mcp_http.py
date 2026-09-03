@@ -34,6 +34,9 @@ from .onboard import onboard as run_onboard
 from .context import pack
 from .convoy import list_seats, read_thread
 from .glance import build_glance
+from .graph import build_graph, neighborhood
+from .graph_html import resume_neuron
+from .index import index_path, list_threads
 from .gitstate import git_state
 from .layer import SCHEMA_VERSION, conductor_stamp, feed_since, neuron_note
 from .synapse import fake_runner, native_runner, send_one
@@ -248,6 +251,21 @@ TOOLS: list[dict[str, Any]] = [
         }),
     },
     {
+        "name": "graph",
+        "description": "Read-only ontology of the bound thread: chairs, occupants (harness/model), lineage pending/acked, talk edges, lead. Every edge attested, never authenticated; never a token. Pass neuron=<chair> for that chair's rejoin card with its place (last contribution, rank, degree, lead).",
+        "inputSchema": _schema({"neuron": {"type": "string", "description": "chair session_id for the neighborhood/place card"}}),
+    },
+    {
+        "name": "threads",
+        "description": "Every Convoy thread this machine's index knows (convoy_id, thread, root, updated_at). present=false when the root is gone or its id changed; never a token.",
+        "inputSchema": _schema({}),
+    },
+    {
+        "name": "resume",
+        "description": "Resume one neuron at its most recent place: native argv + cwd + place card. Dry by default (no spawn). go=true spawns once and is refused on an ungated public process; it also refuses when a live body holds the chair or the chair has no token for its current harness (then launch --seat).",
+        "inputSchema": _schema({"neuron": {"type": "string"}, "go": {"type": "boolean", "default": False}}, required=["neuron"]),
+    },
+    {
         "name": "install",
         "description": "Opt-in vendor harness download. dry_run defaults true. Live needs opt_in true. Only x.ai, claude.ai, chatgpt.com, cursor.com, antigravity.google. Never a wrap. Some MCP-supported harnesses are BYO-only and may not have a cataloged installer. affiliate is always JSON null.",
         "inputSchema": _schema(
@@ -420,6 +438,24 @@ def call_tool(root: Path, name: str, arguments: dict[str, Any] | None) -> dict[s
         if model is not None and card.get("model") is None:
             card["model"] = model
         return card
+    if name == "graph":
+        neuron = _opt_str(args, "neuron")
+        try:
+            return neighborhood(root, neuron) if neuron else build_graph(root)
+        except ValueError as e:
+            return {"ok": False, "error": str(e)}
+    if name == "threads":
+        return {"ok": True, "index": str(index_path()), "threads": list_threads()}
+    if name == "resume":
+        neuron = _opt_str(args, "neuron") or ""
+        go = bool(args.get("go"))
+        if go and not _write_tools_enabled():
+            return {"ok": False, "neuron": neuron, "spawned": False,
+                    "error": "resume go=true is behind the write gate on this process (set CONVOY_MCP_WRITE_TOOLS=1 on a gated/loopback deploy); dry read allowed"}
+        try:
+            return resume_neuron(root, neuron, go=go)
+        except ValueError as e:
+            return {"ok": False, "error": str(e)}
     if name == "feed":
         since = _opt_str(args, "since") or _default_since()
         rows = feed_since(root, since)

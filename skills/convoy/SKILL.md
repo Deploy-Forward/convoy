@@ -29,6 +29,15 @@ Tree-only CLI verbs (`join` / `swap` / `seated`, plus `choices` / `launch` /
 until deployed. Render them as absent on the wire; do not invent a catalog
 count.
 
+## What a `send` card means
+
+`delivery` on the card is `recorded` (feed row only, nothing reached a
+neuron), `executed` (a fresh headless session ran it, not the open pane), or
+`refused`. `delivered` is always false on a card: only an ack row authored by
+the target proves delivery. To reach an OPEN neuron, write an addressed row
+(`note --to <chair>`) and wait for its ack; never type into its TUI, never
+resume its session.
+
 ## Finding threads from anywhere: `threads`
 
 Chats launch from project folders. `convoy threads` reads the machine index
