@@ -22,6 +22,26 @@ install. To run from a checkout without installing, put `src` on the path:
 `PYTHONPATH=src python test/run.py` on bash, or
 `$env:PYTHONPATH='src'; python test/run.py` in PowerShell.
 
+### Receiving messages needs a command that resolves
+
+Neurons receive through a harness hook, and a hook runs in its own shell that
+inherits nothing from yours. Convoy therefore **probes** its own command line
+before writing any hook file, and refuses to write one that would not run.
+Check what it picked:
+
+```bash
+convoy --root <thread-root> skills --worktree <worktree>
+```
+
+The card's `hooks.resolved_via` is one of `console-script` (the installed
+`convoy` is on PATH — the best case), `interpreter` (this Python can
+`-m convoy`), `interpreter+src` (no install: the command carries the
+checkout's `src` with it), or `kept-existing` (a hook already there still
+works and was left alone). If nothing resolves, the card carries an install
+hint and **no hook file is written**; install the console script and re-run.
+The same command is the repair when a hook goes stale: it prunes Convoy's own
+dead entries and leaves your own hooks untouched.
+
 ## CLI reference
 
 One line per verb; flags shown are the ones you will reach for (see
