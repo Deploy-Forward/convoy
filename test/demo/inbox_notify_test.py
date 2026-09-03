@@ -131,6 +131,26 @@ class LiveSeatInbox(unittest.TestCase):
         self.assertEqual(taken[0]["body"], "ONCE-ONLY")
         self.assertEqual(pending(self.root, "sess-grok"), [])
 
+    def test_hook_refuses_when_two_chairs_share_a_worktree(self):
+        import json as _json
+        seats = self.root / ".convoy" / "seats.jsonl"
+        # Legacy collision: two chairs already on this worktree (seat() now refuses).
+        with seats.open("a", encoding="utf-8") as handle:
+            handle.write(_json.dumps({
+                "convoy_id": "x", "to": "codex", "session_id": "sess-codex",
+                "worktree": str(self.wt),
+            }, separators=(",", ":")) + "\n")
+        enqueue(self.root, "sess-grok", "MUST-NOT-DRAIN", to="grok", label="collision")
+        enqueue(self.root, "sess-codex", "ALSO-MUST-NOT-DRAIN", to="codex", label="collision")
+        write_root_pointer(self.wt, self.root)
+        card = hook_pretooluse(self.wt)
+        ctx = card["hookSpecificOutput"]["additionalContext"]
+        self.assertIn("refuse", ctx.lower())
+        self.assertIn("sess-grok", ctx)
+        self.assertIn("sess-codex", ctx)
+        self.assertEqual(len(pending(self.root, "sess-grok")), 1)
+        self.assertEqual(len(pending(self.root, "sess-codex")), 1)
+
     def test_drain_and_pretooluse_hook_injects_body(self):
         write_root_pointer(self.wt, self.root)
         enqueue(self.root, "sess-grok", "TOKEN-BODY-99", to="grok", label="design-review")
@@ -172,7 +192,8 @@ class LiveSeatInbox(unittest.TestCase):
         self.assertEqual(pending(self.root, "sess-grok")[0]["body"], "pane-to-pane")
 
     def test_codex_queue_used_when_present(self):
-        seat(self.root, "codex", "sess-codex", worktree=str(self.wt), resume="01codex")
+        wt_codex = Path(tempfile.mkdtemp())
+        seat(self.root, "codex", "sess-codex", worktree=str(wt_codex), resume="01codex")
         calls = []
 
         def fake_run(cmd, **_k):

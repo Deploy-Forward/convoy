@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import secrets
 from pathlib import Path
 from typing import Any
@@ -115,6 +116,13 @@ def seat(
                     "refuse seat: worktree " + wt + " is bound to thread " + other_thread + " (" + other +
                     "), not this root's " + (read_thread(root) or "?") + " (" + cid + "); use a worktree without"
                     " its own .convoy, or bind it to this thread")
+        if session_id != CONDUCTOR and to != CONDUCTOR:
+            holder = chair_holding_worktree(root, wt, except_session=session_id)
+            if holder is not None:
+                raise ValueError(
+                    "refuse seat: worktree " + wt + " is already held by chair " +
+                    str(holder.get("session_id")) + " on this thread; two chairs on one "
+                    "worktree makes inbox drain ambiguous")
     thread = read_thread(root) or ""
     resume_val = resume.strip() if isinstance(resume, str) and resume.strip() else None
     rkey = make_resume_key(cid, thread, to, wt)
@@ -186,6 +194,44 @@ def list_seats(root: Path, convoy_id: str | None = None, require_session: bool =
         return list(found.values())
     return list(found.values()) + blanks
 
+
+def _resolved_worktree(raw: Any) -> str | None:
+    if raw is None:
+        return None
+    text = str(raw).strip()
+    if not text:
+        return None
+    try:
+        return os.path.normcase(str(Path(text).resolve()))
+    except OSError:
+        return None
+
+
+def chair_holding_worktree(
+    root: Path,
+    worktree: str | Path | None,
+    *,
+    except_session: str | None = None,
+) -> dict[str, Any] | None:
+    """Latest other chair whose worktree resolves to the same path, or None."""
+    want = _resolved_worktree(worktree)
+    if not want:
+        return None
+    skip = str(except_session or "").strip()
+    holder = None
+    for row in list_seats(root, require_session=True):
+        sid = str(row.get("session_id") or "").strip()
+        to = str(row.get("to") or "").strip()
+        if not sid or sid == skip:
+            continue
+        if sid == CONDUCTOR or to == CONDUCTOR:
+            continue
+        have = _resolved_worktree(row.get("worktree"))
+        if have and have == want:
+            holder = row
+    return holder
+
+
 def set_seat_agent(root: Path, session_id: str, agent: str) -> dict[str, Any] | None:
     """Persist agent on an existing seat row. Append-only; last row wins.
 
@@ -224,6 +270,13 @@ def update_seat(root: Path, session_id: str, **changes: Any) -> dict[str, Any]:
             row = r
     if row is None:
         raise ValueError("unknown seat: " + sid)
+    if "worktree" in changes:
+        holder = chair_holding_worktree(root, changes.get("worktree"), except_session=sid)
+        if holder is not None:
+            raise ValueError(
+                "refuse seat: worktree " + str(changes.get("worktree")) +
+                " is already held by chair " + str(holder.get("session_id")) +
+                " on this thread; two chairs on one worktree makes inbox drain ambiguous")
     harness_changed = "to" in changes and changes["to"] != row.get("to")
     updated: dict[str, Any] = {**row, **changes}
     if harness_changed:
