@@ -95,9 +95,9 @@ class MatchProcesses(unittest.TestCase):
             {"pid": 52, "ppid": 51, "cmdline": "claude --type=utility --utility-sub-type=x", "cwd": None},
             {"pid": 53, "ppid": 1, "cmdline": "claude daemon run --origin transient", "cwd": None},
             {"pid": 54, "ppid": 1, "cmdline": "codex app-server --listen stdio://", "cwd": None},
-            {"pid": 55, "ppid": 1, "cmdline": "grok.EXE --trust --agent C:\\w\\grok\\.grok\\agents\\convoy-neuron.md", "cwd": None},
+            {"pid": 55, "ppid": 1, "cmdline": "grok.EXE --trust --agent C:\\w\\grok-agent\\.grok\\agents\\convoy-neuron.md", "cwd": None},
         ]
-        seat(self.root, "grok", "gw-t1", worktree="C:\\w\\grok")
+        seat(self.root, "grok", "gw-t1", worktree="C:\\w\\grok-agent")
         out = match_processes(self.root, procs)
         by = {c["session_id"]: c for c in out["chairs"]}
         self.assertEqual([b["pid"] for b in by["c-t1"]["bodies"]], [51])   # the pty host is a helper; the session is the body
