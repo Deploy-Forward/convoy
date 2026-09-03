@@ -63,8 +63,14 @@ def enqueue(
     to: str | None = None,
     label: str | None = None,
     path_name: str = "inbox",
+    token: str | None = None,
 ) -> dict[str, Any]:
-    """Append one pending message. Token is for the receiver's ack, not a resume."""
+    """Append one pending message. Token is for the receiver's ack, not a resume.
+
+    A caller may mint the token first when it needs to put that token INSIDE
+    the body it hands to a vendor transport, so the receiver can cite it and
+    prove which channel delivered (codex 2026-09-03: a native queue push is
+    indistinguishable from a human typing unless the token rides along)."""
     sid = str(session_id or "").strip()
     text = str(body or "")
     if not sid:
@@ -73,7 +79,7 @@ def enqueue(
         raise ValueError("inbox refuses an empty body")
     row = {
         "ts": utc_now(),
-        "token": uuid.uuid4().hex,
+        "token": str(token) if token else uuid.uuid4().hex,
         "session_id": sid,
         "to": str(to or "").strip() or None,
         "label": str(label).strip() if isinstance(label, str) and label.strip() else None,

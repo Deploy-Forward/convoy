@@ -263,3 +263,37 @@ class ATimedOutProbeIsUnknownNotExhausted(unittest.TestCase):
         self.assertFalse(card.get("refused"), card.get("error"))
         self.assertEqual(card["delivery"], "queued")
         self.assertEqual(len(pending(root, "c-t1")), 1)
+
+
+class CodexQueueBodyCarriesTheToken(unittest.TestCase):
+    """codex 2026-09-03 22:27Z, refusing to certify its own receipt: a `codex
+    queue` push arrives as an ordinary user turn, and from inside the pane
+    that is indistinguishable from a human typing. It was right. The token now
+    rides INSIDE the queued body, so an ack citing it is proof only Convoy
+    could have sourced."""
+
+    def setUp(self):
+        self.root = Path(tempfile.mkdtemp())
+        ensure_id(self.root)
+        bind(self.root, "t1")
+        seat(self.root, "codex", "c-t1", worktree=str(self.root), resume="01codex")
+
+    def test_the_queued_body_names_the_token_that_lands_in_the_inbox(self):
+        seen = {}
+
+        def fake_queue(thread, body):
+            seen["thread"] = thread
+            seen["body"] = body
+            return {"ok": True, "runner": "codex-queue", "delivery": "native-queued", "exit_code": 0}
+
+        with mock.patch("convoy.synapse.try_codex_queue", side_effect=fake_queue):
+            card = send_one(self.root, "codex", "PAYLOAD", runner=fake_runner, instance_id="c-t1",
+                            allow_interactive_resume=False)
+        self.assertEqual(card["delivery"], "native-queued")
+        self.assertEqual(seen["thread"], "01codex")
+        row = pending(self.root, "c-t1")[0]
+        self.assertIn("token=" + row["token"], seen["body"])
+        self.assertIn("PAYLOAD", seen["body"])
+        self.assertIn("not a human typing", seen["body"])
+        # the stored row keeps the plain body; the framing is transport-only
+        self.assertEqual(row["body"], "PAYLOAD")
