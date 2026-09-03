@@ -37,6 +37,7 @@ from .glance import build_glance
 from .graph import build_graph, neighborhood
 from .graph_html import resume_neuron
 from .index import index_path, list_threads
+from .panes import bodies
 from .gitstate import git_state
 from .layer import SCHEMA_VERSION, conductor_stamp, feed_since, neuron_note
 from .synapse import fake_runner, native_runner, send_one
@@ -256,6 +257,11 @@ TOOLS: list[dict[str, Any]] = [
         "inputSchema": _schema({"neuron": {"type": "string", "description": "chair session_id for the neighborhood/place card"}}),
     },
     {
+        "name": "panes",
+        "description": "Every body of every neuron on the bound thread, from the OS process table (not only what Convoy launched): per chair live/bodies (pid, via token|cwd)/duplicate, plus unassigned harness processes. Never a token. Windows exposes no cwd, so the cwd rung is null there.",
+        "inputSchema": _schema({}),
+    },
+    {
         "name": "threads",
         "description": "Every Convoy thread this machine's index knows (convoy_id, thread, root, updated_at). present=false when the root is gone or its id changed; never a token.",
         "inputSchema": _schema({}),
@@ -446,6 +452,8 @@ def call_tool(root: Path, name: str, arguments: dict[str, Any] | None) -> dict[s
             return {"ok": False, "error": str(e)}
     if name == "threads":
         return {"ok": True, "index": str(index_path()), "threads": list_threads()}
+    if name == "panes":
+        return bodies(root)
     if name == "resume":
         neuron = _opt_str(args, "neuron") or ""
         go = bool(args.get("go"))

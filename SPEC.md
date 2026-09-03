@@ -95,6 +95,34 @@ is a resume MAP key, never seat identity.
 Unit: `test/demo/seat_lifecycle_test.py` (15 tests, GREEN 2026-09-02,
 suite 232).
 
+### Bodies: panes + whoami (Marco 2026-09-03, "detect → identify → send")
+
+The registry knows only what Convoy launched. Live failure 2026-09-03
+~04:44Z: codex-fable-opus was running in an unmanaged pane, registry
+liveness said false, a second `codex resume <id>` was launched and codex
+refused ("already has an active writer"). Liveness therefore comes from the
+OS process table too:
+
+- `panes` (CLI + MCP): per chair `live`, `bodies[] {pid, via, exe}`,
+  `duplicate` (two bodies on one chair), and `unassigned[]` harness
+  processes Convoy cannot place — listed, never hidden. `via` is `token`
+  (chair's vendor token in a command line; portable) or `cwd` (process cwd
+  == worktree; Linux /proc, macOS lsof; Windows has no stdlib cwd, so that
+  rung is null there and fresh Windows launches land in `unassigned`).
+  Never prints a token. Enumeration failure ⇒ `source: null`, all not-live.
+- `whoami`: walks the CALLER's ancestry (shell → harness) and names its chair
+  by token, then by cwd; else null with an `ask` (join / seat this worktree).
+  `hook … --as-me` authors as that chair and refuses otherwise: a body may
+  send on a thread only after it is detected AND identified on it.
+- `resume --neuron … --go` and every launch path consult `panes` before the
+  registry; a live body on the chair refuses (no-steal).
+- Close is unchanged: managed panes close through the consented pane host;
+  an unmanaged body is `manual-close-required`, pid shown.
+
+Unit: `test/demo/panes_test.py`. Live 2026-09-03: `panes` on fable-opus
+showed the lead chair with two bodies by token (duplicate=true) and 12
+unassigned harness processes on Windows.
+
 ### Delivery ladder: recorded → executed → delivered (codex/grok finding 2026-09-02)
 
 A `send` card says what happened to the message, never more:
