@@ -102,6 +102,19 @@ def seat(
         raise ValueError("refuse empty session_id")
     cid = ensure_id(root)
     wt = str(worktree) if worktree is not None else None
+    # A worktree bound to ANOTHER thread shadows this root for every CLI call
+    # made without --root (2026-09-03: a codex chair on fable-opus sat in a
+    # worktree carrying fable-luna's .convoy/id and heard nothing). Refuse.
+    if wt:
+        foreign = _id_path(Path(wt))
+        if foreign.is_file() and Path(wt).resolve() != Path(root).resolve():
+            other = foreign.read_text(encoding="utf-8-sig").strip()
+            if other and other != cid:
+                other_thread = read_thread(Path(wt)) or "?"
+                raise ValueError(
+                    "refuse seat: worktree " + wt + " is bound to thread " + other_thread + " (" + other +
+                    "), not this root's " + (read_thread(root) or "?") + " (" + cid + "); use a worktree without"
+                    " its own .convoy, or bind it to this thread")
     thread = read_thread(root) or ""
     resume_val = resume.strip() if isinstance(resume, str) and resume.strip() else None
     rkey = make_resume_key(cid, thread, to, wt)
