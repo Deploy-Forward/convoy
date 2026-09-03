@@ -29,6 +29,18 @@ Tree-only CLI verbs (`join` / `swap` / `seated`, plus `choices` / `launch` /
 until deployed. Render them as absent on the wire; do not invent a catalog
 count.
 
+## Finding threads from anywhere: `threads`
+
+Chats launch from project folders. `convoy threads` reads the machine index
+(`$CONVOY_HOME/threads.json`, default `~/.convoy/threads.json`): one row per
+thread — `convoy_id`, `thread`, `root`, `updated_at` — upserted by every
+`init`, `bind`, and `seat`. `present=false` means the root is gone or its id
+changed; never treat that row as a thread. Read verbs (`graph`, `threads`,
+`resume`, `seats`, `feed`, `context`, `glance`) walk up from a subfolder to
+the nearest `.convoy/id`. `graph --html` shows every present thread in its
+side panel. The index is the one user-global file Convoy writes; it carries
+no tokens.
+
 ## Rejoining the fray: `graph --neuron <chair>`
 
 Read-only. Returns the chair's current harness/model, its lineage (join /

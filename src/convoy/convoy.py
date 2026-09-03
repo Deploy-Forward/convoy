@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from .context import pack
+from .index import record as index_record
 from .layer import SCHEMA_VERSION, feed_since, hook
 from .registry import register
 from .usage import probe, surface
@@ -46,6 +47,7 @@ def ensure_id(root: Path) -> str:
     path = _id_path(root)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(cid + "\n", encoding="utf-8")
+    index_record(root, cid, read_thread(root))
     return cid
 
 def read_lead(root: Path) -> str | None:
@@ -82,6 +84,7 @@ def bind(root: Path, thread: str) -> dict[str, Any]:
     path.write_text(key + "\n", encoding="utf-8")
     md = Path(root) / "thread.md"
     md.write_text(cid + "\n" + key + "\n", encoding="utf-8")
+    index_record(root, cid, key)
     return {"ok": True, "convoy_id": cid, "thread": key}
 
 def seat(
@@ -126,6 +129,7 @@ def seat(
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8") as f:
         f.write(json.dumps(row, separators=(",", ":")) + "\n")
+    index_record(root, cid, thread or None)
     register(
         root,
         session_id,
