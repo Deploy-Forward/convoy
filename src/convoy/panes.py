@@ -40,7 +40,8 @@ from pathlib import Path
 from typing import Any, Callable
 
 from .cmd import convoy_root_command
-from .convoy import list_seats
+from .convoy import list_seats, read_id, read_thread
+from .index import find_root
 from .harness_contract import canonical_harness_id
 
 HARNESS_EXES = {
@@ -296,6 +297,20 @@ def identify(root: Path, pid: int | None = None, procs: list[dict[str, Any]] | N
     procs = procs if procs is not None else (_TEST_PROCS if _TEST_PROCS is not None else _safe_enumerate())
     me = pid if pid is not None else (_TEST_PID if _TEST_PID is not None else os.getpid())
     here = cwd if cwd is not None else os.getcwd()
+    # Which thread does the cwd walk up to, and is it this root's thread? A
+    # worktree with its own .convoy from another thread silently answers for
+    # that thread on every call made without --root.
+    root_thread = read_thread(root)
+    root_id = read_id(root)
+    cwd_root = find_root(here)
+    cwd_id = read_id(cwd_root) if cwd_root else None
+    cwd_thread = read_thread(cwd_root) if cwd_root else None
+    conflict = bool(cwd_id) and cwd_id != root_id
+    ctx = {"root_thread": root_thread, "cwd_thread": cwd_thread, "conflict": conflict}
+    if conflict:
+        ctx["ask"] = ("your cwd walks up to thread " + str(cwd_thread) + " (" + str(cwd_id) + ") but this root is " +
+                      str(root_thread) + " (" + str(root_id) + "): always pass --root " + str(root) +
+                      " from this worktree, or move the chair to a worktree without a foreign .convoy")
     by_pid = {p["pid"]: p for p in procs}
     chain: list[dict[str, Any]] = []
     cur = by_pid.get(me)
@@ -311,7 +326,7 @@ def identify(root: Path, pid: int | None = None, procs: list[dict[str, Any]] | N
             toks = [t for t in (s.get("resume"), s.get("vendor_session_id")) if isinstance(t, str) and t.strip()]
             if any(t in cmd for t in toks):
                 return {"ok": True, "chair": s["session_id"], "via": "token", "harness": s.get("to"),
-                        "harness_pid": p["pid"], "on_thread": True}
+                        "harness_pid": p["pid"], "on_thread": True, **ctx}
     for p in chain:
         cmd = str(p.get("cmdline") or "")
         exe = _exe_harness(cmd)
@@ -320,7 +335,7 @@ def identify(root: Path, pid: int | None = None, procs: list[dict[str, Any]] | N
         for s in seats:
             if canonical_harness_id(s.get("to")) == exe and _mentions_path(cmd, s.get("worktree")):
                 return {"ok": True, "chair": s["session_id"], "via": "worktree", "harness": s.get("to"),
-                        "harness_pid": p["pid"], "on_thread": True}
+                        "harness_pid": p["pid"], "on_thread": True, **ctx}
     for p in chain:
         exe = _exe_harness(str(p.get("cmdline") or ""))
         if not exe:
@@ -328,10 +343,12 @@ def identify(root: Path, pid: int | None = None, procs: list[dict[str, Any]] | N
         for s in seats:
             if canonical_harness_id(s.get("to")) == exe and _same_path(here, s.get("worktree")):
                 return {"ok": True, "chair": s["session_id"], "via": "cwd", "harness": s.get("to"),
-                        "harness_pid": p["pid"], "on_thread": True}
-    return {"ok": False, "chair": None, "via": None, "harness": None, "harness_pid": None, "on_thread": False,
-            "ask": "no chair on this thread matches your body: join (" + convoy_root_command(root) +
-                   " join --to <harness> --worktree " + str(here) + ") or seat this worktree, then retry"}
+                        "harness_pid": p["pid"], "on_thread": True, **ctx}
+    out = {"ok": False, "chair": None, "via": None, "harness": None, "harness_pid": None, "on_thread": False,
+           "ask": "no chair on this thread matches your body: join (" + convoy_root_command(root) +
+                  " join --to <harness> --worktree " + str(here) + ") or seat this worktree, then retry"}
+    out.update(ctx)   # a conflict ask replaces the join ask: fix the root first
+    return out
 
 
 def _safe_enumerate() -> list[dict[str, Any]]:
