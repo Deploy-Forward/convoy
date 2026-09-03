@@ -29,6 +29,18 @@ Tree-only CLI verbs (`join` / `swap` / `seated`, plus `choices` / `launch` /
 until deployed. Render them as absent on the wire; do not invent a catalog
 count.
 
+## Detect, identify, then send: `panes` and `whoami`
+
+`panes` lists every body of every neuron on the thread from the OS process
+table, not only what Convoy launched: per chair `live`, `bodies` (pid, via
+`token` or `cwd`), `duplicate`, plus `unassigned` harness processes Convoy
+cannot place (Windows exposes no cwd, so fresh launches there land here).
+`whoami` walks YOUR process ancestry to your harness and names your chair
+(token, then cwd) or returns null with an ask. Author rows as yourself with
+`hook note "<text>" --as-me --to <chair>`; it refuses when no chair on this
+thread matches your body. Never type into another pane; never resume a chair
+that `panes` shows live.
+
 ## What a `send` card means
 
 `delivery` on the card is `recorded` (feed row only, nothing reached a

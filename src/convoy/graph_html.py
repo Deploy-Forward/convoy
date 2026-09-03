@@ -25,9 +25,18 @@ from typing import Any, Callable
 from .bringup import resume_argv, resume_target, terminals
 from .convoy import list_seats
 from .graph import build_graph, neighborhood
+from .panes import chair_live
 
 
 def _chair_live(root: Path, session_id: str) -> bool:
+    """Registry (what Convoy launched) OR the OS process table (panes) — the
+    second is what catches a body Convoy never launched (2026-09-03: a second
+    codex resume on a live thread got past the registry-only check)."""
+    try:
+        if chair_live(Path(root), session_id):
+            return True
+    except Exception:
+        pass
     try:
         card = terminals(Path(root))
     except Exception:  # liveness probe is best-effort; never blocks a dry read
