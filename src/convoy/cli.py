@@ -16,6 +16,7 @@ from .glance import build_glance, run_tray
 from .graph import build_graph, neighborhood
 from .graph_html import render_html, resume_neuron
 from .index import find_root, index_path, list_threads
+from .panes import bodies, identify
 from .layer import SCHEMA_VERSION, conductor_stamp, feed_since, hook
 from .lifecycle import join, pass_lead, seated_ack, swap
 from .pane_host import close_managed_pane
@@ -33,6 +34,9 @@ def main(argv: list[str] | None = None) -> int:
     h.add_argument("summary")
     h.add_argument("--instance-id")
     h.add_argument("--to", help="addressee: a seat instance_id or grok-bot")
+    h.add_argument("--as-me", action="store_true", help="author = the chair whoami detects for this body; refuses when no chair on this thread matches")
+
+    sub.add_parser("whoami", help="which chair is this body? walks your own process ancestry to the harness and matches it to a chair (token, then cwd); null with an ask when none")
 
     f = sub.add_parser("feed")
     f.add_argument("--since", required=True)
@@ -115,6 +119,8 @@ def main(argv: list[str] | None = None) -> int:
     gr.add_argument("--out", help="file to write with --html (default .convoy/graph.html under the root)")
     gr.add_argument("--also-root", action="append", default=[], help="another root whose thread the page should also show")
 
+    sub.add_parser("panes", help="every body of every neuron on this thread from the OS process table: pid, via token|cwd, duplicates, unassigned harness processes; never a token")
+
     sub.add_parser("threads", help="every Convoy thread this machine knows (the global index; present=false when a root is gone)")
 
     rs = sub.add_parser("resume", help="resume one neuron at its most recent place: native argv + cwd (dry) or --go to spawn once")
@@ -179,14 +185,25 @@ def main(argv: list[str] | None = None) -> int:
     root = Path(args.root).resolve()
     # Chats launch from project subfolders: for read verbs, walk up to the
     # nearest .convoy/id when the given root has none (never for writes).
-    if args.cmd in ("graph", "threads", "resume", "seats", "feed", "context", "glance") and not (root / ".convoy" / "id").is_file():
+    if args.cmd in ("graph", "threads", "panes", "resume", "seats", "feed", "context", "glance") and not (root / ".convoy" / "id").is_file():
         found = find_root(root)
         if found is not None:
             root = found
 
+    if args.cmd == "whoami":
+        me = identify(root)
+        print(json.dumps(me))
+        return 0 if me.get("ok") else 1
     if args.cmd == "hook":
+        instance_id = args.instance_id
+        if getattr(args, "as_me", False):
+            me = identify(root)
+            if not me.get("chair"):
+                print(json.dumps({"ok": False, "error": "refuse --as-me: no chair on this thread matches this body", "whoami": me}))
+                return 1
+            instance_id = me["chair"]
         try:
-            row = hook(root, args.kind, args.summary, instance_id=args.instance_id, to=args.to)
+            row = hook(root, args.kind, args.summary, instance_id=instance_id, to=args.to)
         except ValueError as e:
             print(json.dumps({"ok": False, "error": str(e)}))
             return 1
@@ -316,6 +333,9 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.cmd == "threads":
         print(json.dumps({"ok": True, "index": str(index_path()), "threads": list_threads()}))
+        return 0
+    if args.cmd == "panes":
+        print(json.dumps(bodies(root)))
         return 0
     if args.cmd == "resume":
         try:
