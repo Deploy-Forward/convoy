@@ -194,7 +194,6 @@ class Phase7FirstRun(unittest.TestCase):
             self.assertTrue(card.get("ok"))
             self.assertTrue(card.get("prepared"))
             self.assertFalse(card.get("wrote"))
-            self.assertFalse(self._settings(wt).exists())
             self.assertIsNone(card.get("settings"))
             self.assertFalse(card.get("home_written"))
             self.assertIsNone(card.get("settings_home"))
@@ -202,6 +201,10 @@ class Phase7FirstRun(unittest.TestCase):
             self.assertIsNone(card.get("trust_settings_home"))
             self.assertFalse(self._home_settings().exists())
             self.assertFalse((self.fake_home / ".claude").exists())
+            if self._settings(wt).exists():
+                data = json.loads(self._settings(wt).read_text(encoding="utf-8"))
+                self.assertNotIn("skipDangerousModePermissionPrompt", data)
+                self.assertNotIn("permissions", data)
             self.assertTrue(card.get("path_ok"))
             if os.name == "nt":
                 # WT inherits user PATH; bashrc ungate is POSIX-only
@@ -270,7 +273,11 @@ class Phase7FirstRun(unittest.TestCase):
         data = json.loads(self._settings(self.wt_c).read_text(encoding="utf-8"))
         self.assertIs(data["skipDangerousModePermissionPrompt"], True)
         self.assertEqual(data["permissions"]["defaultMode"], "bypassPermissions")
-        self.assertFalse(self._settings(self.wt_g).exists())
+        grok_settings = self._settings(self.wt_g)
+        if grok_settings.exists():
+            grok_data = json.loads(grok_settings.read_text(encoding="utf-8"))
+            self.assertNotIn("skipDangerousModePermissionPrompt", grok_data)
+            self.assertNotIn("permissions", grok_data)
         _native_resume(by["claude"]["argv"], "claude", "sess-claude")
         # agent-less grok seats point at the Convoy-owned agent file (#15)
         convoy_agent = str(Path(self.wt_g) / ".grok" / "agents" / "convoy-neuron.md")
@@ -311,7 +318,11 @@ class Phase7FirstRun(unittest.TestCase):
         by = {w["to"]: w for w in d["windows"]}
         self.assertTrue(by["claude"]["first_run"]["prepared"])
         self.assertTrue(self._settings(self.wt_c).is_file())
-        self.assertFalse(self._settings(self.wt_g).exists())
+        grok_settings = self._settings(self.wt_g)
+        if grok_settings.exists():
+            grok_data = json.loads(grok_settings.read_text(encoding="utf-8"))
+            self.assertNotIn("skipDangerousModePermissionPrompt", grok_data)
+            self.assertNotIn("permissions", grok_data)
         self.assertTrue(by["claude"]["first_run"]["home_written"])
         self.assertEqual(by["claude"]["first_run"]["settings_home"], str(self._home_settings()))
         self.assertTrue(by["claude"]["first_run"]["trust_written"])

@@ -152,7 +152,7 @@ TOOLS: list[dict[str, Any]] = [
     },
     {
         "name": "send",
-        "description": "Headless synapse; does not pop a TUI. Sends one compact card to a harness. Default runner is fake. live=true execs native harness CLI on PATH (no ola-brain wrap). Live resumed send is currently refused to avoid spawning a second interactive --resume process. Never live_runner / CREATE_NEW_CONSOLE. Refuses limited without waiting; the refuse card asks the user to bring_up / open a pane or write a .ola/*handoff*.",
+        "description": "Headless synapse; does not pop a TUI. Naming a live seat queues the body (delivery=queued, delivered=false) instead of spawning a second --resume. Codex may native-queue. Fake ACKs are recorded, not delivered. live=true still never steals a TUI. Refuses limited without waiting.",
         "inputSchema": _schema(
             {
                 "to": {"type": "string"},

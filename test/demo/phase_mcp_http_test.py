@@ -265,9 +265,10 @@ class PhaseMcpHttp(unittest.TestCase):
                     {"name": "send", "arguments": {"to": "grok", "body": "ping", "live": True, "session_id": "sess-grok"}},
                 )
             )
-        self.assertFalse(resumed["ok"])
-        self.assertTrue(resumed.get("refused"))
-        self.assertIn("second interactive session", resumed["error"])
+        self.assertTrue(resumed["ok"])
+        self.assertEqual(resumed.get("delivery"), "queued")
+        self.assertFalse(resumed.get("delivered"))
+        self.assertFalse(resumed.get("resume_stolen"))
         self.assertEqual(len(attempts), 0)
 
     def test_send_live_session_id_does_not_spawn_vendor_resume_process(self):
@@ -294,8 +295,9 @@ class PhaseMcpHttp(unittest.TestCase):
                     {"name": "send", "arguments": {"to": "grok", "body": "ping", "live": True, "session_id": "sess-grok"}},
                 )
             )
-        self.assertFalse(resumed["ok"])
-        self.assertTrue(resumed.get("refused"))
+        self.assertTrue(resumed["ok"])
+        self.assertEqual(resumed.get("delivery"), "queued")
+        self.assertFalse(resumed.get("delivered"))
         self.assertEqual(len(attempts), 0)
 
     def test_send_live_resume_arg_is_refused_without_spawning(self):
@@ -322,8 +324,9 @@ class PhaseMcpHttp(unittest.TestCase):
                     {"name": "send", "arguments": {"to": "grok", "body": "ping", "live": True, "resume": "vendor-resume-02"}},
                 )
             )
-        self.assertFalse(resumed["ok"])
-        self.assertTrue(resumed.get("refused"))
+        self.assertTrue(resumed["ok"])
+        self.assertEqual(resumed.get("delivery"), "queued")
+        self.assertFalse(resumed.get("delivered"))
         self.assertEqual(len(attempts), 0)
 
     def test_send_live_vendor_resume_token_refused_without_spawning(self):
@@ -350,8 +353,9 @@ class PhaseMcpHttp(unittest.TestCase):
                     {"name": "send", "arguments": {"to": "grok", "body": "ping", "live": True, "session_id": "vendor-resume-03"}},
                 )
             )
-        self.assertFalse(resumed["ok"])
-        self.assertTrue(resumed.get("refused"))
+        self.assertTrue(resumed["ok"])
+        self.assertEqual(resumed.get("delivery"), "queued")
+        self.assertFalse(resumed.get("delivered"))
         self.assertEqual(len(attempts), 0)
 
     def test_send_to_ola_brain_refused_by_name(self):

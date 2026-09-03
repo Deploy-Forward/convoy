@@ -62,6 +62,11 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--instance-id")
     s.add_argument("--worktree", action="append")
 
+    ib = sub.add_parser("inbox", help="queue/drain live-seat messages without stealing a TUI")
+    ib.add_argument("--seat")
+    ib.add_argument("--drain", action="store_true")
+    ib.add_argument("--hook-pretooluse", action="store_true", help="Grok/Claude hook JSON on stdout")
+
     prb = sub.add_parser("probe")
     prb.add_argument("--to", required=True)
 
@@ -189,7 +194,7 @@ def main(argv: list[str] | None = None) -> int:
     root = Path(args.root).resolve()
     # Chats launch from project subfolders: for read verbs, walk up to the
     # nearest .convoy/id when the given root has none (never for writes).
-    if args.cmd in ("graph", "threads", "panes", "resume", "seats", "feed", "context", "glance") and not (root / ".convoy" / "id").is_file():
+    if args.cmd in ("graph", "threads", "panes", "resume", "seats", "feed", "context", "glance", "inbox") and not (root / ".convoy" / "id").is_file():
         found = find_root(root)
         if found is not None:
             root = found
@@ -235,6 +240,25 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.cmd == "context":
         print(json.dumps(pack(root, instance_id=args.instance_id)))
+        return 0
+    if args.cmd == "inbox":
+        from .inbox import drain, hook_pretooluse, pending, seat_for_worktree
+        if args.hook_pretooluse:
+            print(json.dumps(hook_pretooluse()))
+            return 0
+        sid = str(args.seat or "").strip()
+        if not sid:
+            row = seat_for_worktree(root, Path.cwd())
+            sid = str((row or {}).get("session_id") or "").strip()
+        if not sid:
+            print(json.dumps({"ok": False, "error": "inbox requires --seat"}))
+            return 1
+        if args.drain:
+            taken = drain(root, sid)
+            print(json.dumps({"ok": True, "session_id": sid, "drained": taken, "n": len(taken)}))
+            return 0
+        waiting = pending(root, sid)
+        print(json.dumps({"ok": True, "session_id": sid, "pending": waiting, "n": len(waiting)}))
         return 0
     if args.cmd == "probe":
         print(json.dumps(probe(args.to)))

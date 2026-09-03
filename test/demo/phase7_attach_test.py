@@ -172,10 +172,12 @@ class Phase7Attach(unittest.TestCase):
         card = send_one(self.root, "grok", "resume", instance_id="sess-grok")
         self.assertTrue(card["ok"])
         self.assertEqual(card["session_id"], "sess-grok")
+        self.assertEqual(card.get("delivery"), "queued")
         self.assertNotEqual(card["session_id"], "spawned-grok")
         rc, d = _run(self.root, "send", "--to", "grok", "--instance-id", "sess-grok", "resume")
         self.assertEqual(rc, 0)
         self.assertEqual(d["session_id"], "sess-grok")
+        self.assertEqual(d.get("delivery"), "queued")
         self.assertNotEqual(d["session_id"], "spawned-grok")
 
     def test_send_without_instance_id_refuses_when_seat_exists(self):
@@ -207,10 +209,11 @@ class Phase7Attach(unittest.TestCase):
 
         with mock.patch("convoy.cli.native_runner", side_effect=should_not_run):
             rc, d = _run(self.root, "send", "--live", "--to", "grok", "--instance-id", "sess-grok", "ping")
-        self.assertNotEqual(rc, 0)
-        self.assertFalse(d["ok"])
-        self.assertTrue(d.get("refused"))
-        self.assertIn("second interactive session", d.get("error", ""))
+        self.assertEqual(rc, 0)
+        self.assertTrue(d["ok"])
+        self.assertEqual(d.get("delivery"), "queued")
+        self.assertFalse(d.get("delivered"))
+        self.assertFalse(d.get("resume_stolen"))
         self.assertEqual(spawned["n"], 0)
 
     def test_dry_run_session_id_null(self):
