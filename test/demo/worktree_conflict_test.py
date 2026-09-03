@@ -70,6 +70,21 @@ class ForeignWorktreeRefused(unittest.TestCase):
         ok = identify(self.root, pid=30, procs=procs, cwd=str(self.clean))
         self.assertEqual((ok["chair"], ok["conflict"]), ("c-opus", False))
 
+    def test_seat_and_join_refuse_worktree_held_by_another_chair(self):
+        wt = Path(tempfile.mkdtemp())
+        seat(self.root, "claude", "chair-a", worktree=str(wt))
+        with self.assertRaises(ValueError) as cm:
+            seat(self.root, "codex", "chair-b", worktree=str(wt))
+        self.assertIn("chair-a", str(cm.exception))
+        self.assertIn("chair-b", str(cm.exception))
+        self.assertIn(str(wt), str(cm.exception))
+        with self.assertRaises(ValueError):
+            join(self.root, "grok", session_id="chair-c", worktree=str(wt))
+        other = Path(tempfile.mkdtemp())
+        self.assertTrue(seat(self.root, "codex", "chair-b", worktree=str(other)))
+        again = seat(self.root, "claude", "chair-a", worktree=str(wt))
+        self.assertEqual(again["session_id"], "chair-a")
+
 
 class SkillsRefresh(unittest.TestCase):
     def test_stale_copies_are_rewritten(self):

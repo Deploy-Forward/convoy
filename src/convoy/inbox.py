@@ -227,25 +227,34 @@ def drain(root: Path, session_id: str) -> list[dict[str, Any]]:
         return taken
 
 
-def seat_for_worktree(root: Path, worktree: str | Path | None) -> dict[str, Any] | None:
+def seats_for_worktree(root: Path, worktree: str | Path | None) -> list[dict[str, Any]]:
+    """Every chair whose worktree resolves to this path. Ambiguous is >1."""
     if worktree is None:
-        return None
+        return []
     try:
-        want = str(Path(worktree).resolve())
+        want = os.path.normcase(str(Path(worktree).resolve()))
     except OSError:
-        return None
-    found = None
+        return []
+    found: list[dict[str, Any]] = []
     for row in list_seats(root, require_session=True):
         raw = row.get("worktree")
         if not raw:
             continue
         try:
-            have = str(Path(str(raw)).resolve())
+            have = os.path.normcase(str(Path(str(raw)).resolve()))
         except OSError:
             continue
-        if os.path.normcase(have) == os.path.normcase(want):
-            found = row
+        if have == want:
+            found.append(row)
     return found
+
+
+def seat_for_worktree(root: Path, worktree: str | Path | None) -> dict[str, Any] | None:
+    """Unique chair for this worktree, or None when zero or more than one match."""
+    found = seats_for_worktree(root, worktree)
+    if len(found) != 1:
+        return None
+    return found[0]
 
 
 def resolve_root(start: str | Path) -> Path | None:
@@ -310,7 +319,22 @@ def hook_pretooluse(cwd: str | Path | None = None) -> dict[str, Any]:
     """
     start = Path(cwd) if cwd is not None else Path.cwd()
     root = resolve_root(start) or start
-    seat = seat_for_worktree(root, start)
+    matches = seats_for_worktree(root, start)
+    if len(matches) > 1:
+        chairs = [str(r.get("session_id") or "") for r in matches]
+        event = _hook_event_from_stdin()
+        ctx = (
+            "Convoy inbox refuse (C8): cwd " + str(start) +
+            " matches more than one chair (" + ", ".join(chairs) +
+            "). Drain none rather than guess. Each chair needs its own worktree."
+        )
+        return {
+            "hookSpecificOutput": {
+                "hookEventName": event,
+                "additionalContext": ctx,
+            }
+        }
+    seat = matches[0] if matches else None
     sid = str((seat or {}).get("session_id") or "").strip()
     messages = drain(root, sid) if sid else []
     event = _hook_event_from_stdin()
