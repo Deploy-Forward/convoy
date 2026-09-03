@@ -10,6 +10,7 @@ from typing import Any, Callable
 
 from .context import pack, stdin_for
 from .gitstate import git_state
+from .inbox import enqueue
 from .layer import hook
 from .usage import normalize_usage_remaining, probe
 from .convoy import list_seats, read_id, read_thread
@@ -204,6 +205,88 @@ def runner_kind(run: Runner) -> str | None:
     return getattr(run, "__name__", None)
 
 
+def try_codex_queue(thread: str, body: str) -> dict[str, Any] | None:
+    """Native Codex live-seat notify. Surface proven; delivery unproven."""
+    exe = shutil.which("codex") or shutil.which("codex.CMD") or shutil.which("codex.cmd")
+    if not exe:
+        return None
+    tid = str(thread or "").strip()
+    if not tid:
+        return None
+    try:
+        result = subprocess.run(
+            [exe, "queue", "--thread", tid, "--message", str(body)],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=30,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if result.returncode != 0:
+        return None
+    return {"ok": True, "runner": "codex-queue", "delivery": "native-queued", "exit_code": 0}
+
+
+def deliver_to_live_seat(
+    root: Path,
+    to: str,
+    body: str,
+    *,
+    session_id: str,
+    resume_token: str | None,
+    packed: dict[str, Any],
+    cid: str | None,
+    label: str | None,
+    usage: dict[str, Any],
+    extra_state: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Queue a body for an existing occupant. Never spawn --resume."""
+    sid = str(session_id or "").strip()
+    native: dict[str, Any] | None = None
+    if _native_harness_bin(to) == "codex" and resume_token:
+        native = try_codex_queue(resume_token, body)
+    path_name = "codex-queue" if native else "inbox"
+    item = enqueue(root, sid, body, to=to, label=label, path_name=path_name)
+    delivery = native["delivery"] if native else "queued"
+    runner = native["runner"] if native else "inbox"
+    state = git_state(Path(packed.get("worktree") or root))
+    extra = {
+        "to": to,
+        "ok": True,
+        "dry_run": False,
+        "runner": runner,
+        "delivery": delivery,
+        "delivered": False,
+        "resume_stolen": False,
+        "argv0": None,
+        "label": label,
+        "worktree": packed.get("worktree"),
+        **state,
+    }
+    if extra_state:
+        extra.update(extra_state)
+    hook(root, kind="synapse", summary="send " + to, instance_id=sid, author=None, extra=extra)
+    return {
+        "ok": True,
+        "to": to,
+        "session_id": sid,
+        "model": None,
+        "usage_remaining": normalize_usage_remaining(usage.get("usage_remaining")),
+        "body": None,
+        "delivery": delivery,
+        "delivered": False,
+        "path": runner,
+        "inbox": item.get("file"),
+        "token": item.get("token"),
+        "resume_stolen": False,
+        "pointers": packed,
+        "stdin": body,
+        "convoy_id": cid,
+    }
+
+
 def _send_one(
     root: Path,
     to: str,
@@ -292,14 +375,14 @@ def _send_one(
             "pointers": packed,
             "convoy_id": cid,
         }
-    if not allow_interactive_resume and (resolved_instance_id or resume_token):
-        # No-steal outranks registry resolution: a live send that names any
-        # resume token refuses before lookups can mask it as "not in registry".
+    steal_blocked = not allow_interactive_resume and (resolved_instance_id or resume_token)
+
+    def _refuse_steal(instance: str | None) -> dict[str, Any]:
         hook(
             root,
             kind="refuse",
             summary=to + " live resume refused",
-            instance_id=resolved_instance_id,
+            instance_id=instance,
             author=None,
             extra={"to": to, "reason": "no-steal-live-resume"},
         )
@@ -315,10 +398,13 @@ def _send_one(
             "pointers": packed,
             "convoy_id": cid,
         }
+
     seat_row = None
     if resolved_instance_id:
         seat_row = lookup_any(root, resolved_instance_id, to=target_name, worktree=worktree)
         if seat_row is None and lookup(root, resolved_instance_id) is None:
+            if steal_blocked:
+                return _refuse_steal(resolved_instance_id)
             return {
                 "ok": False,
                 "to": to,
@@ -343,7 +429,11 @@ def _send_one(
                 resolved_instance_id = sid.strip()
 
     packed, message = _pack_message(resolved_instance_id)
+    if steal_blocked and not resolved_instance_id:
+        return _refuse_steal(None)
     if resolved_instance_id and lookup(root, resolved_instance_id) is None:
+        if steal_blocked:
+            return _refuse_steal(resolved_instance_id)
         return {
             "ok": False,
             "to": to,
@@ -352,6 +442,18 @@ def _send_one(
             "pointers": packed,
             "convoy_id": cid,
         }
+    if resolved_instance_id and (steal_blocked or runner in (None, fake_runner)):
+        return deliver_to_live_seat(
+            root,
+            to,
+            body,
+            session_id=resolved_instance_id,
+            resume_token=resume_token,
+            packed=packed,
+            cid=cid,
+            label=label,
+            usage=usage,
+        )
     if not resolved_instance_id and not resume_token:
         cid = read_id(root)
         if cid:
@@ -447,9 +549,10 @@ def send_one(root, to, body, *args, **kwargs):
     """send_one with an honest delivery label (codex/grok finding 2026-09-02):
     recorded = a feed row exists and nothing reached a neuron (fake runner or
     dry run); executed = a fresh headless vendor session ran the body (not the
-    open pane); refused / error = nothing happened. `delivered` is always
-    False here: only an ack row AUTHORED BY THE TARGET proves delivery, and a
-    card cannot author that."""
+    open pane); refused / error = nothing happened; queued = named live seat
+    inbox (or Codex native-queue). `delivered` is always False here: only an
+    ack row AUTHORED BY THE TARGET proves delivery, and a card cannot author
+    that. Queued cards already set delivery and keep delivered=false."""
     card = _send_one(root, to, body, *args, **kwargs)
     if isinstance(card, dict) and "delivery" not in card:
         runner = kwargs.get("runner", args[2] if len(args) > 2 else None)  # (instance_id, label, runner, ...)

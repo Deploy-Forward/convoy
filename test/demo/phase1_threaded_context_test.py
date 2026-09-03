@@ -46,7 +46,8 @@ class Phase1ThreadedContext(unittest.TestCase):
         self.assertIsNotNone(lookup(self.root, sid))
         t2 = send_one(self.root, "grok", "T2", instance_id=sid)
         self.assertEqual(t2["session_id"], sid)
-        self.assertIn("read these paths", t2["stdin"])
+        self.assertEqual(t2.get("delivery"), "queued")
+        self.assertIn("T2", t2["stdin"])
 
     def test_parse_ola_brain_colon_reply(self):
         raw = "grok-session-phase1thread: Marco, load the brief\nPHASE1_T1"
