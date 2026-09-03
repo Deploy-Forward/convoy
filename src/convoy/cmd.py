@@ -64,17 +64,42 @@ def _probe_inbox_command(command: str) -> bool:
     if not head:
         return False
     line = head + " inbox --help"
-    shell = hook_shell()
+    # The hook shell inherits NOTHING from this process: a PYTHONPATH set for
+    # the caller made a dead `python -m convoy` look alive (live 2026-09-03,
+    # and it overwrote the one working hook on the thread). Scrub it.
+    env = {k: v for k, v in os.environ.items() if k not in ("PYTHONPATH", "PYTHONHOME")}
+    shells: list[list[str] | None] = [hook_shell(), None] if hook_shell() else [None]
+    for shell in shells:
+        try:
+            if shell:
+                r = subprocess.run(shell + [line], capture_output=True, text=True, env=env,
+                                   encoding="utf-8", errors="replace", timeout=25)
+            else:
+                r = subprocess.run(line, shell=True, capture_output=True, text=True, env=env,
+                                   encoding="utf-8", errors="replace", timeout=25)
+        except (OSError, subprocess.SubprocessError):
+            continue
+        if r.returncode == 0 and "--hook-pretooluse" in (r.stdout or ""):
+            # Candidates we WRITE must pass the primary (bash) shell; a command
+            # we merely KEEP may have been written for cmd.exe, so either
+            # shell passing is proof it delivers for its harness.
+            return True
+        if shell is None or not _PROBE_ANY_SHELL:
+            break
+    return False
+
+
+# Writers probe in the primary hook shell only; keep-existing probes any shell.
+_PROBE_ANY_SHELL = False
+
+
+def probe_existing_hook_command(command: str) -> bool:
+    global _PROBE_ANY_SHELL
+    _PROBE_ANY_SHELL = True
     try:
-        if shell:
-            r = subprocess.run(shell + [line], capture_output=True, text=True,
-                               encoding="utf-8", errors="replace", timeout=25)
-        else:
-            r = subprocess.run(line, shell=True, capture_output=True, text=True,
-                               encoding="utf-8", errors="replace", timeout=25)
-    except (OSError, subprocess.SubprocessError):
-        return False
-    return r.returncode == 0 and "--hook-pretooluse" in (r.stdout or "")
+        return _probe_inbox_command(command)
+    finally:
+        _PROBE_ANY_SHELL = False
 
 
 _RESOLVED: dict | None = None
