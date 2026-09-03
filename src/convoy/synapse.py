@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import shutil
 import subprocess
@@ -244,15 +245,28 @@ def deliver_to_live_seat(
 ) -> dict[str, Any]:
     """Queue a body for an existing occupant. Never spawn --resume."""
     sid = str(session_id or "").strip()
+    # Mint the token BEFORE any vendor push so it can ride inside the body:
+    # a `codex queue` message arrives as an ordinary user turn, which the
+    # receiver cannot tell from a human typing (codex said exactly that,
+    # 2026-09-03, and rightly refused to certify delivery). With the token
+    # in the text, an ack citing it is proof only Convoy could have sourced.
+    token = uuid.uuid4().hex
     native: dict[str, Any] | None = None
     if _native_harness_bin(to) == "codex" and resume_token:
-        native = try_codex_queue(resume_token, body)
+        framed = (
+            "Convoy inbox (" + str(label or "synapse") + ") token=" + token + "\n"
+            + str(body) + "\n\n"
+            + "Delivered by Convoy `codex queue` into this live session. "
+              "Cite the token when you ack so the channel is provable; "
+              "this is not a human typing and not a second --resume."
+        )
+        native = try_codex_queue(resume_token, framed)
     # `codex queue` exiting 0 is NOT proof codex consumed the message (a row
     # was found sitting in codex's sqlite for a dead pane, 2026-09-03), so the
     # inbox row stays PENDING until the receiver drains it, exactly as for
     # every other harness. path_name records that a native route was used.
     path_name = "codex-queue" if native else "inbox"
-    item = enqueue(root, sid, body, to=to, label=label, path_name=path_name)
+    item = enqueue(root, sid, body, to=to, label=label, path_name=path_name, token=token)
     delivery = native["delivery"] if native else "queued"
     runner = native["runner"] if native else "inbox"
     state = git_state(Path(packed.get("worktree") or root))
