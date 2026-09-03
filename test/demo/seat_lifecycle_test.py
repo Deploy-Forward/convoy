@@ -89,6 +89,33 @@ class UpdateSeatPreservesFields(unittest.TestCase):
         with self.assertRaises(ValueError):
             update_seat(self.root, "no-such-chair", model="x")
 
+    def test_launch_claim_can_be_released_for_relaunch(self):
+        """2026-09-03: after a consented close, launch refused the relaunch as
+        'already claimed' because the claim file outlived the pane."""
+        from convoy.targeted_launch import _claim, release_launch_claim
+        path = _claim(self.root, "chair-1")
+        self.assertTrue(path.is_file())
+        with self.assertRaises(ValueError):
+            _claim(self.root, "chair-1")
+        self.assertTrue(release_launch_claim(self.root, "chair-1"))
+        self.assertFalse(path.is_file())
+        self.assertFalse(release_launch_claim(self.root, "chair-1"))
+        self.assertTrue(_claim(self.root, "chair-1").is_file())
+
+    def test_same_harness_swap_nulls_both_token_fields(self):
+        """2026-09-03: a grok->grok swap kept vendor_session_id, so `launch`
+        saw a resumable chair and refused it as not fresh."""
+        update_seat(self.root, "chair-1", vendor_session_id="claude-vendor-uuid")
+        hp = self.root / "h.md"
+        hp.write_text("h", encoding="utf-8")
+        swap(self.root, "chair-1", "claude", str(hp), author="chair-1")
+        row = self._latest()
+        self.assertEqual(row["to"], "claude")
+        self.assertIsNone(row["resume"])
+        self.assertIsNone(row.get("vendor_session_id"))
+        self.assertIsNone(resume_target(row))
+        self.assertTrue(row["boot_prompt"])
+
 
 class SwapVerb(unittest.TestCase):
     """Marco's ratified contract: swap keeps the chair (session_id), replaces

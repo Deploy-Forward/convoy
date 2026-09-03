@@ -40,6 +40,7 @@ class SkillsFolderContract(unittest.TestCase):
         text = readme.read_text(encoding="utf-8")
         self.assertIn(".claude/skills", text)
         self.assertIn(".grok/skills", text)
+        self.assertIn("/prompts:convoy", text)
 
 
 if __name__ == "__main__":

@@ -95,7 +95,10 @@ def swap(
         instance_id=session_id, author=author, to=session_id,
         extra={"swap_to": to, "handoff": str(hp), "token": token, "memory": "convoy-state"},
     )
-    changes: dict[str, Any] = {"to": to, "resume": None,
+    # Both tokens null on EVERY swap, same harness included: update_seat only
+    # nulls vendor_session_id on a harness change, which left a grok->grok
+    # swap resumable and made `launch` refuse it as "not fresh" (2026-09-03).
+    changes: dict[str, Any] = {"to": to, "resume": None, "vendor_session_id": None,
                                "boot_prompt": _boot_prompt(root, session_id, token, str(hp))}
     if model:
         changes["model"] = model

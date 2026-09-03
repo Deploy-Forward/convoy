@@ -136,10 +136,20 @@ def run_host(
     except ValueError:
         pass
 
+    from .targeted_launch import release_launch_claim
+
     request = close_request_path(root, session_id)
+    # A close request left behind by a PREVIOUS body of this chair must not
+    # kill a fresh occupant (2026-09-03: a relaunched grok-lead was terminated
+    # two seconds after start by the request that closed its predecessor).
+    # Anything on disk before this host started belongs to the past.
+    if request.is_file():
+        request.unlink(missing_ok=True)
     while True:
         if request.is_file():
             terminate(process)
+            request.unlink(missing_ok=True)        # consumed: exactly one close per request
+            release_launch_claim(root, session_id)  # the pane is going away
             state.update({"status": "close-request-acknowledged", "closed_at": _stamp()})
             _write_state(root, session_id, state)
             try:
@@ -163,6 +173,7 @@ def run_host(
                 }
             )
             _write_state(root, session_id, state)
+            release_launch_claim(root, session_id)  # no body left; the chair may be launched again
             try:
                 update_seat(root, session_id, process_state="exited", pane_state="child-exited")
             except ValueError:
@@ -221,6 +232,11 @@ def close_managed_pane(
         finally:
             os.close(descriptor)
         update_seat(root, session_id, close_state="requested")
+        # The launch claim says "a pane exists for this chair". Once close is
+        # requested it must not block the next launch (2026-09-03: relaunch of
+        # a closed chair refused "already claimed" until the file was removed).
+        from .targeted_launch import release_launch_claim
+        release_launch_claim(root, session_id)
         return {
             "ok": True,
             "session_id": session_id,

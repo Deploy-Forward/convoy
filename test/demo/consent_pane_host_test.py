@@ -248,17 +248,26 @@ class ManagedPaneHost(unittest.TestCase):
     def test_host_terminates_its_owned_child_and_returns_zero_on_consented_close(
         self, _which_harness
     ):
-        class FakeProcess:
-            pid = 303
-
-            def poll(self):
-                return None
+        """The close request arrives AFTER the host is running (a consented
+        close during the session). The host terminates its child, consumes the
+        request file, releases the launch claim, and returns 0."""
+        from convoy.targeted_launch import _claim, _claim_path
 
         close_path = host_state_path(self.root, "managed-chair").with_suffix(".close")
         close_path.parent.mkdir(parents=True, exist_ok=True)
-        close_path.write_text("{}\n", encoding="utf-8")
-        terminated = []
+        _claim(self.root, "managed-chair")
 
+        class FakeProcess:
+            pid = 303
+            polls = 0
+
+            def poll(self):
+                self.polls += 1
+                if self.polls == 2:
+                    close_path.write_text("{}\n", encoding="utf-8")
+                return None
+
+        terminated = []
         rc = run_host(
             self.root,
             "managed-chair",
@@ -270,6 +279,43 @@ class ManagedPaneHost(unittest.TestCase):
         self.assertEqual(terminated, [303])
         state = json.loads(host_state_path(self.root, "managed-chair").read_text())
         self.assertEqual(state["status"], "close-request-acknowledged")
+        self.assertFalse(close_path.is_file(), "close request must be consumed")
+        self.assertFalse(_claim_path(self.root, "managed-chair").is_file(), "launch claim must be released")
+
+    @mock.patch("convoy.bringup.shutil.which", return_value="C:\\Tools\\codex.exe")
+    def test_stale_close_request_does_not_kill_a_fresh_host(self, _which_harness):
+        """2026-09-03 live: a relaunched grok-lead was terminated two seconds
+        after start by the .close file that had closed its predecessor. A
+        request on disk before the host starts belongs to the past."""
+        from convoy.targeted_launch import _claim, _claim_path
+
+        close_path = host_state_path(self.root, "managed-chair").with_suffix(".close")
+        close_path.parent.mkdir(parents=True, exist_ok=True)
+        close_path.write_text('{"requested_at": "yesterday"}\n', encoding="utf-8")
+        _claim(self.root, "managed-chair")
+
+        class FakeProcess:
+            pid = 404
+            polls = 0
+
+            def poll(self):
+                self.polls += 1
+                return 0 if self.polls >= 3 else None   # child exits normally later
+
+        terminated = []
+        rc = run_host(
+            self.root,
+            "managed-chair",
+            popen=lambda *_a, **_k: FakeProcess(),
+            terminate=lambda proc: terminated.append(proc.pid),
+            sleep=lambda _seconds: None,
+        )
+        self.assertEqual(rc, 0)
+        self.assertEqual(terminated, [])
+        self.assertFalse(close_path.is_file(), "stale request is discarded at start")
+        state = json.loads(host_state_path(self.root, "managed-chair").read_text())
+        self.assertEqual(state["status"], "child-exited")
+        self.assertFalse(_claim_path(self.root, "managed-chair").is_file(), "claim released when the child exits")
 
 
 if __name__ == "__main__":
