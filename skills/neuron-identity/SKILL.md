@@ -23,10 +23,19 @@ Grok Bot is the conductor: one chat, own memory, own cloud computer. It orchestr
 A **synapse** is native Convoy `send` into one neuron. Headless. Compact card back. Do not type into another neuron's TUI. Do not merge vendor sessions. Do not `--resume` a seat you do not own.
 
 ```
-python -m convoy send --to <harness> "..."
+convoy send --to <harness> "..."
 ```
 
-`send --live` must not steal a live TUI. If a seat is already live, refuse rather than spawn a second interactive `--resume`.
+`convoy` is the console script (`pip install .` / `pipx install .`); `python -m convoy` is the same thing after a plain install. `send --live` must not steal a live TUI. If a seat is already live, refuse rather than spawn a second interactive `--resume`. A send card says `delivery: recorded | executed | refused`; only an ack row authored by the target proves delivery.
+
+## Detect, identify, then send
+
+Before you write to the bus, know which chair you are. This works the same on grok, claude, codex, cursor-agent, agy, hermes, and pi:
+
+1. `convoy panes` — every body of every neuron on this thread from the OS process table (pid, chair, matched by token / worktree / cwd, duplicates, unassigned). Never resume a chair it shows live.
+2. `convoy whoami` — walks your own process ancestry to your harness and names your chair, or returns `null` with an ask (`join` or seat this worktree). Never guess your chair.
+3. `convoy hook note "<text>" --as-me --to <chair>` — write as yourself; it refuses when no chair on this thread matches your body.
+4. `convoy graph --neuron <your chair>` — your post-hook: last contribution, rank, degree, who holds lead, and the thread pointer to resume from.
 
 ## Usage dying
 
