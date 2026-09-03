@@ -76,7 +76,8 @@ class ForeignWorktreeRefused(unittest.TestCase):
         with self.assertRaises(ValueError) as cm:
             seat(self.root, "codex", "chair-b", worktree=str(wt))
         self.assertIn("chair-a", str(cm.exception))
-        self.assertIn("ambiguous", str(cm.exception))
+        self.assertIn("chair-b", str(cm.exception))
+        self.assertIn(str(wt), str(cm.exception))
         with self.assertRaises(ValueError):
             join(self.root, "grok", session_id="chair-c", worktree=str(wt))
         other = Path(tempfile.mkdtemp())
