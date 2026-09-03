@@ -4,6 +4,92 @@ Convoy is shared project memory for Grok Bot: attach one MCP endpoint, route wor
 
 Public MCP remains one root: `https://convoy.bot/mcp`. A named thread is a `--root` binding, not a second MCP URL.
 
+## Install
+
+Python >= 3.11, standard library only (no runtime dependencies).
+
+```bash
+git clone https://github.com/Deploy-Forward/convoy.git
+cd convoy
+python -m pip install .
+convoy --help
+```
+
+Alternative: `pipx install .` (not verified on Windows in this pass).
+
+The `convoy` console script and `python -m convoy` both work only after
+install. To run from a checkout without installing, put `src` on the path:
+`PYTHONPATH=src python test/run.py` on bash, or
+`$env:PYTHONPATH='src'; python test/run.py` in PowerShell.
+
+## CLI reference
+
+One line per verb; flags shown are the ones you will reach for (see
+`convoy <verb> --help` for the full set). Every verb accepts a global
+`--root <thread-root>` before the verb name.
+
+Read (no writes to thread state):
+
+- `threads` — every Convoy thread this machine knows.
+- `panes` — every body of every neuron on this thread, from the OS process table; never a token.
+- `whoami` — which chair is this process? Walks process ancestry to the harness.
+- `graph [--neuron <chair>] [--html [--out <file>]]` — read-only ontology of the thread.
+- `seats [--convoy-id <id>]` — seat rows.
+- `feed --since <ts>` — events since a timestamp.
+- `context [--instance-id <chair>]` — pointer pack for a neuron.
+- `glance [--thread <name>] [--tray]` — one-screen status.
+- `resume --neuron <chair>` — dry: prints native argv + cwd, spawns nothing.
+- `choices` — installed harnesses, known worktrees, chairs, terminal adapter; no resume tokens.
+- `probe --to <harness>`, `id`, `terminals`.
+
+Write (thread state):
+
+- `init` — create the thread layer at `--root`.
+- `bind --thread <name>` — bind this root to a named thread.
+- `onboard --to <harness> [--to ...] [--thread <name>]` — name installed harnesses and bind.
+- `seat --to <harness> --session-id <chair> [--worktree <path>] [--model M] [--resume <vendor-id>] [--title T] [--effort E]` — register a seated neuron.
+- `join --to <harness> [--worktree <path>] [--title T] [--as <chair>] [--launch] [--consent <id>]` — register one fresh chair.
+- `swap --seat <chair> --to <harness> --handoff <.ola/*handoff*> --as <chair>` — replace the occupant, keep the chair.
+- `seated --seat <chair> --token <token>` — proof-of-life echo from the new occupant.
+- `lead --to <chair> --as <you>` — pass lead to a chair.
+- `hook note "<text>" [--as-me] --to <chair>` — leave a note for a chair (or `grok-bot`).
+- `stamp "<summary>" [--agent A] [--model M] [--effort E] [--transcript <pointer>]` — conductor stamp.
+- `send --to <harness> "<body>" [--live] [--dry-run]` — synapse; the default runner only records a feed row (`delivery: recorded`), `--live` runs a fresh headless vendor session.
+- `install --to <harness> --opt-in [--live]` — cataloged installer; dry-run by default.
+
+Launch / panes:
+
+- `choices` — see above; run it first.
+- `launch --seat <chair> [--dry-run] [--consent <id>]` — split one already-joined fresh chair into the active pane host.
+- `consent --grant <request-id>` — grant a prior consent request after the user explicitly approves it.
+- `close --seat <chair> [--consent <id>]` — request closure of one Convoy-managed pane.
+- `bring-up` / `open [--thread <name>] [--dry-run]` — bulk show of seated neurons in one new terminal window.
+- `hide` / `minimize` / `background [--dry-run]` — bulk hide.
+- `resume --neuron <chair> --go` — spawn once in the chair's worktree; refuses when a live body holds the chair.
+
+MCP:
+
+- `mcp [--root <thread-root>] [--host 127.0.0.1] [--port 8788]` — serve the MCP endpoint for one root.
+
+### Run your own MCP
+
+```bash
+convoy mcp --root <thread-root> --port 8788
+```
+
+Then attach `http://127.0.0.1:8788/mcp` in your MCP client. Write tools are
+off by default on the RPC layer: set `CONVOY_MCP_WRITE_TOOLS=1` on a
+gated/loopback deploy to expose `stamp`, `note`, and `resume` with `go=true`.
+The public `https://convoy.bot/mcp` is bound to one root; a different thread
+means running your own server with your own `--root`.
+
+## Names you will see
+
+- **Grok Bot** — the xAI desktop conductor chat that attaches the MCP; not a neuron.
+- **ola-brain** — a private predecessor wrapper; refused by `install`, not needed.
+- **Deploy-Forward/platform** — a closed sibling repo; not needed to run this repo.
+- **Aether** — an internal demo host; not needed.
+
 ## Terms
 
 - **Grok Bot**: the conductor in this chat; not a neuron and not a window.
@@ -38,7 +124,11 @@ machine-readable source of truth is `src/convoy/harness_effort.json` — this
 README deliberately does not restate the table, so there is exactly one place
 for it to drift from the code: none.
 
-### Fully supported neurons (code-true contract)
+### Supported neurons (code-true contract)
+
+`grok`, `claude`, `codex`, `cursor-agent`, and `agy` have a cataloged installer
+(`convoy install --to`); `hermes` and `pi` are BYO-only (`install` refuses them)
+and their direct-id resume is unverified.
 
 | Harness | `onboard` / `roster` id | `resume_argv` shape | `ensure_first_run` behavior | `send --live` behavior |
 | --- | --- | --- | --- | --- |
@@ -121,24 +211,25 @@ Convoy returns an `awaiting-user-consent` card and never auto-accepts them.
 ## End-to-end example
 
 ```bash
+# (after `python -m pip install .`, see Install)
 # 1) Name installed harnesses and bind this root to one thread
-python -m convoy onboard --to grok --to claude --to codex --thread demo
+convoy onboard --to grok --to claude --to codex --thread demo
 
 # 2) Register seated neurons (session key + optional vendor resume token)
-python -m convoy seat --to grok --session-id seat-grok --worktree ../wt-grok --model gpt-5.6-sol --resume vendor-grok-uuid
-python -m convoy seat --to codex --session-id seat-codex --worktree ../wt-codex --resume vendor-codex-uuid
+convoy seat --to grok --session-id seat-grok --worktree ../wt-grok --model gpt-5.6-sol --resume vendor-grok-uuid
+convoy seat --to codex --session-id seat-codex --worktree ../wt-codex --resume vendor-codex-uuid
 
 # 3) Dry-run bring-up shows native argv (Codex uses "resume" subcommand)
-python -m convoy bring-up --dry-run
+convoy bring-up --dry-run
 
 # 4) Headless synapse (safe default)
-python -m convoy send --to claude "Summarize open payment retry bugs and propose a fix plan."
+convoy send --to claude "Summarize open payment retry bugs and propose a fix plan."
 
 # 5) Optional live headless run in a fresh native session (no resume token)
-python -m convoy send --to codex --live "Draft unit tests for the retry planner."
+convoy send --to codex --live "Draft unit tests for the retry planner."
 ```
 
-Development: `PYTHONPATH=src python3 test/run.py` (discovers `test/demo/*_test.py`).  
+Development: `PYTHONPATH=src python test/run.py` (discovers `test/demo/*_test.py`).  
 License: MIT.
 
 ## Cloudflare split hosting (static site + MCP proxy)

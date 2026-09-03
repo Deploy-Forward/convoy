@@ -9,11 +9,15 @@ what it is and how to behave on the thread — before its first turn.
 Per harness, `identity.install_neuron_identity` writes the same text to the
 places each harness reads:
 
-| Harness | Where it lands |
-| --- | --- |
-| `claude` | `<worktree>/.claude/skills/<name>/SKILL.md` |
-| `grok` | `<worktree>/.grok/skills/<name>/SKILL.md` |
-| all | `<worktree>/AGENTS.md` pointer naming both paths |
+| Harness | Where it lands | Auto-load verified? |
+| --- | --- | --- |
+| `claude` | `<worktree>/.claude/skills/<name>/SKILL.md` | n/a (native skills dir, not AGENTS.md) |
+| `grok` | `<worktree>/.grok/skills/<name>/SKILL.md` | n/a (native skills dir, not AGENTS.md) |
+| all | `<worktree>/AGENTS.md` pointer naming both paths | `codex`: yes. `cursor-agent`: unverified. `agy`, `hermes`, `pi`: unverified. |
+
+Whether or not a harness auto-loads `AGENTS.md`, the boot prompt Convoy
+passes at launch names the `SKILL.md` path directly, so a neuron reads it
+regardless.
 
 ## Canonical vs packaged copies
 

@@ -29,7 +29,7 @@ class NeuronIdentity(unittest.TestCase):
         self.assertIn("you are one **neuron**", low)
         self.assertIn("not grok bot", low)
         self.assertIn("cvy_", low)
-        self.assertIn("python -m convoy send", low)
+        self.assertIn("convoy send --to", low)
         self.assertIn("bring_up", low)
         self.assertIn("grok-bot-cloud", low)
         self.assertIn("ask the user", low)

@@ -16,6 +16,7 @@ import uuid
 from pathlib import Path
 from typing import Any
 
+from .cmd import convoy_root_command
 from .convoy import list_seats, read_thread, seat as write_seat, set_lead, update_seat
 from .layer import hook
 
@@ -42,7 +43,7 @@ def _boot_prompt(root: Path, session_id: str, token: str, handoff: str) -> str:
     return (
         "You are the new occupant of Convoy seat '" + session_id + "'. "
         "Read " + str(thread_path) + " and " + str(handoff_path) + ". Then run: "
-        "python -m convoy --root " + str(root) + " seated --seat " + session_id +
+        + convoy_root_command(root) + " seated --seat " + session_id +
         " --token " + token + " — then continue the seat's work."
     )
 

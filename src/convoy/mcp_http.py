@@ -73,8 +73,6 @@ HOME_LINE = "convoy.bot · a grok-bot native mcp · one process ↔ one bound th
 
 HARNESSES = tuple((row["id"], str(row.get("name") or row["id"])) for row in harness_entries(mcp_supported_only=True))
 
-_TOOL_NAMES = ("roster", "glance", "onboard", "terminals", "context", "send", "feed", "stamp", "note", "bring_up", "open", "hide", "minimize", "background", "install")
-
 # N-5 gate: SoT write tools are never exposed on an ungated public process.
 # RPC-layer only — CLI and in-process call_tool stay usable; a gated/loopback
 # deploy opts in via CONVOY_MCP_WRITE_TOOLS=1.
