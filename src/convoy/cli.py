@@ -194,6 +194,17 @@ def main(argv: list[str] | None = None) -> int:
     mcp.add_argument("--host", default="127.0.0.1")
     mcp.add_argument("--port", type=int, default=8788)
 
+    ga = sub.add_parser(
+        "grok-acp",
+        help="Grok ACP session-message: session/prompt over grok agent stdio (the vendor API; not inbox/PreToolUse)",
+    )
+    ga.add_argument("--probe", action="store_true", help="throwaway session/new + session/prompt; never attaches a live TUI")
+    ga.add_argument("--share", action="store_true", help="with --probe: also try two clients on a private leader")
+    ga.add_argument("--session-id", help="existing Grok vendor session UUID (not the Convoy chair id)")
+    ga.add_argument("--cwd", help="session working directory")
+    ga.add_argument("--message", help="prompt text to session/prompt")
+    ga.add_argument("--leader", action="store_true", help="require a grok leader; refuse if none")
+
     args = p.parse_args(argv)
     root = Path(args.root).resolve()
     # Chats launch from project subfolders: for read verbs, walk up to the
@@ -203,6 +214,11 @@ def main(argv: list[str] | None = None) -> int:
         if found is not None:
             root = found
 
+    if args.cmd == "grok-acp":
+        from .grok_acp import cli_grok_acp
+        card = cli_grok_acp(args)
+        print(json.dumps(card, default=str))
+        return 0 if card.get("ok") else 1
     if args.cmd == "whoami":
         me = identify(root)
         print(json.dumps(me))

@@ -8,6 +8,9 @@ description: How a neuron on ANY harness (grok, claude, codex, cursor-agent, agy
 You are a neuron. Two channels can carry a message to you. Neither one wakes
 you while you are idle at your prompt; you receive at your next turn, or when
 a hook fires at tool time. That is the honest contract on every harness today.
+Grok additionally speaks ACP `session/prompt` (`convoy grok-acp`): that is a
+vendor turn, not a hook, and it only reaches a live TUI when that TUI shares
+a grok leader with Convoy.
 
 | Channel | Where it lives | Who writes it | How you read it |
 | --- | --- | --- | --- |
@@ -43,7 +46,7 @@ convoy --root <root> inbox --drain --seat <your chair>
 
 | Harness | Hook that drains the inbox for you | Fires | Installed by |
 | --- | --- | --- | --- |
-| grok | `.grok/hooks/convoy-inbox.json` PreToolUse → `convoy inbox --hook-pretooluse` | at tool time, mid-turn only | Convoy first run (`ensure_first_run`) |
+| grok | `.grok/hooks/convoy-inbox.json` PreToolUse → `convoy inbox --hook-pretooluse`; ACP `session/prompt` (`convoy grok-acp`) when a leader is attached | tool time, mid-turn only (hook); immediately via ACP if a leader is up | Convoy first run (`ensure_first_run`) |
 | claude | `.claude/settings.json` PreToolUse + UserPromptSubmit → same command | tool time and turn start | Convoy first run |
 | codex | none proven; `codex queue --thread <id> --message` exists and is unproven as delivery | never on its own | you: run the loop by hand |
 | cursor-agent, agy, hermes, pi | none | never on its own | you: run the loop by hand |

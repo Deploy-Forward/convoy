@@ -145,8 +145,16 @@ refuses to resume an active session (no-steal); `send` without `--live`
 records. The legal path to an open neuron is an ADDRESSED ROW (`hook note "…" --to
 <chair>`) plus that neuron's own listener at its next turn boundary (claude:
 bus listener; grok: PreToolUse `additionalContext`, tool-time only). That is
-"queued", and it becomes "delivered" when the target acks. Idle-wake stays
-unproven on every harness (D4 red).
+"queued", and it becomes "delivered" when the target acks.
+
+Grok has no `grok queue`. Inbox + PreToolUse is deferred delivery, not a
+wake. The vendor session-message API is ACP `session/prompt` over
+`grok agent stdio` (`convoy grok-acp`). A live TUI is itself an ACP client;
+a second `--no-leader` `session/load` of its vendor id is a steal. Idle-wake
+of a TUI requires that TUI and Convoy share a grok leader. `send --live`
+to grok tries ACP when a leader is up (`delivery: native-queued`, token in
+the body, inbox row still pending) and otherwise stays on the inbox path.
+Idle-wake of a leaderless TUI stays unproven (D4 red).
 
 Unit: `test/demo/tools_delivery_test.py`. Also landed: `graph`, `threads`,
 `resume` (dry; `go` behind the write gate) as MCP tools, so neurons attached

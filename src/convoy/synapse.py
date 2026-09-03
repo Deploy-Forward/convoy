@@ -11,6 +11,7 @@ from typing import Any, Callable
 
 from .context import pack, stdin_for
 from .gitstate import git_state
+from .grok_acp import looks_like_grok_vendor_id, try_grok_acp, vendor_session_for_cwd
 from .inbox import enqueue
 from .layer import hook
 from .usage import normalize_usage_remaining, probe
@@ -230,6 +231,17 @@ def try_codex_queue(thread: str, body: str) -> dict[str, Any] | None:
     return {"ok": True, "runner": "codex-queue", "delivery": "native-queued", "exit_code": 0}
 
 
+def _frame_native_body(label: str | None, token: str, body: str, how: str) -> str:
+    """Token rides inside the vendor push so an ack can prove the channel."""
+    return (
+        "Convoy inbox (" + str(label or "synapse") + ") token=" + token + "\n"
+        + str(body) + "\n\n"
+        + "Delivered by Convoy `" + how + "` into this live session. "
+          "Cite the token when you ack so the channel is provable; "
+          "this is not a human typing and not a second --resume."
+    )
+
+
 def deliver_to_live_seat(
     root: Path,
     to: str,
@@ -252,20 +264,27 @@ def deliver_to_live_seat(
     # in the text, an ack citing it is proof only Convoy could have sourced.
     token = uuid.uuid4().hex
     native: dict[str, Any] | None = None
-    if _native_harness_bin(to) == "codex" and resume_token:
-        framed = (
-            "Convoy inbox (" + str(label or "synapse") + ") token=" + token + "\n"
-            + str(body) + "\n\n"
-            + "Delivered by Convoy `codex queue` into this live session. "
-              "Cite the token when you ack so the channel is provable; "
-              "this is not a human typing and not a second --resume."
+    hid = _native_harness_bin(to)
+    if hid == "codex" and resume_token:
+        native = try_codex_queue(
+            resume_token,
+            _frame_native_body(label, token, body, "codex queue"),
         )
-        native = try_codex_queue(resume_token, framed)
-    # `codex queue` exiting 0 is NOT proof codex consumed the message (a row
-    # was found sitting in codex's sqlite for a dead pane, 2026-09-03), so the
-    # inbox row stays PENDING until the receiver drains it, exactly as for
-    # every other harness. path_name records that a native route was used.
-    path_name = "codex-queue" if native else "inbox"
+    elif hid == "grok":
+        vendor = resume_token if looks_like_grok_vendor_id(resume_token) else None
+        if not vendor:
+            vendor = vendor_session_for_cwd(packed.get("worktree"))
+        if vendor:
+            native = try_grok_acp(
+                vendor,
+                _frame_native_body(label, token, body, "grok-acp session/prompt"),
+                cwd=packed.get("worktree"),
+            )
+    # A vendor push exiting 0 is NOT proof the occupant consumed the message
+    # (codex 2026-09-03: a row sat in sqlite for a dead pane), so the inbox
+    # row stays PENDING until the receiver drains it. path_name records the
+    # native route when one was used.
+    path_name = str(native.get("runner") or "inbox") if native else "inbox"
     item = enqueue(root, sid, body, to=to, label=label, path_name=path_name, token=token)
     delivery = native["delivery"] if native else "queued"
     runner = native["runner"] if native else "inbox"
