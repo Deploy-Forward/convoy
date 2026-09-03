@@ -20,8 +20,25 @@ node_modules/
 .claude/
 .grok/
 AGENTS.md
+CLAUDE.md
+
+# Per-seat thread pointer / handoff layer written into a checkout.
+.ola/
+thread.md
 
 # Per-session operator notes (seed / handoff prompts). Machine-specific paths,
 # never repo content.
 SEED.md
 PRIOR_THREAD.md
+
+# Conductor/neuron message drops that live untracked in a seat checkout.
+CHIP.md
+CONDUCTOR*.md
+CONFIRM.md
+GREEN.md
+LATENCY.md
+LIVE_SEAT_SPEC.md
+ORCH_SEND.md
+PUSH.md
+STAMP.md
+ULTRACODE.md

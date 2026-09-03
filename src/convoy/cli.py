@@ -316,7 +316,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.cmd == "graph":
         if args.html:
             known = [Path(r["root"]) for r in list_threads() if r["present"]]
-            roots = [root] + [Path(r) for r in args.also_root]
+            # the given root counts only when it actually carries a thread (never invent)
+            roots = ([root] if read_id(root) else []) + [Path(r) for r in args.also_root]
             roots += [k for k in known if k.resolve() not in {r.resolve() for r in roots}]
             threads = [{"root": str(r), "graph": build_graph(r)} for r in roots]
             out = Path(args.out) if args.out else (root / ".convoy" / "graph.html")

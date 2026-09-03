@@ -18,8 +18,12 @@ def main() -> int:
     # Tests mint temp roots; keep their index rows out of the real ~/.convoy.
     os.environ.setdefault("CONVOY_HOME", tempfile.mkdtemp(prefix="convoy-test-home-"))
     start = ROOT / "test" / "demo"
+    guard = os.environ["CONVOY_HOME"]
     suite = unittest.defaultTestLoader.discover(str(start), pattern="*_test.py")
     result = unittest.TextTestRunner(verbosity=2).run(suite)
+    if os.environ.get("CONVOY_HOME") != guard:
+        print("FAIL: a test changed CONVOY_HOME; later tests may have written the real ~/.convoy index", file=sys.stderr)
+        return 1
     return 0 if result.wasSuccessful() else 1
 
 

@@ -24,19 +24,25 @@ fallback — it is the primary surface.
    CLI-on-root when the public MCP is read-only.
 5. Never copy/paste historical counts ("13 tools", "14 tools") into this file.
 
-Tree-only CLI verbs (`join` / `swap` / `seated`, plus `choices` / `launch` /
-`close` / `consent`, plus `graph [--neuron S]`) are absent from the public MCP
-until deployed. Render them as absent on the wire; do not invent a catalog
-count.
+On the wire (in the tree's MCP tool list; the live server may lag until
+redeploy): `roster`, `glance`, `onboard`, `terminals`, `context`, `send`,
+`feed`, `stamp`*, `note`*, `bring_up`/`open`, `hide`/`minimize`/`background`,
+`install`, `graph`, `panes`, `threads`, `resume` (`go=true`*). Starred tools
+sit behind the write gate. CLI-only, never on the wire: `init`, `id`, `bind`,
+`attach`, `seat`, `seats`, `join`, `swap`, `seated`, `lead`, `whoami`,
+`hook` (incl. `hook note … --as-me`), `choices`, `launch`, `consent`,
+`close`, `probe`. Render what `tools/list` returns now; do not invent a
+catalog count.
 
 ## Detect, identify, then send: `panes` and `whoami`
 
 `panes` lists every body of every neuron on the thread from the OS process
 table, not only what Convoy launched: per chair `live`, `bodies` (pid, via
-`token` or `cwd`), `duplicate`, plus `unassigned` harness processes Convoy
-cannot place (Windows exposes no cwd, so fresh launches there land here).
+`token`, `worktree`, or `cwd`), `duplicate`, plus `unassigned` harness
+processes Convoy cannot place (Windows exposes no cwd; a fresh launch there
+is placed only if its command line names the worktree or a token).
 `whoami` walks YOUR process ancestry to your harness and names your chair
-(token, then cwd) or returns null with an ask. Author rows as yourself with
+(token, then worktree, then cwd) or returns null with an ask. Author rows as yourself with
 `hook note "<text>" --as-me --to <chair>`; it refuses when no chair on this
 thread matches your body. Never type into another pane; never resume a chair
 that `panes` shows live.
@@ -47,7 +53,7 @@ that `panes` shows live.
 neuron), `executed` (a fresh headless session ran it, not the open pane), or
 `refused`. `delivered` is always false on a card: only an ack row authored by
 the target proves delivery. To reach an OPEN neuron, write an addressed row
-(`note --to <chair>`) and wait for its ack; never type into its TUI, never
+(`hook note "<text>" --to <chair>`) and wait for its ack; never type into its TUI, never
 resume its session.
 
 ## Finding threads from anywhere: `threads`

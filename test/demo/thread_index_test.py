@@ -29,11 +29,15 @@ def _run_cli(root, *argv):
 class ThreadIndex(unittest.TestCase):
     def setUp(self):
         self.home = Path(tempfile.mkdtemp())
+        self._prev_home = os.environ.get("CONVOY_HOME")   # restore, never pop: the runner's guard must survive
         os.environ["CONVOY_HOME"] = str(self.home)
         self.root = Path(tempfile.mkdtemp())
 
     def tearDown(self):
-        os.environ.pop("CONVOY_HOME", None)
+        if self._prev_home is None:
+            os.environ.pop("CONVOY_HOME", None)
+        else:
+            os.environ["CONVOY_HOME"] = self._prev_home
 
     def test_index_path_honours_convoy_home(self):
         self.assertEqual(index_path(), self.home / "threads.json")

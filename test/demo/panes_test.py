@@ -81,7 +81,33 @@ class MatchProcesses(unittest.TestCase):
     def test_bodies_falls_back_to_empty_when_enumeration_fails(self):
         out = bodies(self.root, enumerate_fn=lambda: (_ for _ in ()).throw(OSError("no ps")))
         self.assertEqual(out["source"], None)
+        self.assertIn("no ps", out["error"])
         self.assertTrue(all(not c["live"] for c in out["chairs"]))
+
+    def test_helpers_fold_into_one_body_and_worktree_arg_matches_on_windows(self):
+        """Live 2026-09-03: the lead chair showed two bodies by token — the
+        session plus its --bg-pty-host parent. One ancestor chain is one body.
+        A grok launched fresh carries its worktree in --agent; that is the
+        Windows substitute for cwd."""
+        procs = [
+            {"pid": 50, "ppid": 1, "cmdline": "claude --bg-pty-host pipe-e05 -- claude --resume 01a0-codex-token", "cwd": None},
+            {"pid": 51, "ppid": 50, "cmdline": "codex resume 01a0-codex-token", "cwd": None},
+            {"pid": 52, "ppid": 51, "cmdline": "claude --type=utility --utility-sub-type=x", "cwd": None},
+            {"pid": 53, "ppid": 1, "cmdline": "claude daemon run --origin transient", "cwd": None},
+            {"pid": 54, "ppid": 1, "cmdline": "codex app-server --listen stdio://", "cwd": None},
+            {"pid": 55, "ppid": 1, "cmdline": "grok.EXE --trust --agent C:\\w\\grok\\.grok\\agents\\convoy-neuron.md", "cwd": None},
+        ]
+        seat(self.root, "grok", "gw-t1", worktree="C:\\w\\grok")
+        out = match_processes(self.root, procs)
+        by = {c["session_id"]: c for c in out["chairs"]}
+        self.assertEqual([b["pid"] for b in by["c-t1"]["bodies"]], [51])   # the pty host is a helper; the session is the body
+        self.assertFalse(by["c-t1"]["duplicate"])
+        self.assertEqual(by["gw-t1"]["bodies"][0]["via"], "worktree")
+        unassigned = {u["pid"] for u in out["unassigned"]}
+        self.assertNotIn(52, unassigned)   # utility child of a claimed body
+        self.assertNotIn(53, unassigned)   # daemon
+        self.assertNotIn(54, unassigned)   # app-server
+        self.assertFalse(out.get("error"))
 
 
 class Whoami(unittest.TestCase):
