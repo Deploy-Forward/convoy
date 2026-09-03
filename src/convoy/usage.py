@@ -134,7 +134,17 @@ def _parse_claude(raw: str) -> tuple[Any, bool]:
     data = _jsonish(text)
     remaining = normalize_usage_remaining(data)
     session_pct, _week_pct = _parse_claude_progress(data, text)
-    limited = session_pct == 100 or ("100%" in text.lower() and "session" in text.lower())
+    if session_pct is not None:
+        # A parsed session percentage is the answer. Do not second-guess it.
+        limited = session_pct >= 100
+    else:
+        # Fallback only when nothing parsed, and only for a session line that
+        # is itself at 100%. The old test was `"100%" in text and "session" in
+        # text`, so ANY 100% in the blob — a per-model weekly cap sitting
+        # beside a session at 8% — refused every send to that harness (live
+        # 2026-09-03: blocked the whole receive path on any machine with
+        # Claude Code installed).
+        limited = bool(re.search(r"session[^\n%]{0,40}?100\s*%", text, re.I))
     return remaining, limited
 
 
