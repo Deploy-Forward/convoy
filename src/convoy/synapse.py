@@ -247,6 +247,10 @@ def deliver_to_live_seat(
     native: dict[str, Any] | None = None
     if _native_harness_bin(to) == "codex" and resume_token:
         native = try_codex_queue(resume_token, body)
+    # `codex queue` exiting 0 is NOT proof codex consumed the message (a row
+    # was found sitting in codex's sqlite for a dead pane, 2026-09-03), so the
+    # inbox row stays PENDING until the receiver drains it, exactly as for
+    # every other harness. path_name records that a native route was used.
     path_name = "codex-queue" if native else "inbox"
     item = enqueue(root, sid, body, to=to, label=label, path_name=path_name)
     delivery = native["delivery"] if native else "queued"

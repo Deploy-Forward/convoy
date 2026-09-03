@@ -136,13 +136,27 @@ class LiveSeatInbox(unittest.TestCase):
         enqueue(self.root, "sess-grok", "TOKEN-BODY-99", to="grok", label="design-review")
         card = hook_pretooluse(self.wt)
         ctx = card["hookSpecificOutput"]["additionalContext"]
-        self.assertEqual(card.get("decision"), "allow")
         self.assertIn("TOKEN-BODY-99", ctx)
         self.assertIn("design-review", ctx)
         self.assertIn("token=", ctx)
         self.assertEqual(pending(self.root, "sess-grok"), [])
         empty = hook_pretooluse(self.wt)
-        self.assertEqual(empty.get("decision"), "allow")
+        self.assertEqual(empty, {})
+
+    def test_hook_output_never_carries_a_top_level_decision(self):
+        """Live in Marco's own pane 2026-09-03: Claude Code refused our output
+        with "expected one of approve|block" because we sent
+        {"decision": "allow"}. That field is the legacy permission vote; a
+        context-adding hook must not send it, and the no-message case is an
+        empty object, not a vote."""
+        write_root_pointer(self.wt, self.root)
+        self.assertEqual(hook_pretooluse(self.wt), {})
+        enqueue(self.root, "sess-grok", "NO-DECISION-FIELD", to="grok")
+        card = hook_pretooluse(self.wt)
+        self.assertNotIn("decision", card)
+        self.assertEqual(set(card), {"hookSpecificOutput"})
+        self.assertEqual(set(card["hookSpecificOutput"]), {"hookEventName", "additionalContext"})
+        self.assertIn(card["hookSpecificOutput"]["hookEventName"], ("PreToolUse", "UserPromptSubmit"))
 
     def test_cli_live_send_queues(self):
         buf = io.StringIO()
@@ -182,32 +196,37 @@ class LiveSeatInbox(unittest.TestCase):
         self.assertTrue(queued)
         self.assertEqual(queued[0][1:5], ["queue", "--thread", "01codex", "--message"])
 
-    def test_hook_command_is_bare_convoy_never_interpreter(self):
+    def test_hook_command_is_probed_where_it_runs(self):
+        """Audit 2026-09-03 reversed PR 40's bare-only rule: the bare name was
+        shadowed by an unrelated shim on the audited machine and invisible to
+        Git Bash, so every hook written was dead. Hook files never travel (they
+        are gitignored per-worktree state), so an absolute interpreter path is
+        allowed when it is the command that actually resolves. The documents
+        take whatever the probe returned."""
         self.assertEqual(inbox_hook_command(), INBOX_HOOK_COMMAND)
         self.assertEqual(INBOX_HOOK_COMMAND, "convoy inbox --hook-pretooluse")
-        self.assertFalse(command_bakes_interpreter(INBOX_HOOK_COMMAND))
-        self.assertTrue(command_bakes_interpreter(sys.executable + " -m convoy inbox --hook-pretooluse"))
-        self.assertTrue(command_bakes_interpreter(r"C:\Python\python.exe -m convoy inbox --hook-pretooluse"))
-        grok_doc = grok_inbox_hook_document()
-        claude_doc = claude_inbox_hook_document()
-        grok_cmd = grok_doc["hooks"]["PreToolUse"][0]["hooks"][0]["command"]
-        claude_pre = claude_doc["hooks"]["PreToolUse"][0]["hooks"][0]["command"]
-        claude_ups = claude_doc["hooks"]["UserPromptSubmit"][0]["hooks"][0]["command"]
-        self.assertEqual(grok_cmd, INBOX_HOOK_COMMAND)
-        self.assertEqual(claude_pre, INBOX_HOOK_COMMAND)
-        self.assertEqual(claude_ups, INBOX_HOOK_COMMAND)
-        self.assertNotIn(sys.executable, grok_cmd)
-        self.assertNotIn("-m convoy", grok_cmd)
+        from convoy import cmd as _cmd
+        res = _cmd.resolve_inbox_hook_command()
+        self.assertIn(res["resolved_via"], ("console-script", "interpreter", "interpreter+src", None))
+        if res["command"]:
+            self.assertTrue(res["command"].endswith("inbox --hook-pretooluse"))
+            grok_doc = grok_inbox_hook_document(res["command"])
+            claude_doc = claude_inbox_hook_document(res["command"])
+            self.assertEqual(grok_doc["hooks"]["PreToolUse"][0]["hooks"][0]["command"], res["command"])
+            self.assertEqual(claude_doc["hooks"]["UserPromptSubmit"][0]["hooks"][0]["command"], res["command"])
+        else:
+            self.assertIn("pipx", res["error"])
 
-    def test_refuse_writing_baked_interpreter_path(self):
-        baked = sys.executable + " -m convoy inbox --hook-pretooluse"
-        with mock.patch("convoy.identity.inbox_hook_command", return_value=baked):
+    def test_refuse_writing_a_command_that_does_not_resolve(self):
+        from convoy import cmd as _cmd
+        _cmd._RESOLVED = None
+        with mock.patch.object(_cmd, "_probe_inbox_command", return_value=False):
+            # a failed resolution is never cached, so later tests re-probe live
             grok = ensure_grok_inbox_hook(self.wt)
             claude = ensure_claude_inbox_hook(self.wt)
         self.assertFalse(grok["ok"])
         self.assertFalse(claude["ok"])
-        self.assertIn("baked", grok["error"].lower())
-        self.assertIn("convoy inbox --hook-pretooluse", grok["error"])
+        self.assertIn("pipx", grok["error"])
         self.assertFalse((self.wt / ".grok" / "hooks" / "convoy-inbox.json").exists())
 
     def test_grok_and_claude_hook_files_are_project_local(self):
@@ -219,16 +238,12 @@ class LiveSeatInbox(unittest.TestCase):
         self.assertTrue(claude_path.is_file())
         grok_raw = grok_path.read_text(encoding="utf-8")
         claude_data = json.loads(claude_path.read_text(encoding="utf-8"))
-        self.assertIn(INBOX_HOOK_COMMAND, grok_raw)
-        self.assertNotIn("-m convoy", grok_raw)
-        self.assertEqual(
-            claude_data["hooks"]["PreToolUse"][0]["hooks"][0]["command"],
-            INBOX_HOOK_COMMAND,
-        )
-        self.assertEqual(
-            claude_data["hooks"]["UserPromptSubmit"][0]["hooks"][0]["command"],
-            INBOX_HOOK_COMMAND,
-        )
+        resolved = card["command"]
+        self.assertTrue(resolved.endswith("inbox --hook-pretooluse"))
+        self.assertIn(card["resolved_via"], ("console-script", "interpreter", "interpreter+src", "kept-existing"))
+        self.assertIn(json.dumps(resolved)[1:-1], grok_raw)
+        self.assertEqual(claude_data["hooks"]["PreToolUse"][0]["hooks"][0]["command"], resolved)
+        self.assertEqual(claude_data["hooks"]["UserPromptSubmit"][0]["hooks"][0]["command"], resolved)
         self.assertNotIn("skipDangerousModePermissionPrompt", claude_data)
         self.assertNotIn("permissions", claude_data)
         self.assertTrue((self.wt / ".grok" / "convoy-root").is_file())
@@ -252,11 +267,11 @@ class LiveSeatInbox(unittest.TestCase):
                 grok_hook = Path(wt) / ".grok" / "hooks" / "convoy-inbox.json"
                 claude_settings = Path(wt) / ".claude" / "settings.json"
                 self.assertTrue(grok_hook.is_file(), hid)
-                self.assertIn(INBOX_HOOK_COMMAND, grok_hook.read_text(encoding="utf-8"))
+                self.assertIn("inbox --hook-pretooluse", grok_hook.read_text(encoding="utf-8"))
                 data = json.loads(claude_settings.read_text(encoding="utf-8"))
-                self.assertEqual(
-                    data["hooks"]["PreToolUse"][0]["hooks"][0]["command"],
-                    INBOX_HOOK_COMMAND,
+                self.assertTrue(
+                    data["hooks"]["PreToolUse"][0]["hooks"][0]["command"].endswith("inbox --hook-pretooluse"),
+                    hid,
                 )
                 if hid != "claude":
                     self.assertNotIn("skipDangerousModePermissionPrompt", data)
@@ -272,9 +287,8 @@ class LiveSeatInbox(unittest.TestCase):
         data = json.loads((self.wt / ".claude" / "settings.json").read_text(encoding="utf-8"))
         self.assertTrue(data.get("skipDangerousModePermissionPrompt"))
         self.assertEqual(data.get("permissions", {}).get("defaultMode"), "bypassPermissions")
-        self.assertEqual(
-            data["hooks"]["UserPromptSubmit"][0]["hooks"][0]["command"],
-            INBOX_HOOK_COMMAND,
+        self.assertTrue(
+            data["hooks"]["UserPromptSubmit"][0]["hooks"][0]["command"].endswith("inbox --hook-pretooluse")
         )
 
 

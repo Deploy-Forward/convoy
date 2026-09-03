@@ -13,9 +13,9 @@ import json
 from pathlib import Path
 from typing import Any
 
+from . import cmd as _cmd
 from .cmd import (
-    INBOX_HOOK_INSTALL_HINT,
-    command_bakes_interpreter,
+    INBOX_HOOK_ARGS,
     inbox_hook_command,
 )
 
@@ -25,6 +25,13 @@ SKILL_END = "# <<< convoy neuron identity <<<"
 SKILL_RELATIVE = (
     Path(".grok") / "skills" / SKILL_NAME / "SKILL.md",
     Path(".claude") / "skills" / SKILL_NAME / "SKILL.md",
+)
+# Second harness-agnostic skill: how ANY neuron receives and proves receipt
+# (Marco 2026-09-03). Same install path as identity; AGENTS.md names it too.
+RECEIVE_SKILL_NAME = "neuron-receive"
+RECEIVE_SKILL_RELATIVE = (
+    Path(".grok") / "skills" / RECEIVE_SKILL_NAME / "SKILL.md",
+    Path(".claude") / "skills" / RECEIVE_SKILL_NAME / "SKILL.md",
 )
 
 GROK_AGENT_NAME = "convoy-neuron"
@@ -67,6 +74,10 @@ _AGENTS_BLOCK = (
     ".claude/skills/neuron-identity/SKILL.md). Detect, identify, then send: "
     "`convoy panes`, `convoy whoami`, `convoy hook note \"...\" --as-me --to <chair>`, "
     "`convoy graph --neuron <chair>`. Synapse via `convoy send` (or `python -m convoy`). "
+    "RECEIVE (every turn start, any harness; see .grok/skills/neuron-receive/SKILL.md or "
+    ".claude/skills/neuron-receive/SKILL.md): `convoy --root <root> whoami`, "
+    "`feed --since <last ack>`, `inbox --drain --seat <you>`, then ack with "
+    "`hook note ... --as-me --to <sender>`; a message is delivered only when YOU write that row. "
     "If usage is dying, ask the user to bring_up a "
     "pane; do not steal a TUI. Never invent cvy_ or session ids. Never ola-brain.\n"
     + SKILL_END + "\n"
@@ -124,6 +135,14 @@ def skill_text() -> str:
     return path.read_text(encoding="utf-8")
 
 
+def receive_skill_source_path() -> Path:
+    return Path(__file__).resolve().parent / "harness_skills" / RECEIVE_SKILL_NAME / "SKILL.md"
+
+
+def receive_skill_text() -> str:
+    return receive_skill_source_path().read_text(encoding="utf-8")
+
+
 def _merge_agents_block(existing: str) -> str:
     text = existing.replace("\r\n", "\n")
     if SKILL_BEGIN in text and SKILL_END in text:
@@ -155,14 +174,16 @@ def install_neuron_identity(worktree: Path | str) -> dict[str, Any]:
         return out
     try:
         paths: list[str] = []
-        for rel in SKILL_RELATIVE:
-            dest = wt / rel
-            dest.parent.mkdir(parents=True, exist_ok=True)
-            prev = dest.read_text(encoding="utf-8") if dest.is_file() else None
-            if prev != src:
-                dest.write_text(src, encoding="utf-8")
-                out["written"] = True
-            paths.append(str(dest))
+        recv = receive_skill_text()
+        for rels, text in ((SKILL_RELATIVE, src), (RECEIVE_SKILL_RELATIVE, recv)):
+            for rel in rels:
+                dest = wt / rel
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                prev = dest.read_text(encoding="utf-8") if dest.is_file() else None
+                if prev != text:
+                    dest.write_text(text, encoding="utf-8")
+                    out["written"] = True
+                paths.append(str(dest))
         agents = wt / "AGENTS.md"
         before = agents.read_text(encoding="utf-8") if agents.is_file() else ""
         merged = _merge_agents_block(before)
@@ -206,19 +227,6 @@ def ensure_grok_agent(worktree: Path | str) -> dict[str, Any]:
         return out
 
 
-def _refuse_baked(command: str) -> dict[str, Any] | None:
-    if command_bakes_interpreter(command):
-        return {
-            "ok": False,
-            "written": False,
-            "error": (
-                "refuse baked interpreter path in travel-capable hook; "
-                "write '" + inbox_hook_command() + "'; " + INBOX_HOOK_INSTALL_HINT
-            ),
-        }
-    return None
-
-
 def _command_hook_entry(command: str) -> dict[str, Any]:
     return {
         "hooks": [
@@ -231,8 +239,8 @@ def _command_hook_entry(command: str) -> dict[str, Any]:
     }
 
 
-def grok_inbox_hook_document() -> dict[str, Any]:
-    command = inbox_hook_command()
+def grok_inbox_hook_document(command: str | None = None) -> dict[str, Any]:
+    command = command or inbox_hook_command()
     return {
         "hooks": {
             "PreToolUse": [_command_hook_entry(command)],
@@ -240,10 +248,10 @@ def grok_inbox_hook_document() -> dict[str, Any]:
     }
 
 
-def claude_inbox_hook_document() -> dict[str, Any]:
+def claude_inbox_hook_document(command: str | None = None) -> dict[str, Any]:
     """Same command as Grok. Claude injects allowing-hook additionalContext
     on UserPromptSubmit and PreToolUse (mid-turn / turn-start, never idle-wake)."""
-    command = inbox_hook_command()
+    command = command or inbox_hook_command()
     entry = _command_hook_entry(command)
     return {
         "hooks": {
@@ -253,8 +261,41 @@ def claude_inbox_hook_document() -> dict[str, Any]:
     }
 
 
+def _commands_in(node: Any) -> list[str]:
+    """Every Convoy inbox `command` string inside a hook object."""
+    found: list[str] = []
+    if isinstance(node, dict):
+        c = node.get("command")
+        if isinstance(c, str) and INBOX_HOOK_ARGS in c:
+            found.append(c)
+        for v in node.values():
+            found.extend(_commands_in(v))
+    elif isinstance(node, list):
+        for v in node:
+            found.extend(_commands_in(v))
+    return found
+
+
 def _hooks_already_have_command(events: Any, command: str) -> bool:
-    return command in json.dumps(events)
+    # Compare extracted strings, never a JSON blob: our command contains
+    # double quotes, which json.dumps escapes, so a substring test never
+    # matched and every run appended ANOTHER copy (live 2026-09-03: this
+    # worktree ended up with two identical entries per event).
+    return any(c == command for c in _commands_in(events))
+
+
+def _is_stale_convoy_entry(entry: Any, command: str) -> bool:
+    """A Convoy-owned inbox hook entry that is NOT the command we resolved.
+
+    The merge used to only append, so a hook Convoy wrote earlier and that no
+    longer resolves stayed in the file and ran (and failed) on every tool call
+    beside the working one (live 2026-09-03: convoy-wt-fable carried a dead
+    `-m convoy` entry next to a good one). Only entries carrying our own
+    INBOX_HOOK_ARGS are touched; a user's own hooks are never removed."""
+    for c in _existing_hook_commands(json.dumps(entry)):
+        if c != command:
+            return True
+    return False
 
 
 def _merge_claude_inbox_hooks(data: dict[str, Any], command: str) -> tuple[dict[str, Any], bool]:
@@ -266,28 +307,71 @@ def _merge_claude_inbox_hooks(data: dict[str, Any], command: str) -> tuple[dict[
         events = hooks.get(event)
         if not isinstance(events, list):
             events = []
-        if not _hooks_already_have_command(events, command):
-            events.append(_command_hook_entry(command))
+        # Rebuild: everything that is not ours, then EXACTLY ONE entry of
+        # ours. Filtering-then-appending left duplicates of the same command
+        # in place; this cannot.
+        others = [e for e in events if not _commands_in(e)]
+        rebuilt = others + [_command_hook_entry(command)]
+        if rebuilt != events:
             changed = True
-        hooks[event] = events
+        hooks[event] = rebuilt
     data["hooks"] = hooks
     return data, changed
 
 
+def _existing_hook_commands(text: str | None) -> list[str]:
+    """Every `command` string inside an existing hook document, or []."""
+    if not text:
+        return []
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError:
+        return []
+    found: list[str] = []
+
+    def walk(node: Any) -> None:
+        if isinstance(node, dict):
+            c = node.get("command")
+            if isinstance(c, str) and INBOX_HOOK_ARGS in c:
+                found.append(c)
+            for v in node.values():
+                walk(v)
+        elif isinstance(node, list):
+            for v in node:
+                walk(v)
+
+    walk(data)
+    return found
+
+
+def _resolved_or_kept(prev_text: str | None) -> dict[str, Any]:
+    """Keep an existing Convoy hook command that still probes ok (audit
+    2026-09-03: the only hook that ever delivered was a baked path a later
+    first-run would have overwritten); else resolve fresh."""
+    for c in _existing_hook_commands(prev_text):
+        if _cmd.probe_existing_hook_command(c):
+            return {"command": c, "resolved_via": "kept-existing", "error": None, "kept_existing": c}
+    r = _cmd.resolve_inbox_hook_command()
+    r["kept_existing"] = None
+    return r
+
+
 def ensure_grok_inbox_hook(worktree: Path | str, root: Path | str | None = None) -> dict[str, Any]:
-    """Write the Convoy-owned Grok PreToolUse inbox hook. Project-local only."""
-    command = inbox_hook_command()
-    refused = _refuse_baked(command)
-    if refused is not None:
-        refused["hook"] = None
-        return refused
-    out: dict[str, Any] = {"ok": True, "written": False, "hook": None, "command": command}
+    """Write the Convoy-owned Grok PreToolUse inbox hook. Project-local only.
+    The command is PROBED where it runs; a bare name that resolves to a shim
+    or to nothing is never written (fail closed with the install hint)."""
     dest = Path(worktree) / GROK_INBOX_HOOK_RELATIVE
-    payload = json.dumps(grok_inbox_hook_document(), indent=2) + "\n"
+    prev = dest.read_text(encoding="utf-8") if dest.is_file() else None
+    res = _resolved_or_kept(prev)
+    out: dict[str, Any] = {"ok": True, "written": False, "hook": None, "command": res["command"],
+                           "resolved_via": res["resolved_via"], "kept_existing": res.get("kept_existing")}
+    if not res["command"]:
+        out.update({"ok": False, "error": res["error"]})
+        return out
+    payload = json.dumps(grok_inbox_hook_document(res["command"]), indent=2) + "\n"
     try:
         dest.parent.mkdir(parents=True, exist_ok=True)
-        prev = dest.read_text(encoding="utf-8") if dest.is_file() else None
-        if prev != payload:
+        if res["resolved_via"] != "kept-existing" and prev != payload:
             dest.write_text(payload, encoding="utf-8")
             out["written"] = True
         out["hook"] = str(dest)
@@ -307,18 +391,20 @@ def ensure_claude_inbox_hook(worktree: Path | str, root: Path | str | None = Non
     Does not write skipDangerousModePermissionPrompt or permissions.defaultMode
     (those stay Claude first-run ungate). Refuses a baked interpreter path.
     """
-    command = inbox_hook_command()
-    refused = _refuse_baked(command)
-    if refused is not None:
-        refused["hook"] = None
-        return refused
-    out: dict[str, Any] = {"ok": True, "written": False, "hook": None, "command": command}
     dest = Path(worktree) / CLAUDE_SETTINGS_RELATIVE
+    prev_text = dest.read_text(encoding="utf-8-sig") if dest.is_file() else None
+    res = _resolved_or_kept(prev_text)
+    command = res["command"]
+    out: dict[str, Any] = {"ok": True, "written": False, "hook": None, "command": command,
+                           "resolved_via": res["resolved_via"], "kept_existing": res.get("kept_existing")}
+    if not command:
+        out.update({"ok": False, "error": res["error"]})
+        return out
     try:
         dest.parent.mkdir(parents=True, exist_ok=True)
-        if dest.is_file():
+        if prev_text is not None:
             try:
-                raw = json.loads(dest.read_text(encoding="utf-8-sig"))
+                raw = json.loads(prev_text)
             except json.JSONDecodeError:
                 raw = {}
             data = raw if isinstance(raw, dict) else {}
@@ -359,7 +445,8 @@ def ensure_inbox_hooks(
     out: dict[str, Any] = {
         "ok": bool(grok.get("ok") and claude.get("ok")),
         "written": bool(grok.get("written") or claude.get("written")),
-        "command": inbox_hook_command(),
+        "command": grok.get("command") or claude.get("command"),
+        "resolved_via": grok.get("resolved_via") or claude.get("resolved_via"),
         "grok_hook": grok,
         "claude_hook": claude,
         "kinds": kinds,

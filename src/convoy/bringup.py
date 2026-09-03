@@ -503,7 +503,7 @@ def ensure_interactive_path(home: Path | None = None) -> dict[str, Any]:
         return out
 
 
-def ensure_first_run(seat: dict[str, Any], root: Path | str | None = None) -> dict[str, Any]:
+def ensure_first_run(seat: dict[str, Any], root: Path | str | None = None, live: bool = True) -> dict[str, Any]:
     """Ungate first-run Claude bypass warning for the thread worktree.
 
     Project {worktree}/.claude/settings.json: merge skipDangerousModePermissionPrompt
@@ -571,7 +571,12 @@ def ensure_first_run(seat: dict[str, Any], root: Path | str | None = None) -> di
                 out["agent_path"] = agent_card.get("agent")
                 if agent_card.get("error"):
                     out["agent_error"] = agent_card["error"]
-            hook_card = ensure_inbox_hooks(wt_path, root=root, harness=to)
+            # Hook files only matter to a launched pane, and resolving the hook
+            # command probes a shell; a dry bring-up (no runner) skips it.
+            if live:
+                hook_card = ensure_inbox_hooks(wt_path, root=root, harness=to)
+            else:
+                hook_card = {"ok": True, "written": False, "command": None, "kinds": None, "skipped": "dry-run"}
             out["inbox_hook_written"] = bool(hook_card.get("written"))
             out["inbox_hook"] = hook_card.get("command")
             out["inbox_hook_kinds"] = hook_card.get("kinds")
@@ -983,7 +988,7 @@ def bring_up(root: Path, convoy_id: str | None = None, thread: str | None = None
     for i, s in enumerate(hops):
         rect = rects[i] if i < len(rects) else None
         try:
-            fr = ensure_first_run(s, root=root)
+            fr = ensure_first_run(s, root=root, live=runner is not None)
         except Exception as e:
             fr = {"ok": False, "prepared": False, "wrote": False, "settings": None, "error": str(e), "home_written": False, "settings_home": None}
         s = _seat_with_agent(root, s, fr)
