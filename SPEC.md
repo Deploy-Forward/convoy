@@ -142,7 +142,7 @@ A `send` card says what happened to the message, never more:
 Why the codex→grok relay showed nothing in the pane: an open TUI has no
 message transport in Convoy. The pane host owns lifecycle only; `send --live`
 refuses to resume an active session (no-steal); `send` without `--live`
-records. The legal path to an open neuron is an ADDRESSED ROW (`note --to
+records. The legal path to an open neuron is an ADDRESSED ROW (`hook note "…" --to
 <chair>`) plus that neuron's own listener at its next turn boundary (claude:
 bus listener; grok: PreToolUse `additionalContext`, tool-time only). That is
 "queued", and it becomes "delivered" when the target acks. Idle-wake stays

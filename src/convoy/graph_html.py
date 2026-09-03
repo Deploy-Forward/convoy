@@ -22,7 +22,8 @@ import subprocess
 from pathlib import Path
 from typing import Any, Callable
 
-from .bringup import resume_argv, resume_target, terminals
+from .bringup import resume_argv, resume_target
+from .cmd import convoy_root_command
 from .convoy import list_seats
 from .graph import build_graph, neighborhood
 from .panes import chair_live
@@ -32,21 +33,13 @@ def _chair_live(root: Path, session_id: str) -> bool:
     """Registry (what Convoy launched) OR the OS process table (panes) — the
     second is what catches a body Convoy never launched (2026-09-03: a second
     codex resume on a live thread got past the registry-only check)."""
+    # Process table only. terminals() is NOT read-only (it runs first-run
+    # setup that writes ~/.bashrc and ~/.claude settings), so a liveness probe
+    # must never call it — stranger-eyes blocker, 2026-09-03.
     try:
-        if chair_live(Path(root), session_id):
-            return True
+        return chair_live(Path(root), session_id)
     except Exception:
-        pass
-    try:
-        card = terminals(Path(root))
-    except Exception:  # liveness probe is best-effort; never blocks a dry read
         return False
-    for val in card.values():
-        if isinstance(val, list):
-            for w in val:
-                if isinstance(w, dict) and w.get("session_id") == session_id and w.get("live"):
-                    return True
-    return False
 
 
 def resume_neuron(
@@ -67,7 +60,7 @@ def resume_neuron(
         return {
             "ok": False, "neuron": sid, "spawned": False,
             "error": "no vendor token minted for this chair's current harness",
-            "ask": "python -m convoy --root " + str(root) + " launch --seat " + sid,
+            "ask": convoy_root_command(root) + " launch --seat " + sid,
             "place": n["place"], "thread": n["thread"],
         }
     argv = resume_argv(seat)
@@ -95,11 +88,10 @@ def render_html(threads: list[dict[str, Any]]) -> str:
     out: list[dict[str, Any]] = []
     for t in threads:
         root = str(t["root"])
-        qroot = '"' + root.replace('"', '\\"') + '"' if any(c in root for c in ' "') else root
         g = json.loads(json.dumps(t["graph"]))
         for n in g.get("nodes", []):
             if n.get("kind") == "chair":
-                n["resume_command"] = "python -m convoy --root " + qroot + " resume --neuron " + n["session_id"] + " --go"
+                n["resume_command"] = convoy_root_command(root) + " resume --neuron " + n["session_id"] + " --go"
         out.append({"root": root, "graph": g})
     payload = json.dumps(out, ensure_ascii=False).replace("</", "<\\/")
     return _PAGE.replace("__DATA__", payload).replace("__COUNT__", str(len(threads)))
