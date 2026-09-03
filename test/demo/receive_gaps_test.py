@@ -66,6 +66,54 @@ class SkillsVerbInstallsHooks(unittest.TestCase):
         self.assertIn("pipx", card["hooks"]["error"])
 
 
+class StaleHookEntriesArePruned(unittest.TestCase):
+    """Live 2026-09-03: convoy-wt-fable ended up with TWO Convoy PreToolUse
+    entries, one dead. The merge only appended, so every earlier command
+    Convoy wrote kept running (and failing) on every tool call. Re-running
+    `skills` is the resolution path: it prunes Convoy's own stale entries and
+    leaves anything the user wrote alone."""
+
+    def setUp(self):
+        cmd._RESOLVED = None
+        self.root = Path(tempfile.mkdtemp())
+        ensure_id(self.root)
+        bind(self.root, "t1")
+        self.wt = Path(tempfile.mkdtemp())
+        (self.wt / ".claude").mkdir()
+        mine = {"type": "command", "command": "echo user-hook-keep-me"}
+        dead = {"type": "command", "command": "C:/gone/python.exe -m convoy inbox --hook-pretooluse"}
+        (self.wt / ".claude" / "settings.json").write_text(json.dumps({
+            "permissions": {"defaultMode": "bypassPermissions"},
+            "hooks": {"PreToolUse": [{"hooks": [dead]}, {"hooks": [mine]}],
+                      "UserPromptSubmit": [{"hooks": [dead]}]},
+        }, indent=2), encoding="utf-8")
+
+    def test_rerunning_skills_replaces_the_dead_entry_and_keeps_user_hooks(self):
+        good = cmd._quote(sys.executable) + " -m convoy inbox --hook-pretooluse"
+        with mock.patch.object(cmd, "_probe_inbox_command", lambda c: c == good):
+            rc, card = _run_cli(self.root, "skills", "--worktree", str(self.wt))
+        self.assertEqual(rc, 0)
+        data = json.loads((self.wt / ".claude" / "settings.json").read_text(encoding="utf-8"))
+        pre = [h["command"] for e in data["hooks"]["PreToolUse"] for h in e["hooks"]]
+        self.assertIn(good, pre)
+        self.assertIn("echo user-hook-keep-me", pre)
+        self.assertNotIn("C:/gone/python.exe -m convoy inbox --hook-pretooluse", pre)
+        self.assertEqual(len([c for c in pre if "inbox --hook-pretooluse" in c]), 1)
+        ups = [h["command"] for e in data["hooks"]["UserPromptSubmit"] for h in e["hooks"]]
+        self.assertEqual(ups, [good])
+        self.assertEqual(data["permissions"]["defaultMode"], "bypassPermissions")
+
+    def test_second_run_is_a_no_op(self):
+        good = cmd._quote(sys.executable) + " -m convoy inbox --hook-pretooluse"
+        with mock.patch.object(cmd, "_probe_inbox_command", lambda c: c == good):
+            _run_cli(self.root, "skills", "--worktree", str(self.wt))
+            before = (self.wt / ".claude" / "settings.json").read_text(encoding="utf-8")
+            rc, card = _run_cli(self.root, "skills", "--worktree", str(self.wt))
+        self.assertEqual(rc, 0)
+        self.assertFalse(card["hooks"]["claude_hook"]["written"])
+        self.assertEqual((self.wt / ".claude" / "settings.json").read_text(encoding="utf-8"), before)
+
+
 class CodexQueueMarksItsRowConsumed(unittest.TestCase):
     def setUp(self):
         self.root = Path(tempfile.mkdtemp())

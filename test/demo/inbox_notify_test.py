@@ -193,7 +193,7 @@ class LiveSeatInbox(unittest.TestCase):
         self.assertEqual(INBOX_HOOK_COMMAND, "convoy inbox --hook-pretooluse")
         from convoy import cmd as _cmd
         res = _cmd.resolve_inbox_hook_command()
-        self.assertIn(res["resolved_via"], ("console-script", "interpreter", None))
+        self.assertIn(res["resolved_via"], ("console-script", "interpreter", "interpreter+src", None))
         if res["command"]:
             self.assertTrue(res["command"].endswith("inbox --hook-pretooluse"))
             grok_doc = grok_inbox_hook_document(res["command"])
@@ -226,7 +226,7 @@ class LiveSeatInbox(unittest.TestCase):
         claude_data = json.loads(claude_path.read_text(encoding="utf-8"))
         resolved = card["command"]
         self.assertTrue(resolved.endswith("inbox --hook-pretooluse"))
-        self.assertIn(card["resolved_via"], ("console-script", "interpreter", "kept-existing"))
+        self.assertIn(card["resolved_via"], ("console-script", "interpreter", "interpreter+src", "kept-existing"))
         self.assertIn(json.dumps(resolved)[1:-1], grok_raw)
         self.assertEqual(claude_data["hooks"]["PreToolUse"][0]["hooks"][0]["command"], resolved)
         self.assertEqual(claude_data["hooks"]["UserPromptSubmit"][0]["hooks"][0]["command"], resolved)

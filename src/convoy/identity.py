@@ -265,6 +265,20 @@ def _hooks_already_have_command(events: Any, command: str) -> bool:
     return command in json.dumps(events)
 
 
+def _is_stale_convoy_entry(entry: Any, command: str) -> bool:
+    """A Convoy-owned inbox hook entry that is NOT the command we resolved.
+
+    The merge used to only append, so a hook Convoy wrote earlier and that no
+    longer resolves stayed in the file and ran (and failed) on every tool call
+    beside the working one (live 2026-09-03: convoy-wt-fable carried a dead
+    `-m convoy` entry next to a good one). Only entries carrying our own
+    INBOX_HOOK_ARGS are touched; a user's own hooks are never removed."""
+    for c in _existing_hook_commands(json.dumps(entry)):
+        if c != command:
+            return True
+    return False
+
+
 def _merge_claude_inbox_hooks(data: dict[str, Any], command: str) -> tuple[dict[str, Any], bool]:
     hooks = data.get("hooks")
     if not isinstance(hooks, dict):
@@ -274,6 +288,10 @@ def _merge_claude_inbox_hooks(data: dict[str, Any], command: str) -> tuple[dict[
         events = hooks.get(event)
         if not isinstance(events, list):
             events = []
+        kept = [e for e in events if not _is_stale_convoy_entry(e, command)]
+        if len(kept) != len(events):
+            changed = True
+        events = kept
         if not _hooks_already_have_command(events, command):
             events.append(_command_hook_entry(command))
             changed = True
@@ -312,7 +330,7 @@ def _resolved_or_kept(prev_text: str | None) -> dict[str, Any]:
     2026-09-03: the only hook that ever delivered was a baked path a later
     first-run would have overwritten); else resolve fresh."""
     for c in _existing_hook_commands(prev_text):
-        if _cmd._probe_inbox_command(c):
+        if _cmd.probe_existing_hook_command(c):
             return {"command": c, "resolved_via": "kept-existing", "error": None, "kept_existing": c}
     r = _cmd.resolve_inbox_hook_command()
     r["kept_existing"] = None
