@@ -211,6 +211,15 @@ def _claim_path(root: Path, session_id: str) -> Path:
     return Path(root) / ".convoy" / "launch-claims" / (digest + ".json")
 
 
+def release_launch_claim(root: Path, session_id: str) -> bool:
+    """Drop the persistent launch claim for a chair whose pane is being
+    closed. Returns True when a claim existed."""
+    path = _claim_path(Path(root), session_id)
+    existed = path.is_file()
+    path.unlink(missing_ok=True)
+    return existed
+
+
 def _claim(root: Path, session_id: str) -> Path:
     path = _claim_path(root, session_id)
     path.parent.mkdir(parents=True, exist_ok=True)
