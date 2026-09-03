@@ -10,7 +10,7 @@ from typing import Any, Callable
 
 from .context import pack, stdin_for
 from .gitstate import git_state
-from .inbox import enqueue
+from .inbox import enqueue, mark_consumed
 from .layer import hook
 from .usage import normalize_usage_remaining, probe
 from .convoy import list_seats, read_id, read_thread
@@ -249,6 +249,10 @@ def deliver_to_live_seat(
         native = try_codex_queue(resume_token, body)
     path_name = "codex-queue" if native else "inbox"
     item = enqueue(root, sid, body, to=to, label=label, path_name=path_name)
+    if native:
+        # The body already went into codex's own queue; the inbox row is the
+        # SoT record of that send, not a second pending delivery.
+        mark_consumed(root, sid, item["token"], drain_id="codex-queue")
     delivery = native["delivery"] if native else "queued"
     runner = native["runner"] if native else "inbox"
     state = git_state(Path(packed.get("worktree") or root))

@@ -38,6 +38,13 @@ Codex custom-prompt namespace, not a second Convoy identity skill.
 
 ## Skills
 
+- `neuron-receive/` — how a neuron on ANY harness receives from the thread
+  (feed rows addressed to it, its inbox file), which hook drains for it at
+  tool time (grok, claude) and which harnesses must run the loop by hand
+  (codex, cursor-agent, agy, hermes, pi), and the one rule that makes a
+  message delivered: the receiver's own ack row. Installed beside
+  `neuron-identity`; named in `AGENTS.md`.
+
 - `neuron-identity/` — who a neuron is: one BYO harness session on a
   `cvy_` thread, not the conductor. Installed into every seat worktree.
 - `convoy/` — the canonical `/convoy` slash sheet: what each public MCP tool
