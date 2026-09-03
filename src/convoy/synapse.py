@@ -204,7 +204,7 @@ def runner_kind(run: Runner) -> str | None:
     return getattr(run, "__name__", None)
 
 
-def send_one(
+def _send_one(
     root: Path,
     to: str,
     body: str,
@@ -441,3 +441,25 @@ def send_many(
             i, card = fut.result()
             cards[i] = card
     return [c for c in cards if c is not None]
+
+
+def send_one(root, to, body, *args, **kwargs):
+    """send_one with an honest delivery label (codex/grok finding 2026-09-02):
+    recorded = a feed row exists and nothing reached a neuron (fake runner or
+    dry run); executed = a fresh headless vendor session ran the body (not the
+    open pane); refused / error = nothing happened. `delivered` is always
+    False here: only an ack row AUTHORED BY THE TARGET proves delivery, and a
+    card cannot author that."""
+    card = _send_one(root, to, body, *args, **kwargs)
+    if isinstance(card, dict) and "delivery" not in card:
+        runner = kwargs.get("runner", args[2] if len(args) > 2 else None)  # (instance_id, label, runner, ...)
+        if card.get("refused"):
+            card["delivery"] = "refused"
+        elif not card.get("ok"):
+            card["delivery"] = "error"
+        elif card.get("dry_run") or runner is None or runner is fake_runner or getattr(runner, "__name__", "") == "fake_runner":
+            card["delivery"] = "recorded"
+        else:
+            card["delivery"] = "executed"
+        card["delivered"] = False
+    return card
