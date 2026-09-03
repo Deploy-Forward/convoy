@@ -283,12 +283,15 @@ class Phase7BringUp(unittest.TestCase):
         bind(root, "t")
         wt = str(self.wt_g)
         seat(root, "grok", "sess-old", worktree=wt, resume="vendor-old")
-        seat(root, "grok", "sess-new", worktree=wt, resume="vendor-new")
+        with self.assertRaises(ValueError):
+            seat(root, "grok", "sess-new", worktree=wt, resume="vendor-new")
+        # Same chair may re-seat the worktree (occupancy update, last row wins).
+        seat(root, "grok", "sess-old", worktree=wt, resume="vendor-new")
         d = bring_up(root)
         self.assertTrue(d["ok"])
         self.assertEqual(len(d["windows"]), 1)
         win = d["windows"][0]
-        self.assertEqual(win["session_id"], "sess-new")
+        self.assertEqual(win["session_id"], "sess-old")
         self.assertEqual(win["resume"], "vendor-new")
         self.assertEqual(win["argv"][-2:], ["--resume", "vendor-new"])
 

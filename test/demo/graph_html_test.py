@@ -62,8 +62,9 @@ class ResumeNeuron(unittest.TestCase):
         self.root = Path(tempfile.mkdtemp())
         ensure_id(self.root)
         bind(self.root, "t1")
+        self.wt_b = Path(tempfile.mkdtemp())
         seat(self.root, "codex", "a-t1", worktree=str(self.root), resume="codex-uuid")
-        seat(self.root, "claude", "b-t1", worktree=str(self.root))
+        seat(self.root, "claude", "b-t1", worktree=str(self.wt_b))
 
     def test_dry_returns_native_argv_cwd_and_place(self):
         card = resume_neuron(self.root, "a-t1")

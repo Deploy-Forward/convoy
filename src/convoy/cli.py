@@ -246,13 +246,22 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(pack(root, instance_id=args.instance_id)))
         return 0
     if args.cmd == "inbox":
-        from .inbox import drain, hook_pretooluse, pending, seat_for_worktree
+        from .inbox import drain, hook_pretooluse, pending, seat_for_worktree, seats_for_worktree
         if args.hook_pretooluse:
             print(json.dumps(hook_pretooluse()))
             return 0
         sid = str(args.seat or "").strip()
         if not sid:
-            row = seat_for_worktree(root, Path.cwd())
+            matches = seats_for_worktree(root, Path.cwd())
+            if len(matches) > 1:
+                chairs = [str(r.get("session_id") or "") for r in matches]
+                print(json.dumps({
+                    "ok": False,
+                    "error": "inbox refuse: cwd matches more than one chair; pass --seat",
+                    "chairs": chairs,
+                }))
+                return 1
+            row = matches[0] if matches else None
             sid = str((row or {}).get("session_id") or "").strip()
         if not sid:
             print(json.dumps({"ok": False, "error": "inbox requires --seat"}))
