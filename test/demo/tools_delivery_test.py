@@ -2,8 +2,9 @@
 
 1. A send card must say what happened to the message. `delivery` is one of
    recorded (feed row only, nothing reached a neuron), executed (a fresh
-   headless vendor session ran the body — not the open pane), refused. Only an
-   ack row authored by the target proves delivered; the card never claims it.
+   headless vendor session ran the body — not the open pane), refused, queued
+   (named live seat inbox). Only an ack row authored by the target proves
+   delivered; the card never claims it.
 2. Convoy verbs must be eligible via tool calls, so neurons attached over MCP
    can summon them: graph / threads / resume join the tool list read-only;
    resume --go stays behind the same gate as the bus writers.
@@ -38,9 +39,16 @@ class DeliveryLabel(unittest.TestCase):
         self.assertEqual(card["delivery"], "recorded")
         self.assertFalse(card["delivered"])
 
-    def test_live_resume_refusal_is_refused(self):
+    def test_live_named_seat_is_queued_not_stolen(self):
         seat(self.root, "grok", "g-t1", resume="grok-uuid")
         card = send_one(self.root, "grok", "hi", runner=fake_runner, instance_id="g-t1", allow_interactive_resume=False)
+        self.assertTrue(card["ok"])
+        self.assertEqual(card["delivery"], "queued")
+        self.assertFalse(card["delivered"])
+        self.assertFalse(card.get("resume_stolen"))
+
+    def test_live_unknown_resume_is_refused(self):
+        card = send_one(self.root, "grok", "hi", runner=fake_runner, instance_id="nobody", allow_interactive_resume=False)
         self.assertTrue(card["refused"])
         self.assertEqual(card["delivery"], "refused")
         self.assertFalse(card["delivered"])

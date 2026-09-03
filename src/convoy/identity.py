@@ -9,8 +9,15 @@ Never writes ~/.grok or ~/.claude user-global skills. Never ola-brain.
 """
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
+
+from .cmd import (
+    INBOX_HOOK_INSTALL_HINT,
+    command_bakes_interpreter,
+    inbox_hook_command,
+)
 
 SKILL_NAME = "neuron-identity"
 SKILL_BEGIN = "# >>> convoy neuron identity >>>"
@@ -22,6 +29,8 @@ SKILL_RELATIVE = (
 
 GROK_AGENT_NAME = "convoy-neuron"
 GROK_AGENT_RELATIVE = Path(".grok") / "agents" / (GROK_AGENT_NAME + ".md")
+GROK_INBOX_HOOK_RELATIVE = Path(".grok") / "hooks" / "convoy-inbox.json"
+CLAUDE_SETTINGS_RELATIVE = Path(".claude") / "settings.json"
 CODEX_PROMPT_NAME = "convoy.md"
 
 _GROK_AGENT_TEXT = """\
@@ -43,6 +52,10 @@ You are a Convoy neuron: one grok session on a Convoy thread, not Grok Bot.
   plain `pip install .` without PATH, `python -m convoy` is the same thing.)
 - Synapse: `convoy send --to <harness> "..."`. Do not type into another
   neuron's TUI. Do not steal a live `--resume`.
+- Inbox: a send into this live seat is queued under the thread root
+  (`.convoy/inbox/<session_id>.jsonl`). Drain with `convoy inbox --drain`
+  or the PreToolUse hook (`convoy inbox --hook-pretooluse`). Fake send
+  ACKs are not delivery.
 - Usage dying: ASK the user to bring_up / open a pane, or write a
   `.ola/*handoff*` file. Never guess remaining quota.
 """
@@ -191,3 +204,171 @@ def ensure_grok_agent(worktree: Path | str) -> dict[str, Any]:
         out["ok"] = False
         out["error"] = type(e).__name__ + ": " + str(e)
         return out
+
+
+def _refuse_baked(command: str) -> dict[str, Any] | None:
+    if command_bakes_interpreter(command):
+        return {
+            "ok": False,
+            "written": False,
+            "error": (
+                "refuse baked interpreter path in travel-capable hook; "
+                "write '" + inbox_hook_command() + "'; " + INBOX_HOOK_INSTALL_HINT
+            ),
+        }
+    return None
+
+
+def _command_hook_entry(command: str) -> dict[str, Any]:
+    return {
+        "hooks": [
+            {
+                "type": "command",
+                "command": command,
+                "timeout": 8,
+            }
+        ]
+    }
+
+
+def grok_inbox_hook_document() -> dict[str, Any]:
+    command = inbox_hook_command()
+    return {
+        "hooks": {
+            "PreToolUse": [_command_hook_entry(command)],
+        }
+    }
+
+
+def claude_inbox_hook_document() -> dict[str, Any]:
+    """Same command as Grok. Claude injects allowing-hook additionalContext
+    on UserPromptSubmit and PreToolUse (mid-turn / turn-start, never idle-wake)."""
+    command = inbox_hook_command()
+    entry = _command_hook_entry(command)
+    return {
+        "hooks": {
+            "PreToolUse": [entry],
+            "UserPromptSubmit": [entry],
+        }
+    }
+
+
+def _hooks_already_have_command(events: Any, command: str) -> bool:
+    return command in json.dumps(events)
+
+
+def _merge_claude_inbox_hooks(data: dict[str, Any], command: str) -> tuple[dict[str, Any], bool]:
+    hooks = data.get("hooks")
+    if not isinstance(hooks, dict):
+        hooks = {}
+    changed = False
+    for event in ("PreToolUse", "UserPromptSubmit"):
+        events = hooks.get(event)
+        if not isinstance(events, list):
+            events = []
+        if not _hooks_already_have_command(events, command):
+            events.append(_command_hook_entry(command))
+            changed = True
+        hooks[event] = events
+    data["hooks"] = hooks
+    return data, changed
+
+
+def ensure_grok_inbox_hook(worktree: Path | str, root: Path | str | None = None) -> dict[str, Any]:
+    """Write the Convoy-owned Grok PreToolUse inbox hook. Project-local only."""
+    command = inbox_hook_command()
+    refused = _refuse_baked(command)
+    if refused is not None:
+        refused["hook"] = None
+        return refused
+    out: dict[str, Any] = {"ok": True, "written": False, "hook": None, "command": command}
+    dest = Path(worktree) / GROK_INBOX_HOOK_RELATIVE
+    payload = json.dumps(grok_inbox_hook_document(), indent=2) + "\n"
+    try:
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        prev = dest.read_text(encoding="utf-8") if dest.is_file() else None
+        if prev != payload:
+            dest.write_text(payload, encoding="utf-8")
+            out["written"] = True
+        out["hook"] = str(dest)
+        if root is not None:
+            from .inbox import write_root_pointer
+            write_root_pointer(Path(worktree), Path(root))
+        return out
+    except OSError as e:
+        out["ok"] = False
+        out["error"] = type(e).__name__ + ": " + str(e)
+        return out
+
+
+def ensure_claude_inbox_hook(worktree: Path | str, root: Path | str | None = None) -> dict[str, Any]:
+    """Merge UserPromptSubmit + PreToolUse into project .claude/settings.json.
+
+    Does not write skipDangerousModePermissionPrompt or permissions.defaultMode
+    (those stay Claude first-run ungate). Refuses a baked interpreter path.
+    """
+    command = inbox_hook_command()
+    refused = _refuse_baked(command)
+    if refused is not None:
+        refused["hook"] = None
+        return refused
+    out: dict[str, Any] = {"ok": True, "written": False, "hook": None, "command": command}
+    dest = Path(worktree) / CLAUDE_SETTINGS_RELATIVE
+    try:
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        if dest.is_file():
+            try:
+                raw = json.loads(dest.read_text(encoding="utf-8-sig"))
+            except json.JSONDecodeError:
+                raw = {}
+            data = raw if isinstance(raw, dict) else {}
+        else:
+            data = {}
+        data, changed = _merge_claude_inbox_hooks(data, command)
+        if changed or not dest.is_file():
+            dest.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+            out["written"] = True
+        out["hook"] = str(dest)
+        if root is not None:
+            from .inbox import write_root_pointer
+            write_root_pointer(Path(worktree), Path(root))
+        return out
+    except OSError as e:
+        out["ok"] = False
+        out["error"] = type(e).__name__ + ": " + str(e)
+        return out
+
+
+def ensure_inbox_hooks(
+    worktree: Path | str,
+    root: Path | str | None = None,
+    harness: str | None = None,
+) -> dict[str, Any]:
+    """Swap-safe: write Grok + Claude hook docs for every non-home worktree.
+
+    cursor-agent / agy / hermes / pi have no proven vendor hook file — they
+    drain via `convoy inbox --drain`. Codex may native-queue on send.
+    Never invent Terminal.app / iTerm adapters.
+    """
+    from .inbox import HARNESS_INBOX
+
+    grok = ensure_grok_inbox_hook(worktree, root=root)
+    claude = ensure_claude_inbox_hook(worktree, root=root)
+    hid = str(harness or "").strip().lower() or None
+    kinds = dict(HARNESS_INBOX)
+    out: dict[str, Any] = {
+        "ok": bool(grok.get("ok") and claude.get("ok")),
+        "written": bool(grok.get("written") or claude.get("written")),
+        "command": inbox_hook_command(),
+        "grok_hook": grok,
+        "claude_hook": claude,
+        "kinds": kinds,
+        "harness": hid,
+        "harness_kind": kinds.get(hid) if hid else None,
+    }
+    if not grok.get("ok"):
+        out["error"] = grok.get("error")
+    elif not claude.get("ok"):
+        out["error"] = claude.get("error")
+    return out
+

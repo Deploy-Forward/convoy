@@ -45,7 +45,7 @@ import subprocess
 from pathlib import Path
 from typing import Any, Callable
 
-from .identity import ensure_grok_agent, install_neuron_identity
+from .identity import ensure_grok_agent, ensure_inbox_hooks, install_neuron_identity
 from .convoy import (
     CONDUCTOR,
     list_seats,
@@ -503,7 +503,7 @@ def ensure_interactive_path(home: Path | None = None) -> dict[str, Any]:
         return out
 
 
-def ensure_first_run(seat: dict[str, Any]) -> dict[str, Any]:
+def ensure_first_run(seat: dict[str, Any], root: Path | str | None = None) -> dict[str, Any]:
     """Ungate first-run Claude bypass warning for the thread worktree.
 
     Project {worktree}/.claude/settings.json: merge skipDangerousModePermissionPrompt
@@ -542,6 +542,8 @@ def ensure_first_run(seat: dict[str, Any]) -> dict[str, Any]:
         "identity_agents": None,
         "agent_written": False,
         "agent_path": None,
+        "inbox_hook_written": False,
+        "inbox_hook": None,
     }
     path_card = ensure_interactive_path()
     out["path_written"] = bool(path_card.get("path_written"))
@@ -569,6 +571,16 @@ def ensure_first_run(seat: dict[str, Any]) -> dict[str, Any]:
                 out["agent_path"] = agent_card.get("agent")
                 if agent_card.get("error"):
                     out["agent_error"] = agent_card["error"]
+            hook_card = ensure_inbox_hooks(wt_path, root=root, harness=to)
+            out["inbox_hook_written"] = bool(hook_card.get("written"))
+            out["inbox_hook"] = hook_card.get("command")
+            out["inbox_hook_kinds"] = hook_card.get("kinds")
+            grok_hook = (hook_card.get("grok_hook") or {}).get("hook")
+            claude_hook = (hook_card.get("claude_hook") or {}).get("hook")
+            out["inbox_grok_hook"] = grok_hook
+            out["inbox_claude_hook"] = claude_hook
+            if hook_card.get("error"):
+                out["inbox_hook_error"] = hook_card["error"]
     if not _is_claude(to):
         return out
     if not (isinstance(wt, str) and wt.strip()) and not isinstance(wt, Path):
@@ -971,7 +983,7 @@ def bring_up(root: Path, convoy_id: str | None = None, thread: str | None = None
     for i, s in enumerate(hops):
         rect = rects[i] if i < len(rects) else None
         try:
-            fr = ensure_first_run(s)
+            fr = ensure_first_run(s, root=root)
         except Exception as e:
             fr = {"ok": False, "prepared": False, "wrote": False, "settings": None, "error": str(e), "home_written": False, "settings_home": None}
         s = _seat_with_agent(root, s, fr)

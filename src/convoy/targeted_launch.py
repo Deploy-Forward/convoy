@@ -290,7 +290,7 @@ def launch_seat(
         effective = row
         first_run: dict[str, Any] | None = None
         if runner is not None:
-            first_run = ensure_first_run(row)
+            first_run = ensure_first_run(row, root=root)
             if first_run.get("ok") is False:
                 raise ValueError(str(first_run.get("error") or "first-run preparation failed"))
             effective = _seat_with_agent(root, row, first_run)

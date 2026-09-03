@@ -26,7 +26,7 @@ A **synapse** is native Convoy `send` into one neuron. Headless. Compact card ba
 convoy send --to <harness> "..."
 ```
 
-`convoy` is the console script (`pip install .` / `pipx install .`); `python -m convoy` is the same thing after a plain install. `send --live` must not steal a live TUI. If a seat is already live, refuse rather than spawn a second interactive `--resume`. A send card says `delivery: recorded | executed | refused`; only an ack row authored by the target proves delivery.
+`convoy` is the console script (`pip install .` / `pipx install .`); `python -m convoy` is the same thing after a plain install. `send --live` must not steal a live TUI. If a seat is already live, Convoy queues the body on the thread inbox (`.convoy/inbox/<session_id>.jsonl`) instead of spawning a second `--resume`. That card is `delivery: queued`, `delivered: false` until the occupant acks. Drain with `convoy inbox --drain --seat S`, or the PreToolUse hook (`convoy inbox --hook-pretooluse`). Codex live seats may use `codex queue --thread <uuid> --message` (`delivery: native-queued`). A send card says `delivery: recorded | executed | refused | queued`; only an ack row authored by the target proves delivery.
 
 ## Detect, identify, then send
 
