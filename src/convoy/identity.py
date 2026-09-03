@@ -261,8 +261,27 @@ def claude_inbox_hook_document(command: str | None = None) -> dict[str, Any]:
     }
 
 
+def _commands_in(node: Any) -> list[str]:
+    """Every Convoy inbox `command` string inside a hook object."""
+    found: list[str] = []
+    if isinstance(node, dict):
+        c = node.get("command")
+        if isinstance(c, str) and INBOX_HOOK_ARGS in c:
+            found.append(c)
+        for v in node.values():
+            found.extend(_commands_in(v))
+    elif isinstance(node, list):
+        for v in node:
+            found.extend(_commands_in(v))
+    return found
+
+
 def _hooks_already_have_command(events: Any, command: str) -> bool:
-    return command in json.dumps(events)
+    # Compare extracted strings, never a JSON blob: our command contains
+    # double quotes, which json.dumps escapes, so a substring test never
+    # matched and every run appended ANOTHER copy (live 2026-09-03: this
+    # worktree ended up with two identical entries per event).
+    return any(c == command for c in _commands_in(events))
 
 
 def _is_stale_convoy_entry(entry: Any, command: str) -> bool:
@@ -288,14 +307,14 @@ def _merge_claude_inbox_hooks(data: dict[str, Any], command: str) -> tuple[dict[
         events = hooks.get(event)
         if not isinstance(events, list):
             events = []
-        kept = [e for e in events if not _is_stale_convoy_entry(e, command)]
-        if len(kept) != len(events):
+        # Rebuild: everything that is not ours, then EXACTLY ONE entry of
+        # ours. Filtering-then-appending left duplicates of the same command
+        # in place; this cannot.
+        others = [e for e in events if not _commands_in(e)]
+        rebuilt = others + [_command_hook_entry(command)]
+        if rebuilt != events:
             changed = True
-        events = kept
-        if not _hooks_already_have_command(events, command):
-            events.append(_command_hook_entry(command))
-            changed = True
-        hooks[event] = events
+        hooks[event] = rebuilt
     data["hooks"] = hooks
     return data, changed
 
