@@ -177,9 +177,17 @@ def probe(harness: str, runner: ProbeFn | None = None) -> dict[str, Any]:
         code, raw = _run([bin, "exec", "/status"], timeout=15)
         low = (raw or "").lower()
         timed_out = code == 124 or low == "probe timeout"
-        limited = timed_out or ("out of credits" in low)
-        remaining = None if limited else normalize_usage_remaining(raw)
-        return {"usage_remaining": remaining, "limited": limited, "raw": raw or None, "exit_code": code}
+        # A probe that TIMED OUT measured nothing. Unknown is null; it is not
+        # "out of quota". Treating it as limited refused every send to a codex
+        # chair on this machine for a full day (live 2026-09-03: the codex
+        # probe times out here, so the neuron could never be reached at all).
+        # If the vendor really is out of credits it says so, and it will
+        # refuse the work itself - that refusal is evidence, ours was a guess.
+        limited = "out of credits" in low
+        remaining = None if (limited or timed_out) else normalize_usage_remaining(raw)
+        return {"usage_remaining": remaining, "limited": limited, "raw": raw or None,
+                "exit_code": code, "probe_timed_out": timed_out,
+                "quota": None if timed_out else ("exhausted" if limited else "available")}
     return {"usage_remaining": None, "limited": False, "raw": None}
 
 

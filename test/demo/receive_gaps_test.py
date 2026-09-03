@@ -223,3 +223,43 @@ class LimitedIsTheSessionNotAnyHundred(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ATimedOutProbeIsUnknownNotExhausted(unittest.TestCase):
+    """Live 2026-09-03, answering Marco's "where is the gap for codex": every
+    send to the codex chair was refused with "codex limited" because the codex
+    usage probe times out on this machine and usage.py read a TIMEOUT as
+    out-of-quota. A probe that measured nothing knows nothing: unknown is
+    null. If the vendor really is out of credits it says so, and its own
+    refusal is evidence; ours was a guess that made the neuron unreachable."""
+
+    def test_timeout_is_not_limited_and_quota_is_null(self):
+        from convoy import usage
+        with mock.patch.object(usage, "_run", return_value=(124, "probe timeout")):
+            p = usage.probe("codex")
+        self.assertFalse(p["limited"])
+        self.assertTrue(p["probe_timed_out"])
+        self.assertIsNone(p["quota"])
+        self.assertIsNone(p["usage_remaining"])
+
+    def test_a_real_out_of_credits_still_limits(self):
+        from convoy import usage
+        with mock.patch.object(usage, "_run", return_value=(0, "Your workspace is out of credits.")):
+            p = usage.probe("codex")
+        self.assertTrue(p["limited"])
+        self.assertEqual(p["quota"], "exhausted")
+        self.assertFalse(p["probe_timed_out"])
+
+    def test_a_send_to_codex_is_not_refused_by_a_timed_out_probe(self):
+        from convoy import usage
+        root = Path(tempfile.mkdtemp())
+        ensure_id(root)
+        bind(root, "t1")
+        seat(root, "codex", "c-t1", worktree=str(root), resume="01codex")
+        with mock.patch.object(usage, "_run", return_value=(124, "probe timeout")), \
+             mock.patch("convoy.synapse.try_codex_queue", return_value=None):
+            card = send_one(root, "codex", "REACHABLE", runner=fake_runner, instance_id="c-t1",
+                            allow_interactive_resume=False)
+        self.assertFalse(card.get("refused"), card.get("error"))
+        self.assertEqual(card["delivery"], "queued")
+        self.assertEqual(len(pending(root, "c-t1")), 1)
