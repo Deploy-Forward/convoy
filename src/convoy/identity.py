@@ -22,6 +22,7 @@ SKILL_RELATIVE = (
 
 GROK_AGENT_NAME = "convoy-neuron"
 GROK_AGENT_RELATIVE = Path(".grok") / "agents" / (GROK_AGENT_NAME + ".md")
+CODEX_PROMPT_NAME = "convoy.md"
 
 _GROK_AGENT_TEXT = """\
 ---
@@ -57,6 +58,48 @@ _AGENTS_BLOCK = (
     "pane; do not steal a TUI. Never invent cvy_ or session ids. Never ola-brain.\n"
     + SKILL_END + "\n"
 )
+
+
+_CODEX_PROMPT_TEXT = """---
+description: Run a Convoy command against the current thread and report its JSON card
+argument_hint: <convoy arguments>
+---
+
+Run the Convoy CLI from the current repository using the raw arguments below.
+Prefer `convoy` when it is on PATH; otherwise use `python -m convoy`.
+
+Raw slash-command arguments:
+`$ARGUMENTS`
+
+Preserve the arguments exactly. Use the current checkout/thread root unless the
+arguments explicitly provide `--root`. Return the command's JSON card. Do not
+invent convoy IDs, seat IDs, session IDs, usage, or delivery acknowledgements.
+"""
+
+
+def codex_prompt_source_path() -> Path:
+    return Path(__file__).resolve().parent / "harness_skills" / CODEX_PROMPT_NAME
+
+
+def install_codex_prompt() -> dict[str, Any]:
+    """Install Codex's native custom prompt in CODEX_HOME/prompts."""
+    import os
+    out: dict[str, Any] = {"ok": True, "written": False, "path": None}
+    try:
+        src = codex_prompt_source_path().read_text(encoding="utf-8")
+        codex_home = Path(os.environ.get("CODEX_HOME") or (Path.home() / ".codex"))
+        dest = codex_home / "prompts" / CODEX_PROMPT_NAME
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        prev = dest.read_text(encoding="utf-8") if dest.is_file() else None
+        if prev != src:
+            dest.write_text(src, encoding="utf-8")
+            out["written"] = True
+        out["path"] = str(dest)
+        return out
+    except OSError as e:
+        out["ok"] = False
+        out["error"] = type(e).__name__ + ": " + str(e)
+        return out
 
 
 def skill_source_path() -> Path:
@@ -115,6 +158,12 @@ def install_neuron_identity(worktree: Path | str) -> dict[str, Any]:
             out["written"] = True
         out["paths"] = paths
         out["agents"] = str(agents)
+        prompt = install_codex_prompt()
+        out["codex_prompt"] = prompt
+        if prompt.get("written"):
+            out["written"] = True
+        if not prompt.get("ok"):
+            out["ok"] = False
         return out
     except OSError as e:
         out["ok"] = False

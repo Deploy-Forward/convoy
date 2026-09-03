@@ -29,6 +29,13 @@ public package must not do). A test (`test/demo/skills_folder_test.py`)
 asserts the two copies are byte-identical: edit one without the other and the
 suite goes red.
 
+## Codex native slash prompt
+
+Codex's native composer does not turn a repository `skills/` folder into a bare
+slash command. The installer also writes `$CODEX_HOME/prompts/convoy.md`;
+invoke it as `/prompts:convoy` after starting a new Codex session. This is the
+Codex custom-prompt namespace, not a second Convoy identity skill.
+
 ## Skills
 
 - `neuron-identity/` — who a neuron is: one BYO harness session on a
