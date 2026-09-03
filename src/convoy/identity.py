@@ -61,8 +61,11 @@ You are a Convoy neuron: one grok session on a Convoy thread, not Grok Bot.
   neuron's TUI. Do not steal a live `--resume`.
 - Inbox: a send into this live seat is queued under the thread root
   (`.convoy/inbox/<session_id>.jsonl`). Drain with `convoy inbox --drain`
-  or the PreToolUse hook (`convoy inbox --hook-pretooluse`). Fake send
-  ACKs are not delivery.
+  or the PreToolUse hook (`convoy inbox --hook-pretooluse`). Inbox is
+  deferred delivery, not a wake. The vendor session-message API is ACP
+  `session/prompt` (`convoy grok-acp`); it reaches a live TUI only when
+  that TUI shares a grok leader. Fake send ACKs are not delivery. Never
+  grok `-p` / `-c` a live seat.
 - Usage dying: ASK the user to bring_up / open a pane, or write a
   `.ola/*handoff*` file. Never guess remaining quota.
 """
@@ -344,11 +347,43 @@ def _existing_hook_commands(text: str | None) -> list[str]:
     return found
 
 
+def _foreign_convoy_worktree(command: str) -> bool:
+    """True when the baked interpreter lives in another convoy-wt-* tree.
+
+    Live 2026-09-03: grok-lead kept
+    convoy-wt-inbox\\.venv\\Scripts\\python.exe because that interpreter still
+    probed ok. A keep of a working command is right when it is THIS install;
+    a keep of another worktree's venv is a delivery bug the moment that
+    worktree is gc'd or its convoy is stale.
+    """
+    text = str(command or "").replace("\\", "/").lower()
+    here = str(Path(__file__).resolve()).replace("\\", "/").lower()
+    key = "convoy-wt-"
+    start = 0
+    while True:
+        i = text.find(key, start)
+        if i < 0:
+            return False
+        j = i
+        while j < len(text) and text[j] not in "/":
+            j += 1
+        name = text[i:j]
+        if name and name not in here:
+            return True
+        start = j
+
+
 def _resolved_or_kept(prev_text: str | None) -> dict[str, Any]:
     """Keep an existing Convoy hook command that still probes ok (audit
     2026-09-03: the only hook that ever delivered was a baked path a later
-    first-run would have overwritten); else resolve fresh."""
+    first-run would have overwritten); else resolve fresh.
+
+    Never keep a command whose interpreter is in a *different* convoy-wt-*
+    tree than this package (live 2026-09-03: inbox venv shadowed grok-lead).
+    """
     for c in _existing_hook_commands(prev_text):
+        if _foreign_convoy_worktree(c):
+            continue
         if _cmd.probe_existing_hook_command(c):
             return {"command": c, "resolved_via": "kept-existing", "error": None, "kept_existing": c}
     r = _cmd.resolve_inbox_hook_command()
