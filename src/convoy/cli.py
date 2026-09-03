@@ -15,7 +15,7 @@ from .convoy import attach, bind, ensure_id, list_seats, read_id, read_lead, sea
 from .glance import build_glance, run_tray
 from .graph import build_graph, neighborhood
 from .graph_html import render_html, resume_neuron
-from .identity import install_neuron_identity
+from .identity import ensure_inbox_hooks, install_neuron_identity
 from .index import find_root, index_path, list_threads
 from .panes import bodies, identify
 from .layer import SCHEMA_VERSION, conductor_stamp, feed_since, hook
@@ -367,9 +367,15 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(bodies(root)))
         return 0
     if args.cmd == "skills":
-        card = install_neuron_identity(args.worktree)
+        # Refresh BOTH halves of a neuron's install: the skill text and the
+        # inbox hooks (probed command + root pointer). A long-lived pane that
+        # got only the text stayed deaf (audit 2026-09-03).
+        skills = install_neuron_identity(args.worktree)
+        hooks = ensure_inbox_hooks(args.worktree, root=root if read_id(root) else None)
+        card = {**skills, "skills_ok": bool(skills.get("ok")), "hooks": hooks,
+                "ok": bool(skills.get("ok")) and bool(hooks.get("ok"))}
         print(json.dumps(card))
-        return 0 if card.get("ok") else 1
+        return 0 if card["ok"] else 1
     if args.cmd == "resume":
         try:
             card = resume_neuron(root, args.neuron, go=args.go)

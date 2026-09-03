@@ -55,7 +55,10 @@ class NeuronIdentity(unittest.TestCase):
         self.assertEqual(grok.read_text(encoding="utf-8"), src)
         self.assertEqual(claude.read_text(encoding="utf-8"), src)
         self.assertIn(SKILL_BEGIN, agents.read_text(encoding="utf-8"))
-        self.assertEqual(card["paths"], [str(grok), str(claude)])
+        recv_g = self.wt / ".grok" / "skills" / "neuron-receive" / "SKILL.md"
+        recv_c = self.wt / ".claude" / "skills" / "neuron-receive" / "SKILL.md"
+        self.assertEqual(card["paths"], [str(grok), str(claude), str(recv_g), str(recv_c)])
+        self.assertTrue(recv_g.is_file() and recv_c.is_file())
         self.assertEqual(card["agents"], str(agents))
         codex_prompt = self.fake_home / ".codex" / "prompts" / "convoy.md"
         self.assertTrue(codex_prompt.is_file())

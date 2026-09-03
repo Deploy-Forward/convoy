@@ -180,6 +180,25 @@ def _exclusive(path: Path) -> Iterator[None]:
         fh.close()
 
 
+def mark_consumed(root: Path, session_id: str, token: str, drain_id: str) -> dict[str, Any]:
+    """Append one consumed-marker for a token delivered by another path (codex
+    native queue). The row was never pending for a drain; without this marker
+    the SoT showed it pending forever (audit 2026-09-03). Same shape as a
+    drain marker so every reader treats it identically."""
+    sid = str(session_id or "").strip()
+    dest = inbox_path(root, sid)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    now = utc_now()
+    marker = {
+        "ts": now, "kind": "consumed-marker", "token": str(token), "session_id": sid,
+        "status": "consumed", "consumed_at": now, "drain_id": str(drain_id),
+    }
+    with _exclusive(dest):
+        with dest.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(marker, separators=(",", ":")) + "\n")
+    return marker
+
+
 def drain(root: Path, session_id: str) -> list[dict[str, Any]]:
     """Append a consumed-marker per pending token. Never rewrite existing lines.
 
