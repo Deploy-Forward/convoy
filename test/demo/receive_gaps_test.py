@@ -103,6 +103,34 @@ class StaleHookEntriesArePruned(unittest.TestCase):
         self.assertEqual(ups, [good])
         self.assertEqual(data["permissions"]["defaultMode"], "bypassPermissions")
 
+    def test_a_quoted_command_is_not_appended_twice(self):
+        """The resolved command contains double quotes; the old duplicate
+        check compared against json.dumps(events), where they are escaped, so
+        it never matched and every run appended another copy (live: this
+        worktree ended up with two identical entries per event)."""
+        quoted = cmd._quote(sys.executable) + ' -c "import sys; sys.exit(0)" inbox --hook-pretooluse'
+        # Seed it as an existing working hook so the writer keeps it: the point
+        # under test is duplication of a command containing double quotes.
+        (self.wt / ".claude" / "settings.json").write_text(json.dumps({
+            "hooks": {"PreToolUse": [{"hooks": [{"type": "command", "command": quoted}]}],
+                      "UserPromptSubmit": [{"hooks": [{"type": "command", "command": quoted}]}]},
+        }, indent=2), encoding="utf-8")
+        grok_hook = self.wt / ".grok" / "hooks" / "convoy-inbox.json"
+        grok_hook.parent.mkdir(parents=True, exist_ok=True)
+        grok_hook.write_text(json.dumps({
+            "hooks": {"PreToolUse": [{"hooks": [{"type": "command", "command": quoted}]}]},
+        }, indent=2), encoding="utf-8")
+        with mock.patch.object(cmd, "_probe_inbox_command", lambda c: c == quoted):
+            _run_cli(self.root, "skills", "--worktree", str(self.wt))
+            _run_cli(self.root, "skills", "--worktree", str(self.wt))
+            rc, card = _run_cli(self.root, "skills", "--worktree", str(self.wt))
+        self.assertEqual(rc, 0)
+        data = json.loads((self.wt / ".claude" / "settings.json").read_text(encoding="utf-8"))
+        for event in ("PreToolUse", "UserPromptSubmit"):
+            ours = [h["command"] for e in data["hooks"][event] for h in e["hooks"]
+                    if "inbox --hook-pretooluse" in h["command"]]
+            self.assertEqual(ours, [quoted], event)
+
     def test_second_run_is_a_no_op(self):
         good = cmd._quote(sys.executable) + " -m convoy inbox --hook-pretooluse"
         with mock.patch.object(cmd, "_probe_inbox_command", lambda c: c == good):

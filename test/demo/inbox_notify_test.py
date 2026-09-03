@@ -136,13 +136,27 @@ class LiveSeatInbox(unittest.TestCase):
         enqueue(self.root, "sess-grok", "TOKEN-BODY-99", to="grok", label="design-review")
         card = hook_pretooluse(self.wt)
         ctx = card["hookSpecificOutput"]["additionalContext"]
-        self.assertEqual(card.get("decision"), "allow")
         self.assertIn("TOKEN-BODY-99", ctx)
         self.assertIn("design-review", ctx)
         self.assertIn("token=", ctx)
         self.assertEqual(pending(self.root, "sess-grok"), [])
         empty = hook_pretooluse(self.wt)
-        self.assertEqual(empty.get("decision"), "allow")
+        self.assertEqual(empty, {})
+
+    def test_hook_output_never_carries_a_top_level_decision(self):
+        """Live in Marco's own pane 2026-09-03: Claude Code refused our output
+        with "expected one of approve|block" because we sent
+        {"decision": "allow"}. That field is the legacy permission vote; a
+        context-adding hook must not send it, and the no-message case is an
+        empty object, not a vote."""
+        write_root_pointer(self.wt, self.root)
+        self.assertEqual(hook_pretooluse(self.wt), {})
+        enqueue(self.root, "sess-grok", "NO-DECISION-FIELD", to="grok")
+        card = hook_pretooluse(self.wt)
+        self.assertNotIn("decision", card)
+        self.assertEqual(set(card), {"hookSpecificOutput"})
+        self.assertEqual(set(card["hookSpecificOutput"]), {"hookEventName", "additionalContext"})
+        self.assertIn(card["hookSpecificOutput"]["hookEventName"], ("PreToolUse", "UserPromptSubmit"))
 
     def test_cli_live_send_queues(self):
         buf = io.StringIO()

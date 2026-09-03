@@ -315,7 +315,12 @@ def hook_pretooluse(cwd: str | Path | None = None) -> dict[str, Any]:
     messages = drain(root, sid) if sid else []
     event = _hook_event_from_stdin()
     if not messages:
-        return {"decision": "allow"}
+        # An empty object is the only universally safe no-op. A top-level
+        # "decision" is the LEGACY approve|block field: Claude Code rejects
+        # "allow" outright ("Hook JSON output validation failed", live in
+        # Marco's own pane 2026-09-03), and a context-adding hook has no
+        # business voting on permissions at all.
+        return {}
     chunks = []
     for item in messages:
         label = item.get("label") or "synapse"
@@ -331,7 +336,6 @@ def hook_pretooluse(cwd: str | Path | None = None) -> dict[str, Any]:
     if len(context) > 10000:
         context = context[:9997] + "..."
     return {
-        "decision": "allow",
         "hookSpecificOutput": {
             "hookEventName": event,
             "additionalContext": context,
