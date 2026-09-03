@@ -17,6 +17,7 @@ from .graph import build_graph, neighborhood
 from .graph_html import render_html, resume_neuron
 from .identity import ensure_inbox_hooks, install_neuron_identity
 from .index import find_root, index_path, list_threads
+from .activity import neuron_activity
 from .panes import bodies, identify
 from .layer import SCHEMA_VERSION, conductor_stamp, feed_since, hook
 from .lifecycle import join, pass_lead, seated_ack, swap
@@ -127,6 +128,9 @@ def main(argv: list[str] | None = None) -> int:
 
     sk = sub.add_parser("skills", help="(re)install the Convoy-owned identity skill copies into a worktree; refreshes stale copies after an upgrade")
     sk.add_argument("--worktree", required=True)
+
+    nr = sub.add_parser("neurons", help="who is active on this thread and the command that messages each: bus recency first, process evidence second, never a token")
+    nr.add_argument("--since", help="ISO UTC lower bound for active (default: last 90 minutes)")
 
     sub.add_parser("panes", help="every body of every neuron on this thread from the OS process table: pid, via token|cwd, duplicates, unassigned harness processes; never a token")
 
@@ -365,6 +369,9 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.cmd == "panes":
         print(json.dumps(bodies(root)))
+        return 0
+    if args.cmd == "neurons":
+        print(json.dumps(neuron_activity(root, since=args.since)))
         return 0
     if args.cmd == "skills":
         # Refresh BOTH halves of a neuron's install: the skill text and the
