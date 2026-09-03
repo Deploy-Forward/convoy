@@ -324,10 +324,9 @@ def hook_pretooluse(cwd: str | Path | None = None) -> dict[str, Any]:
         chairs = [str(r.get("session_id") or "") for r in matches]
         event = _hook_event_from_stdin()
         ctx = (
-            "Convoy inbox refuse: this cwd matches more than one chair (" +
-            ", ".join(chairs) +
-            "). Drain none rather than guess. Re-seat so each chair has its "
-            "own worktree, then retry."
+            "Convoy inbox refuse (C8): cwd " + str(start) +
+            " matches more than one chair (" + ", ".join(chairs) +
+            "). Drain none rather than guess. Each chair needs its own worktree."
         )
         return {
             "hookSpecificOutput": {

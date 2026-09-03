@@ -121,8 +121,8 @@ def seat(
             if holder is not None:
                 raise ValueError(
                     "refuse seat: worktree " + wt + " is already held by chair " +
-                    str(holder.get("session_id")) + " on this thread; two chairs on one "
-                    "worktree makes inbox drain ambiguous")
+                    str(holder.get("session_id")) + "; cannot also seat " + str(session_id) +
+                    " on it (C8: one worktree, one chair; hook drain is by worktree)")
     thread = read_thread(root) or ""
     resume_val = resume.strip() if isinstance(resume, str) and resume.strip() else None
     rkey = make_resume_key(cid, thread, to, wt)
@@ -276,7 +276,8 @@ def update_seat(root: Path, session_id: str, **changes: Any) -> dict[str, Any]:
             raise ValueError(
                 "refuse seat: worktree " + str(changes.get("worktree")) +
                 " is already held by chair " + str(holder.get("session_id")) +
-                " on this thread; two chairs on one worktree makes inbox drain ambiguous")
+                "; cannot also move " + sid +
+                " onto it (C8: one worktree, one chair; hook drain is by worktree)")
     harness_changed = "to" in changes and changes["to"] != row.get("to")
     updated: dict[str, Any] = {**row, **changes}
     if harness_changed:
