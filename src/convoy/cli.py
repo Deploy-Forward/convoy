@@ -15,6 +15,7 @@ from .convoy import attach, bind, ensure_id, list_seats, read_id, read_lead, sea
 from .glance import build_glance, run_tray
 from .graph import build_graph, neighborhood
 from .graph_html import render_html, resume_neuron
+from .identity import install_neuron_identity
 from .index import find_root, index_path, list_threads
 from .panes import bodies, identify
 from .layer import SCHEMA_VERSION, conductor_stamp, feed_since, hook
@@ -118,6 +119,9 @@ def main(argv: list[str] | None = None) -> int:
     gr.add_argument("--html", action="store_true", help="render the graph as a self-contained local page (thread side panel + per-chair resume command; no tokens)")
     gr.add_argument("--out", help="file to write with --html (default .convoy/graph.html under the root)")
     gr.add_argument("--also-root", action="append", default=[], help="another root whose thread the page should also show")
+
+    sk = sub.add_parser("skills", help="(re)install the Convoy-owned identity skill copies into a worktree; refreshes stale copies after an upgrade")
+    sk.add_argument("--worktree", required=True)
 
     sub.add_parser("panes", help="every body of every neuron on this thread from the OS process table: pid, via token|cwd, duplicates, unassigned harness processes; never a token")
 
@@ -338,6 +342,10 @@ def main(argv: list[str] | None = None) -> int:
     if args.cmd == "panes":
         print(json.dumps(bodies(root)))
         return 0
+    if args.cmd == "skills":
+        card = install_neuron_identity(args.worktree)
+        print(json.dumps(card))
+        return 0 if card.get("ok") else 1
     if args.cmd == "resume":
         try:
             card = resume_neuron(root, args.neuron, go=args.go)
