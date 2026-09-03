@@ -50,8 +50,11 @@ class RenderHtml(unittest.TestCase):
         rc, card = _run_cli(self.root, "graph", "--html", "--out", str(out))
         self.assertEqual(rc, 0)
         self.assertTrue(out.is_file())
-        self.assertEqual(card["threads"], 1)
-        self.assertNotIn("secret-uuid", out.read_text(encoding="utf-8"))
+        # the page also lists every present thread in the machine index
+        self.assertGreaterEqual(card["threads"], 1)
+        page = out.read_text(encoding="utf-8")
+        self.assertIn("chair:a-t1", page)
+        self.assertNotIn("secret-uuid", page)
 
 
 class ResumeNeuron(unittest.TestCase):

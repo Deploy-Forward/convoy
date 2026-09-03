@@ -2,7 +2,9 @@
 """Run demo tests. unittest default pattern test*.py misses *_test.py."""
 from __future__ import annotations
 
+import os
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -13,6 +15,8 @@ if str(SRC) not in sys.path:
 
 
 def main() -> int:
+    # Tests mint temp roots; keep their index rows out of the real ~/.convoy.
+    os.environ.setdefault("CONVOY_HOME", tempfile.mkdtemp(prefix="convoy-test-home-"))
     start = ROOT / "test" / "demo"
     suite = unittest.defaultTestLoader.discover(str(start), pattern="*_test.py")
     result = unittest.TextTestRunner(verbosity=2).run(suite)
