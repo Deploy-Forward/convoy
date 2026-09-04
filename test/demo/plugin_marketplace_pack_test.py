@@ -7,6 +7,28 @@ PLUGIN_ROOT = REPO / "plugin" / "convoy"
 
 
 class PluginMarketplacePackContract(unittest.TestCase):
+    def test_xai_grok_plugin_manifest_contract(self):
+        manifest = PLUGIN_ROOT / ".grok-plugin" / "plugin.json"
+        self.assertTrue(manifest.is_file(), "xAI .grok-plugin/plugin.json missing")
+        data = json.loads(manifest.read_text(encoding="utf-8"))
+        self.assertEqual(data.get("name"), "convoy")
+        self.assertEqual(data.get("license"), "MIT")
+        self.assertEqual(data.get("repository"), "https://github.com/Deploy-Forward/convoy")
+        self.assertTrue(data.get("version"))
+        self.assertTrue(data.get("description"))
+
+    def test_xai_grok_mcp_contract(self):
+        mcp = PLUGIN_ROOT / ".mcp.json"
+        self.assertTrue(mcp.is_file(), "xAI .mcp.json missing")
+        data = json.loads(mcp.read_text(encoding="utf-8"))
+        server = data.get("mcpServers", {}).get("convoy", {})
+        self.assertEqual(server.get("type"), "http")
+        self.assertEqual(server.get("url"), "https://convoy.bot/mcp")
+        note = server.get("note", "")
+        self.assertIn("tools/list", note)
+        self.assertIn("fails closed", note)
+        self.assertIn("hide write", note)
+
     def test_agent_plugin_manifest_contract(self):
         manifest = PLUGIN_ROOT / "plugin.json"
         self.assertTrue(manifest.is_file(), "plugin/convoy/plugin.json missing")
