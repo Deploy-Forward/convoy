@@ -256,7 +256,16 @@ class TargetedLaunch(unittest.TestCase):
         self.assertIn(str(self.worktree), card["worktrees"])
         self.assertIn("known-seat", [s["session_id"] for s in card["seats"]])
         self.assertNotIn("DO-NOT-EXPOSE", encoded)
-        self.assertNotIn("resume", encoded.lower())
+        # harnesses[].effort.evidence quotes live --help text, which names
+        # --resume flags (agy/hermes/pi, 2026-09-01). That prose must be the
+        # contract's own bytes, and nothing else on the card may say resume.
+        from convoy.harness_contract import load_harness_contract
+
+        contract = {h["id"]: (h.get("effort") or {}).get("evidence") for h in load_harness_contract()["harnesses"]}
+        for h in card["harnesses"]:
+            self.assertEqual(h["effort"]["evidence"], contract[h["id"]])
+        scrubbed = {**card, "harnesses": [{**h, "effort": {**h["effort"], "evidence": None}} for h in card["harnesses"]]}
+        self.assertNotIn("resume", json.dumps(scrubbed).lower())
 
     @mock.patch("convoy.cli.active_pane_runner")
     @mock.patch("convoy.cli.launch_seat")

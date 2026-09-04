@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from .context import pack
+from .harness_contract import effort_applied, validate_effort
 from .index import record as index_record
 from .layer import SCHEMA_VERSION, feed_since, hook
 from .registry import register
@@ -128,15 +129,19 @@ def seat(
     rkey = make_resume_key(cid, thread, to, wt)
     title_val = title.strip() if isinstance(title, str) and title.strip() else None
     agent_val = agent.strip() if isinstance(agent, str) and agent.strip() else None
+    # Effort is the seat's declared level, real-or-null (chip front matter),
+    # validated against THIS harness's keys (harness_effort.json). Since the
+    # wizard pass (2026-09-04) Convoy does set the vendor flag — exactly when
+    # the contract carries cli_flag + evidence; effort_applied records which.
+    effort_val = validate_effort(to, effort)
     row: dict[str, Any] = {
         "convoy_id": cid,
         "to": to,
         "session_id": session_id,
         "worktree": wt,
         "model": model,
-        # Effort is the seat's declared level, real-or-null (chip front matter).
-        # Convoy stores it; it never sets vendor effort flags.
-        "effort": effort.strip() if isinstance(effort, str) and effort.strip() else None,
+        "effort": effort_val,
+        "effort_applied": effort_applied(to, effort_val),
         "resume": resume_val,
         # Token-to-harness binding (opus-2 RED at baa6a55): resume_for records
         # the harness this token is claimed for; resume_target refuses on
@@ -285,6 +290,18 @@ def update_seat(root: Path, session_id: str, **changes: Any) -> dict[str, Any]:
             updated["resume"] = None
         if "vendor_session_id" not in changes:
             updated["vendor_session_id"] = None
+    if "effort" in changes:
+        updated["effort"] = validate_effort(str(updated.get("to") or ""), changes["effort"])
+    elif harness_changed:
+        # A declaration is per harness: claude's max does not follow the chair
+        # onto grok. It is dropped, not refused — a swap is not the place to
+        # relitigate an old declaration; pass effort= to set a new one.
+        try:
+            updated["effort"] = validate_effort(str(updated.get("to") or ""), row.get("effort"))
+        except ValueError:
+            updated["effort"] = None
+    if "effort" in changes or harness_changed:
+        updated["effort_applied"] = effort_applied(str(updated.get("to") or ""), updated.get("effort"))
     if updated.get("resume"):
         if "resume" in changes and changes["resume"]:
             updated["resume_for"] = updated.get("to")

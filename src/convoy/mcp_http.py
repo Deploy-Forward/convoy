@@ -23,6 +23,7 @@ from .bringup import bring_up, ensure_interactive_path, hide_windows, live_appli
 from .harness_contract import (
     canonical_harness_id,
     contract_path,
+    effort_contract,
     harness_entries,
     harness_exec,
     load_harness_contract,
@@ -93,6 +94,15 @@ _WRITE_TOOLS = frozenset({"stamp", "note", "seat", "join", "launch"})
 
 def _write_tools_enabled() -> bool:
     return os.environ.get("CONVOY_MCP_WRITE_TOOLS", "").strip() == "1"
+
+
+# No enum here on purpose: the vocabulary is per harness (grok xhigh, codex
+# extra-high, pi --thinking levels). The handler refuses a value the named
+# harness does not take and the error lists that harness's real keys.
+_EFFORT_ARG = {
+    "type": "string",
+    "description": "declared effort, validated for the named harness; valid keys are choices.harnesses[].effort.keys, refused otherwise naming them. Reaches argv only where effort.applied is true.",
+}
 
 _SITE_ASSETS: dict[str, tuple[str, str]] = {
     "/": ("index.html", "text/html; charset=utf-8"),
@@ -326,7 +336,7 @@ TOOLS: list[dict[str, Any]] = [
             {"to": {"type": "string", "description": "harness: grok, claude, codex, cursor-agent, agy, hermes, pi"},
              "session_id": {"type": "string", "description": "chair id; identity of the seat"},
              "worktree": {"type": "string"}, "model": {"type": "string"},
-             "title": {"type": "string"}, "effort": {"type": "string"}},
+             "title": {"type": "string"}, "effort": _EFFORT_ARG},
             required=["to", "session_id"],
         ),
     },
@@ -335,7 +345,7 @@ TOOLS: list[dict[str, Any]] = [
         "description": "Add a NEW chair: seat + boot prompt + join row with a minted inbox token (write gate). Refuses a chair id that already exists and a worktree another chair holds (C8). Does not launch; call launch for that.",
         "inputSchema": _schema(
             {"to": {"type": "string"}, "session_id": {"type": "string"}, "worktree": {"type": "string"},
-             "model": {"type": "string"}, "title": {"type": "string"}, "effort": {"type": "string"},
+             "model": {"type": "string"}, "title": {"type": "string"}, "effort": _EFFORT_ARG,
              "author": {"type": "string"}},
             required=["to"],
         ),
@@ -369,11 +379,12 @@ def _seat_for(seats: list[dict[str, Any]], hid: str) -> dict[str, Any] | None:
 
 
 def _roster_contract_view() -> dict[str, Any]:
+    # effort lives on each agent row (effort_contract): the global
+    # effort_types echo read as one menu for every harness and it never was.
     contract = load_harness_contract()
     return {
         "path": contract_path(),
         "schema_version": contract.get("schema_version"),
-        "effort_types": contract.get("effort_types"),
     }
 
 
@@ -424,6 +435,7 @@ def build_roster(root: Path) -> dict[str, Any]:
             "wired": wired,
             "auth": auth,
             "models": models,
+            "effort": effort_contract(hid),
             "availability": availability,
             "usage_remaining": usage_remaining,
             "tracking": "off",

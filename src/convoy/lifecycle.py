@@ -80,11 +80,14 @@ def swap(
     handoff: str,
     author: str,
     model: str | None = None,
+    effort: str | None = None,
 ) -> dict[str, Any]:
     """Replace the occupant of an existing chair. Ordered, fail-closed:
     handoff must exist (FRESH file — newest_handoff selects by mtime), the
     swap row stamps BEFORE the re-seat, resume/vendor_session_id null on
-    every swap, boot prompt carries token + handoff path."""
+    every swap, boot prompt carries token + handoff path. effort is validated
+    for the INCOMING harness (update_seat); unset, the old declaration
+    survives only if that harness takes it."""
     hp = Path(handoff)
     if not hp.is_file():
         raise ValueError("refuse swap: handoff file missing: " + handoff)
@@ -102,6 +105,8 @@ def swap(
                                "boot_prompt": _boot_prompt(root, session_id, token, str(hp))}
     if model:
         changes["model"] = model
+    if effort:
+        changes["effort"] = effort
     seat_row = update_seat(root, session_id, **changes)
     return {"ok": True, "seat": seat_row, "token": token, "row": row, "next": "bring-up"}
 
