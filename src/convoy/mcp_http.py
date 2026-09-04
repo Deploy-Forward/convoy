@@ -34,6 +34,7 @@ from .harness_contract import (
 )
 from .install import install as install_harness
 from .onboard import onboard as run_onboard
+from .repo import checkout_path_for, clone as clone_repo, list_repos, mint_worktrees
 from .context import pack
 from .convoy import list_seats, read_thread
 from .activity import neuron_activity
@@ -91,7 +92,9 @@ HARNESSES = tuple((row["id"], str(row.get("name") or row["id"])) for row in harn
 # Gate 0 goes RED there and stops with an install card - fail-closed, which is
 # the behaviour the wizard promises. inbox stays listed: its read is public;
 # only drain is gated, inside the handler, like resume go=true.
-_WRITE_TOOLS = frozenset({"stamp", "note", "seat", "join", "launch"})
+# onboard joined (2026-09-04, item D): it binds the thread (writes .convoy/)
+# and, given a URL, SPAWNS git clone. clone and mint spawn git outright.
+_WRITE_TOOLS = frozenset({"stamp", "note", "seat", "join", "launch", "onboard", "clone", "mint"})
 
 
 def _write_tools_enabled() -> bool:
@@ -160,7 +163,7 @@ TOOLS: list[dict[str, Any]] = [
     },
     {
         "name": "onboard",
-        "description": "First-run after MCP attach: user names harnesses they already have. Checks PATH honestly per named harness only; no silent additions. Refuses wrappers (gemini-cli, grok-cli, ultracode-shim, ola-brain). Optional thread + checkout_root bind without stomping an existing different thread. Missing harnesses point to install opt-in when a vendor installer is cataloged; no installer fetch here.",
+        "description": "First-run after MCP attach: user names harnesses they already have (write gate: it binds the thread and may clone). Checks PATH honestly per named harness only; no silent additions. Refuses wrappers (gemini-cli, grok-cli, ultracode-shim, ola-brain). Optional thread + checkout_root bind without stomping an existing different thread; a git URL as checkout_root is cloned once into the Convoy-owned checkout root and reused after. Missing harnesses point to install opt-in when a vendor installer is cataloged; no installer fetch here.",
         "inputSchema": _schema(
             {
                 "to": {
@@ -169,9 +172,34 @@ TOOLS: list[dict[str, Any]] = [
                     "description": "Named harness ids you already have (grok, claude, codex, cursor-agent, agy/antigravity, hermes, pi)",
                 },
                 "thread": {"type": "string"},
-                "checkout_root": {"type": "string"},
+                "checkout_root": {"type": "string", "description": "an existing path, or a git URL (https://... or git@...) cloned under <CONVOY_HOME>/checkouts/<owner>/<repo>"},
+                "github": {"type": "boolean", "description": "the wizard's GitHub? answer, recorded on the bind as yes|no; a URL records yes by itself; omitted stays null"},
             },
             required=["to"],
+        ),
+    },
+    # The repository step (2026-09-04, item D). repos is a public read: names
+    # and URLs from `gh repo list`, never a token, and a missing gh is an
+    # install hint rather than a guessed list. clone and mint spawn git, so
+    # they sit behind the write gate with launch and are hidden publicly.
+    {
+        "name": "repos",
+        "description": "Read-only: the user's GitHub repositories via `gh repo list` on the MCP process PATH (name, url, private, updated_at). gh absent is ok=false with an install hint and repos null; never a remembered list, never a token.",
+        "inputSchema": _schema({"limit": {"type": "integer", "default": 30}}),
+    },
+    {
+        "name": "clone",
+        "description": "git clone one URL into the Convoy-owned checkout root, <CONVOY_HOME>/checkouts/<owner>/<repo> (write gate: this SPAWNS git). Refuses a non-empty dest. .convoy/ and thread.md go into the clone's .git/info/exclude so the bind is never a tracked file of the user's repo.",
+        "inputSchema": _schema({"url": {"type": "string"}}, required=["url"]),
+    },
+    {
+        "name": "mint",
+        "description": "git worktree add one worktree per seat, DERIVED from the checkout: sibling <checkout>-wt-<name> on branch convoy/<name> (write gate: this SPAWNS git). names defaults to neuron-1..n; an existing sibling is reused; stops at the first git failure naming it.",
+        "inputSchema": _schema(
+            {"checkout": {"type": "string", "description": "path of a git checkout, e.g. onboard's root"},
+             "n": {"type": "integer"},
+             "names": {"type": "array", "items": {"type": "string"}}},
+            required=["checkout", "n"],
         ),
     },
     {
@@ -518,7 +546,31 @@ def _call_tool(root: Path, name: str, arguments: dict[str, Any] | None) -> dict[
             to,
             thread=_opt_str(args, "thread"),
             checkout_root=_opt_str(args, "checkout_root"),
+            github=None if args.get("github") is None else _opt_bool(args, "github", False),
         )
+    if name == "repos":
+        limit = args.get("limit")
+        return list_repos(limit=int(limit) if isinstance(limit, (int, float)) and not isinstance(limit, bool) else 30)
+    if name == "clone":
+        url = (_opt_str(args, "url") or "").strip()
+        if not url:
+            return {"ok": False, "cloned": False, "error": "clone requires url"}
+        if not _write_tools_enabled():
+            # Refused BEFORE git runs: nothing is spawned.
+            return {"ok": False, "url": url, "cloned": False, "error": _gate_text("clone")}
+        try:
+            return clone_repo(url, checkout_path_for(url))
+        except ValueError as e:
+            return {"ok": False, "url": url, "cloned": False, "error": str(e)}
+    if name == "mint":
+        checkout = (_opt_str(args, "checkout") or "").strip()
+        n = args.get("n")
+        if not checkout or not isinstance(n, int) or isinstance(n, bool):
+            return {"ok": False, "worktrees": [], "error": "mint requires checkout and an integer n"}
+        if not _write_tools_enabled():
+            return {"ok": False, "checkout": checkout, "worktrees": [], "error": _gate_text("mint")}
+        names = args.get("names")
+        return mint_worktrees(checkout, n, names=[str(x) for x in names] if isinstance(names, list) else None)
     if name == "terminals":
         return terminals(root, convoy_id=_opt_str(args, "convoy_id"), thread=_opt_str(args, "thread"))
     if name == "context":

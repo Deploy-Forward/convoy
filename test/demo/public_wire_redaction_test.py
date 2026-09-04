@@ -90,7 +90,9 @@ class PublicWireRedaction(unittest.TestCase):
                            ("convoy.mcp_http.probe", {"return_value": null_probe}),
                            ("convoy.bringup.Path.home", {"return_value": Path(tempfile.mkdtemp())}),
                            ("convoy.bringup._iter_processes", {"return_value": []}),
-                           ("convoy.panes.enumerate_processes", {"return_value": []})):
+                           ("convoy.panes.enumerate_processes", {"return_value": []}),
+                           # repos would shell out to gh (network); a missing gh is its honest no-op
+                           ("convoy.repo.run_argv", {"side_effect": FileNotFoundError("gh")})):
             p = mock.patch(target, **kw)
             p.start()
             self.addCleanup(p.stop)
@@ -124,6 +126,7 @@ class PublicWireRedaction(unittest.TestCase):
         ("background", {"dry_run": True, "mode": "hide"}),
         ("install", {"to": "claude", "dry_run": True}),
         ("choices", {}),
+        ("repos", {}),
         ("neurons", {}),
         ("inbox", {"seat": "c-leak"}),
         ("inbox", {"seat": "x-leak"}),

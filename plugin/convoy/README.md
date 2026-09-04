@@ -47,9 +47,10 @@ them for two different reasons, and the wizard's Gate 0 tells them apart:
 
 - **redeploy** - the public deploy lags `main`, so a registered verb is not
   served yet. A redeploy fixes it.
-- **write-gated** - `seat`, `join`, and `launch` mutate the thread or spawn a
-  process, so an ungated public process hides them from `tools/list` on
-  purpose and Gate 0 is RED there by design. They appear only on a deploy
+- **write-gated** - `seat`, `join`, `onboard`, and `launch` mutate the thread
+  or spawn a process (onboard binds the thread and clones a URL; `clone` and
+  `mint` spawn git), so an ungated public process hides them from `tools/list`
+  on purpose and Gate 0 is RED there by design. They appear only on a deploy
   with `CONVOY_MCP_WRITE_TOOLS=1` (a gated loopback process). A redeploy alone
   does not change this; the gate does.
 

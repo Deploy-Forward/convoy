@@ -101,10 +101,13 @@ class McpWizardVerbs(unittest.TestCase):
         # is a promise. Hidden here means Gate 0 is RED on a public deploy by
         # design, and the wizard stops with an install card. The read-only
         # verbs stay listed everywhere.
+        # onboard moved to the hidden side 2026-09-04 (item D): it binds the
+        # thread and, given a URL, spawns git clone. A public deploy that
+        # listed it would promise a write it must not perform.
         names = {t["name"] for t in _rpc(self.mcp, "tools/list")["result"]["tools"]}
-        for hidden in ("seat", "join", "launch"):
+        for hidden in ("seat", "join", "launch", "onboard"):
             self.assertNotIn(hidden, names, hidden + " must not be promised on a public process")
-        for public in ("choices", "neurons", "inbox", "graph", "onboard", "bring_up", "send"):
+        for public in ("choices", "neurons", "inbox", "graph", "repos", "bring_up", "send"):
             self.assertIn(public, names)
 
     # 2a. read-only verbs answer on a public process
