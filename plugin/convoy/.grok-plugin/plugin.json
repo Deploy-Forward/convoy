@@ -9,6 +9,7 @@
   "repository": "https://github.com/Deploy-Forward/convoy",
   "homepage": "https://convoy.bot",
   "license": "MIT",
+  "logo": "assets/logo.svg",
   "keywords": [
     "convoy",
     "convoy wizard",
