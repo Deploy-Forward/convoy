@@ -30,6 +30,7 @@ from .harness_contract import (
     model_catalog,
     usage_probe_key,
     usage_remaining_null_until_live_probe,
+    where_options,
 )
 from .install import install as install_harness
 from .onboard import onboard as run_onboard
@@ -110,6 +111,14 @@ _EFFORT_ARG = {
 _MODEL_ARG = {
     "type": "string",
     "description": "declared model, passed through as typed when choices.harnesses[].models is null; when that catalog is a list, a model outside it is refused naming the list.",
+}
+# where IS a closed axis, so an enum is honest here. cloud is refused per
+# harness unless choices.harnesses[].where.cloud.offered is true (only an
+# evidenced interactive attach; live 2026-09-04: claude --cloud).
+_WHERE_ARG = {
+    "type": "string",
+    "enum": ["local", "cloud"],
+    "description": "local (default) or cloud. cloud is accepted only where choices.harnesses[].where.cloud.offered is true, refused otherwise naming that harness's cloud mode and evidence. A cloud chair has no worktree, and no launcher exists for it yet.",
 }
 
 _SITE_ASSETS: dict[str, tuple[str, str]] = {
@@ -344,7 +353,7 @@ TOOLS: list[dict[str, Any]] = [
             {"to": {"type": "string", "description": "harness: grok, claude, codex, cursor-agent, agy, hermes, pi"},
              "session_id": {"type": "string", "description": "chair id; identity of the seat"},
              "worktree": {"type": "string"}, "model": _MODEL_ARG,
-             "title": {"type": "string"}, "effort": _EFFORT_ARG},
+             "title": {"type": "string"}, "effort": _EFFORT_ARG, "where": _WHERE_ARG},
             required=["to", "session_id"],
         ),
     },
@@ -354,7 +363,7 @@ TOOLS: list[dict[str, Any]] = [
         "inputSchema": _schema(
             {"to": {"type": "string"}, "session_id": {"type": "string"}, "worktree": {"type": "string"},
              "model": _MODEL_ARG, "title": {"type": "string"}, "effort": _EFFORT_ARG,
-             "author": {"type": "string"}},
+             "where": _WHERE_ARG, "author": {"type": "string"}},
             required=["to"],
         ),
     },
@@ -446,6 +455,7 @@ def build_roster(root: Path) -> dict[str, Any]:
             "models": catalog["models"],
             "models_evidence": catalog["evidence"],
             "effort": effort_contract(hid),
+            "where": where_options(hid),
             "availability": availability,
             "usage_remaining": usage_remaining,
             "tracking": "off",
@@ -650,7 +660,8 @@ def _call_tool(root: Path, name: str, arguments: dict[str, Any] | None) -> dict[
             # seat() returns the bare row and signals failure by raising, so
             # it has no ok key. Every other tool has one; give it one.
             row = seat_chair(root, to, sid, worktree=_opt_str(args, "worktree"), model=_opt_str(args, "model"),
-                             title=_opt_str(args, "title"), effort=_opt_str(args, "effort"))
+                             title=_opt_str(args, "title"), effort=_opt_str(args, "effort"),
+                             where=_opt_str(args, "where"))
             return {"ok": True, **row}
         except ValueError as e:
             return {"ok": False, "error": str(e)}
@@ -663,7 +674,8 @@ def _call_tool(root: Path, name: str, arguments: dict[str, Any] | None) -> dict[
         try:
             return join_chair(root, to, session_id=_opt_str(args, "session_id"), worktree=_opt_str(args, "worktree"),
                               model=_opt_str(args, "model"), title=_opt_str(args, "title"),
-                              effort=_opt_str(args, "effort"), author=_opt_str(args, "author"))
+                              effort=_opt_str(args, "effort"), author=_opt_str(args, "author"),
+                              where=_opt_str(args, "where"))
         except ValueError as e:
             return {"ok": False, "error": str(e)}
     if name == "launch":

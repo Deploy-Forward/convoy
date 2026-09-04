@@ -261,10 +261,17 @@ class TargetedLaunch(unittest.TestCase):
         # contract's own bytes, and nothing else on the card may say resume.
         from convoy.harness_contract import load_harness_contract
 
+        # Same rule for where.cloud.evidence (2026-09-04): grok's quotes
+        # `--restore-code ... when resuming` and `--resume of a remote session`.
         contract = {h["id"]: (h.get("effort") or {}).get("evidence") for h in load_harness_contract()["harnesses"]}
+        cloud = {h["id"]: (h.get("cloud") or {}).get("evidence") for h in load_harness_contract()["harnesses"]}
         for h in card["harnesses"]:
             self.assertEqual(h["effort"]["evidence"], contract[h["id"]])
-        scrubbed = {**card, "harnesses": [{**h, "effort": {**h["effort"], "evidence": None}} for h in card["harnesses"]]}
+            self.assertEqual(h["where"]["cloud"]["evidence"], cloud[h["id"]])
+        scrubbed = {**card, "harnesses": [
+            {**h, "effort": {**h["effort"], "evidence": None},
+             "where": {**h["where"], "cloud": {**h["where"]["cloud"], "evidence": None}}}
+            for h in card["harnesses"]]}
         self.assertNotIn("resume", json.dumps(scrubbed).lower())
 
     @mock.patch("convoy.cli.active_pane_runner")

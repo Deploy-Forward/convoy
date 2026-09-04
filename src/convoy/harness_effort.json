@@ -53,7 +53,12 @@
         "evidence": "grok --help (demo box, 2026-09-01, grok 1.0.13); enum from live invalid-value reject in lead research (xhigh, high, medium, low)"
       },
       "models": null,
-      "models_evidence": "unverified 2026-09-04: grok --help (demo box, grok 1.0.13) has -m/--model <MODEL> 'Model ID to use' with no enumeration; `grok models --help` says 'List available models and exit' and offers --leader-socket <PATH>; where the list comes from is not stated, and Convoy does not call it"
+      "models_evidence": "unverified 2026-09-04: grok --help (demo box, grok 1.0.13) has -m/--model <MODEL> 'Model ID to use' with no enumeration; `grok models --help` says 'List available models and exit' and offers --leader-socket <PATH>; where the list comes from is not stated, and Convoy does not call it",
+      "cloud": {
+        "mode": "unverified",
+        "cli": null,
+        "evidence": "unverified 2026-09-04: grok --help (demo box, grok 1.0.13) names remote sessions only on the resume path: `--restore-code  Restore the original session's repository snapshot when resuming. Remote sessions require --worktree (never checks out into the current directory)`; `-w, --worktree ... With --resume of a remote session, pass --restore-code to apply the snapshot codebase`. No option creates or attaches a remote session from this CLI, and Convoy has never resumed one"
+      }
     },
     {
       "id": "claude",
@@ -82,7 +87,12 @@
         "evidence": "claude --help (demo box, 2026-09-01) lists low|medium|high|xhigh|max; vendor docs also name ultracode, which is not in --help and is never emitted by Convoy"
       },
       "models": null,
-      "models_evidence": "unverified 2026-09-04: claude --help (demo box, 2.1.260) --model <model> takes 'an alias for the latest model ... or a model's full name'; examples, not a closed list"
+      "models_evidence": "unverified 2026-09-04: claude --help (demo box, 2.1.260) --model <model> takes 'an alias for the latest model ... or a model's full name'; examples, not a closed list",
+      "cloud": {
+        "mode": "interactive-session",
+        "cli": "--cloud",
+        "evidence": "claude --help (demo box, 2.1.260, 2026-09-04): `--cloud [description|session_id|url]  Create a cloud session with the given description, or attach to an existing one by session ID or claude.ai/code URL`; also `--environment <environment_id>  Create a new cloud session that runs on the given self-hosted environment (ccpool_...)`. --cloud is an option of the interactive claude command, not a task subcommand; attach by id/url is stated, whether the create path stays attached is not"
+      }
     },
     {
       "id": "codex",
@@ -113,7 +123,12 @@
         ]
       },
       "models": null,
-      "models_evidence": "unverified 2026-09-04: codex --help (demo box, codex-cli 0.153.0) -m/--model <MODEL> 'Model the agent should use'; no enumeration"
+      "models_evidence": "unverified 2026-09-04: codex --help (demo box, codex-cli 0.153.0) -m/--model <MODEL> 'Model the agent should use'; no enumeration",
+      "cloud": {
+        "mode": "task",
+        "cli": "codex cloud exec",
+        "evidence": "codex --help (demo box, codex-cli 0.153.0, 2026-09-04): `cloud  [EXPERIMENTAL] Browse tasks from Codex Cloud and apply changes locally`; codex cloud --help lists `codex cloud exec` as `exec  Submit a new Codex Cloud task without launching the TUI`, plus status, list, apply, diff. A submitted task, not an interactive session. `--remote <ADDR>  Connect the TUI to a remote app server endpoint` is a self-hosted app server, not Codex Cloud"
+      }
     },
     {
       "id": "cursor-agent",
@@ -131,7 +146,12 @@
         "keys": null
       },
       "models": null,
-      "models_evidence": "unverified 2026-09-04: cursor-agent is not on PATH on the demo box; no --help to quote"
+      "models_evidence": "unverified 2026-09-04: cursor-agent is not on PATH on the demo box; no --help to quote",
+      "cloud": {
+        "mode": "unverified",
+        "cli": null,
+        "evidence": "unverified 2026-09-04: cursor-agent is not on PATH on the demo box; no --help to quote"
+      }
     },
     {
       "id": "agy",
@@ -156,7 +176,12 @@
         "evidence": "agy --help (demo box, 2026-09-01): --effort low|medium|high; resume is --conversation <ID>, there is no --resume flag"
       },
       "models": null,
-      "models_evidence": "unverified 2026-09-04: agy --help (demo box, 1.1.22) --model 'Model for the current CLI session'; `agy models` is described only as 'List available models'; where the list comes from is not stated, and Convoy does not call it"
+      "models_evidence": "unverified 2026-09-04: agy --help (demo box, 1.1.22) --model 'Model for the current CLI session'; `agy models` is described only as 'List available models'; where the list comes from is not stated, and Convoy does not call it",
+      "cloud": {
+        "mode": "unverified",
+        "cli": null,
+        "evidence": "unverified 2026-09-04: agy --help (demo box, 1.1.22) has no line matching cloud or remote; nothing to quote, and absence in --help is not proof the product lacks a surface"
+      }
     },
     {
       "id": "hermes",
@@ -174,7 +199,12 @@
         "evidence": "hermes --help (demo box, 2026-09-01): --resume SESSION / -r verified; effort belongs to the driven model"
       },
       "models": null,
-      "models_evidence": "unverified 2026-09-04: hermes --help (demo box, v0.18.2) -m/--model MODEL 'Model override for this invocation (e.g. anthropic/claude-sonnet-4.6)'; provider/model is free-form, no closed list"
+      "models_evidence": "unverified 2026-09-04: hermes --help (demo box, v0.18.2) -m/--model MODEL 'Model override for this invocation (e.g. anthropic/claude-sonnet-4.6)'; provider/model is free-form, no closed list",
+      "cloud": {
+        "mode": "unverified",
+        "cli": null,
+        "evidence": "unverified 2026-09-04: hermes --help (demo box, v0.18.2) matches only `whatsapp-cloud  Set up WhatsApp Business Cloud API integration` and `serve  Start the Hermes backend server (headless; powers the desktop app and remote backends)`; neither is a cloud agent session"
+      }
     },
     {
       "id": "pi",
@@ -202,7 +232,12 @@
         "evidence": "pi --help (demo box, 2026-09-01): --thinking <level> for the driven model; model pattern also accepts :<thinking>. --resume is a session picker; direct-id resume unverified"
       },
       "models": null,
-      "models_evidence": "unverified 2026-09-04: pi --help (demo box, 0.80.6) --model <pattern> 'Model pattern or ID (supports provider/id and optional :<thinking>)'; a pattern is not a closed list; --list-models [search] is described only as 'List available models (with optional fuzzy search)'; where the list comes from is not stated, and Convoy does not call it"
+      "models_evidence": "unverified 2026-09-04: pi --help (demo box, 0.80.6) --model <pattern> 'Model pattern or ID (supports provider/id and optional :<thinking>)'; a pattern is not a closed list; --list-models [search] is described only as 'List available models (with optional fuzzy search)'; where the list comes from is not stated, and Convoy does not call it",
+      "cloud": {
+        "mode": "unverified",
+        "cli": null,
+        "evidence": "unverified 2026-09-04: pi --help (demo box, 0.80.6) matches only the CLOUDFLARE_API_KEY / CLOUDFLARE_ACCOUNT_ID / CLOUDFLARE_GATEWAY_ID provider env vars; a model provider, not a cloud session"
+      }
     }
   ]
 }
