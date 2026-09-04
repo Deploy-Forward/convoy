@@ -22,7 +22,8 @@ PUBLIC_MCP_URL = "https://convoy.bot/mcp"
 # Every verb the wizard skill calls (plugin/convoy/skills/convoy-wizard, Gate 0).
 # A dependency set, not a menu: user-facing capabilities stay live-only.
 REQUIRED_WIZARD_VERBS: tuple[str, ...] = (
-    "choices", "repos", "onboard", "join", "launch", "seat", "mint", "bring_up", "neurons", "graph", "send", "inbox",
+    "choices", "repos", "onboard", "join", "launch", "seat", "mint", "crew", "bring_up", "consent", "await_seated",
+    "neurons", "graph", "send", "inbox",
 )
 
 REMEDY_REDEPLOY = "redeploy"              # packaged server registers it; the live deploy lags main

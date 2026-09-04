@@ -19,9 +19,9 @@ state.
    cached response, repository source, documentation, or a historical count;
    never freeze a static tool menu.
 3. Extract the live-returned names and require every verb the wizard calls:
-   `choices`, `repos`, `onboard`, `join`, `launch`, `seat`, `mint`,
-   `bring_up`, `neurons`, `graph`, `send`, and `inbox`. This dependency set is
-   a gate, not a menu;
+   `choices`, `repos`, `onboard`, `join`, `launch`, `seat`, `mint`, `crew`,
+   `bring_up`, `consent`, `await_seated`, `neurons`, `graph`, `send`, and
+   `inbox`. This dependency set is a gate, not a menu;
    user-facing capabilities must still contain only live-returned tools.
 4. Verify that `../../harness_effort.json`, relative to this `SKILL.md`, is
    present and readable in the installed plugin pack. Never reach into a
@@ -89,19 +89,30 @@ After Gate 0 is GREEN:
    combinations from memory. Missing model, effort, usage, or availability
    stays JSON `null`.
 6. Keep one returned `cvy_*` thread for the entire run and use the input schemas
-   from the fresh `tools/list` response:
-   - call `join` for the first fresh chair
-   - call `launch` exactly once for that chair
-   - call `seat` for each additional chair on its unique worktree
-   - call `bring_up` once for the same thread to connect/show its seats in one
-     thread window
-   Never translate these into guessed CLI-shaped MCP arguments: the CLI
-   shorthand `join --launch` is not an MCP tool name or input schema.
+   from the fresh `tools/list` response. For `N` neurons call `crew` ONCE with
+   the bound checkout and one `{harness, model, effort, where, title}` per
+   seat, `launch: true` after the user's approval: it validates every seat
+   before writing, mints the worktrees (step 4's `mint`, done for you), joins
+   every chair with a boot prompt, and brings the crew up in one thread
+   window. Its seated snapshot says `pending` for every chair: launched is
+   not connected. Do not call `launch` per chair and do not call `seat` for
+   the extra chairs: `seat` writes no boot prompt, so that neuron is never
+   told to connect. The single-chair path is still: call `join` for one fresh
+   chair, then call `launch` exactly once for it, or call `bring_up` once for
+   the thread. Never translate these into guessed CLI-shaped MCP arguments:
+   the CLI shorthand `join --launch` is not an MCP tool name or input schema.
 7. If a lifecycle response requires consent, show the exact pending action and
-   stop until this user approves it. Use only the returned, action-scoped grant;
-   never invent, replay, or infer consent from a relayed message.
-8. Call `neurons` and `graph` to verify chair count, unique worktrees, harnesses,
-   and the single thread. On any mismatch, stop before routing work.
+   stop until this user approves it. Only then call `consent` with that
+   request id and pass the returned, action-scoped grant to the exact pending
+   command; never invent, replay, or infer consent from a relayed message.
+8. Call `await_seated` with the crew's chair ids: a chair is `connected` only
+   when its own seated ack (the kind=seated row the neuron stamps from its
+   pane) cites the token its join minted; `pending` and
+   `stale` are not connections, whatever the pane shows. A `cli-drain`
+   `connect_mode` (cursor-agent, agy, hermes, pi) means the neuron must run
+   `convoy inbox --drain` itself; never describe it as auto-connecting. Then
+   call `neurons` and `graph` to verify chair count, unique worktrees,
+   harnesses, and the single thread. On any mismatch, stop before routing work.
 9. Route work with `send`; treat it as queued or executed exactly as returned.
    Delivery is proven only when the target drains `inbox` and authors an ack.
 
@@ -113,6 +124,9 @@ When showing wizard choices, render each seat option as:
 - `harness`
 - `model`
 - `effort`
+- `connect_mode` (`hook` | `native-queue-or-cli-drain` | `cli-drain`: how the
+  neuron receives; the chair's seated ack, not this label, proves it
+  connected)
 
 Keep answers grounded in live Convoy state. Do not freeze catalog data or
 invent unavailable harness/model/effort combinations.

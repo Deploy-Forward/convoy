@@ -69,6 +69,8 @@ Write (thread state):
 - `onboard --to <harness> [--to ...] [--thread <name>] [--checkout-root <path|git-url>] [--github yes|no]` — name installed harnesses and bind; a URL is cloned once under `$CONVOY_HOME/checkouts/<owner>/<repo>` (`.convoy/` and `thread.md` go into that clone's `.git/info/exclude`).
 - `seat --to <harness> --session-id <chair> [--worktree <path>] [--model M] [--resume <vendor-id>] [--title T] [--effort E]` — register a seated neuron.
 - `join --to <harness> [--worktree <path>] [--title T] [--as <chair>] [--launch] [--consent <id>]` — register one fresh chair.
+- `crew --seat <harness>[,model=M][,effort=E][,where=local|cloud][,title=T] [--seat ...] [--checkout <path>] [--launch]` — N neurons at once: validates every seat first, mints one worktree per local seat, joins every chair with a boot prompt, and (with `--launch`) brings them up in ONE window. Launched is not connected: the card's `seated` snapshot says `pending`.
+- `await-seated --seat <chair> [--seat ...] [--timeout <s>]` — observe the acks: per chair `connected` (its own `seated` row cites the minted token) | `pending` | `stale`, with the seconds waited.
 - `swap --seat <chair> --to <harness> --handoff <.ola/*handoff*> --as <chair>` — replace the occupant, keep the chair.
 - `seated --seat <chair> --token <token>` — proof-of-life echo from the new occupant.
 - `lead --to <chair> --as <you>` — pass lead to a chair.
@@ -101,8 +103,9 @@ convoy mcp --root <thread-root> --port 8788
 Then attach `http://127.0.0.1:8788/mcp` in your MCP client. Write tools are
 off by default on the RPC layer: set `CONVOY_MCP_WRITE_TOOLS=1` on a
 gated/loopback deploy to expose `stamp`, `note`, `join`, `seat`, `launch`,
-`onboard`, `clone`, `mint`, `repos`, `resume` with `go=true`, and `inbox` with
-`drain=true`. An ungated public `tools/list` hides the write tools rather than
+`crew`, `seated`, `consent`, `await_seated`, `onboard`, `clone`, `mint`,
+`repos`, `resume` with `go=true`, and `inbox` with `drain=true`. An ungated
+public `tools/list` hides the write tools rather than
 listing and refusing them, so a listed verb is a promise. Reads (`choices`,
 `neurons`, `inbox` pending, `graph`) stay public, and a public inbox
 read never echoes the row token. `repos` wraps `gh repo list` on the MCP
@@ -111,9 +114,11 @@ it lists the gh login on the MCP host, the conductor's account, which is why
 it sits behind the gate rather than handing that inventory to strangers.
 `clone` puts a URL under `$CONVOY_HOME/checkouts/<owner>/<repo>`; `mint`
 derives one worktree per seat from that checkout as `<checkout>-wt-<name>`
-on branch `convoy/<name>`, so nobody hand-makes worktrees for N neurons. `convoy
-preflight` tells you which of the wizard's verbs a live `tools/list` is missing
-and why.
+on branch `convoy/<name>`, so nobody hand-makes worktrees for N neurons. `crew`
+does the whole walk for N seats (validate, mint, join each with a boot prompt,
+one window) and `await_seated` reads the acks back, so "they all connected" is
+observed, never assumed. `convoy preflight` tells you which of the wizard's
+verbs a live `tools/list` is missing and why.
 The public `https://convoy.bot/mcp` is bound to one root; a different thread
 means running your own server with your own `--root`.
 

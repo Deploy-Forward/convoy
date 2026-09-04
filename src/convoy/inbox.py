@@ -41,6 +41,22 @@ HARNESS_INBOX = {
 }
 
 
+def connect_mode(harness: Any) -> str | None:
+    """How a launched neuron RECEIVES, for the card: 'hook' where a proven
+    vendor hook file drains the inbox mid-turn (grok, claude), else the
+    HARNESS_INBOX word itself - codex 'native-queue-or-cli-drain', and
+    'cli-drain' for cursor-agent/agy/hermes/pi, whose hooks cannot fire until
+    the model runs `convoy inbox --drain` by hand. None for an unknown harness.
+    A label, not a connection: only the chair's own kind=seated row proves one
+    (2026-09-04, item E)."""
+    from .harness_contract import canonical_harness_id
+
+    kind = HARNESS_INBOX.get(canonical_harness_id(harness))
+    if kind in ("grok-hooks", "claude-settings"):
+        return "hook"
+    return kind
+
+
 def inbox_dir(root: Path) -> Path:
     path = Path(root) / ".convoy" / "inbox"
     path.mkdir(parents=True, exist_ok=True)
