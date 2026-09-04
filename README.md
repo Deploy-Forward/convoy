@@ -289,10 +289,19 @@ Routing behavior:
 - `/mcp` and `/mcp/*` are proxied byte-for-byte to `MCP_ORIGIN` (the current Python MCP origin).
 - all other paths are served from Worker static assets (`env.ASSETS.fetch(request)`).
 
+Exact operator runbook (tree placeholder vs live tunnel origin, public vs
+gated `tools/list`, what a remote agent cannot restart): [`docs/redeploy.md`](docs/redeploy.md).
+
+E2E DoD outline (plugin symlink → Gate 0 → GitHub → choices → N seats / C8 →
+`cvy_*` → `bring_up`, GREEN/RED, no `wt` on Linux agents): [`docs/e2e-harness.md`](docs/e2e-harness.md).
+
+Marketplace submit checklist for `plugin/convoy` against
+https://cursor.com/marketplace/publish: [`docs/marketplace-submit.md`](docs/marketplace-submit.md).
+
 Deploy steps (from an authenticated environment):
 
-1. Set `MCP_ORIGIN` in `wrangler.jsonc` (or with environment-specific vars) to the current Python MCP origin URL.
-2. Run `wrangler deploy`.
-3. Attach the `convoy.bot/*` route to this Worker in Cloudflare.
+1. Do **not** treat `wrangler.jsonc`'s `MCP_ORIGIN` (`https://mcp-origin.example`) as live. Confirm the Worker binding and the tunnel ingress (`docs/redeploy.md`).
+2. Restart the Python origin on `127.0.0.1:8788` **without** `CONVOY_MCP_WRITE_TOOLS` for public. A Worker deploy is not what picks up new tools.
+3. If the Worker proxy itself changed: `wrangler deploy --keep-vars` so a local placeholder cannot clobber the live binding. Route `convoy.bot/*` is already attached.
 
-This repo does not assume that Cloudflare Worker routing is live until those steps are completed.
+This repo does not claim a live origin restart happened just because these files exist.

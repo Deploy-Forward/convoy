@@ -25,18 +25,25 @@ multi-plugin discovery flows.
 
 ## Local IDE test
 
-Clone/copy this folder to:
+Symlink this folder (do not copy if you want live edits):
 
-`~/.cursor/plugins/local/convoy`
+`ln -s /path/to/convoy/plugin/convoy ~/.cursor/plugins/local/convoy`
 
-Then reload Cursor and check Plugins search for **Convoy**. Installing should
-add the Convoy MCP endpoint and both skills.
+Then reload Cursor and check Customize for **Convoy**. Installing should
+add the Convoy MCP endpoint and both skills. GREEN/RED evidence for the
+full walk (Gate 0 → GitHub → choices → N seats / C8 → `cvy_*` → bring_up):
+[`docs/e2e-harness.md`](../../docs/e2e-harness.md).
 
 ## Publish path
 
 Submit the repository to:
 
 https://cursor.com/marketplace/publish
+
+Operator checklist mapped onto this pack:
+[`docs/marketplace-submit.md`](../../docs/marketplace-submit.md).
+Public MCP catalog lag and origin restart:
+[`docs/redeploy.md`](../../docs/redeploy.md).
 
 ## Host rendering
 

@@ -89,3 +89,9 @@ When the write gate is closed:
   gated `seated` card answers with the row's timestamp, not the token it echoed.
 - Tokens remain local to chair state/disk and trusted local flows.
 
+## Operator redeploy (public vs gated)
+
+Public `https://convoy.bot/mcp` must keep this gate **closed** (`CONVOY_MCP_WRITE_TOOLS` unset). Gate 0 GREEN for the `@convoy` wizard requires a **gated/loopback** process, never the public URL.
+
+Exact steps, tree placeholder vs live tunnel origin, and a dated `tools/list` probe: [`docs/redeploy.md`](docs/redeploy.md). This section does not record a live restart.
+
