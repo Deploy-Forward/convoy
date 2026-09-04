@@ -190,7 +190,8 @@ def main(argv: list[str] | None = None) -> int:
     ob = sub.add_parser("onboard")
     ob.add_argument("--to", action="append", required=True, help="named harness id(s) you already have")
     ob.add_argument("--thread")
-    ob.add_argument("--checkout-root")
+    ob.add_argument("--checkout-root", help="existing path, or a git URL cloned under $CONVOY_HOME/checkouts/<owner>/<repo>")
+    ob.add_argument("--github", choices=("yes", "no"), default=None, help="record the wizard's GitHub? answer on the bind")
 
     pf = sub.add_parser("preflight", help="fail-closed wizard preflight: live MCP tools/list vs the verbs the @convoy wizard needs")
     pf.add_argument("--url", default=None, help="MCP endpoint (default: public https://convoy.bot/mcp)")
@@ -483,7 +484,8 @@ def main(argv: list[str] | None = None) -> int:
         return 0 if card.get("ok") else 1
 
     if args.cmd == "onboard":
-        card = run_onboard(root, args.to, thread=args.thread, checkout_root=args.checkout_root)
+        card = run_onboard(root, args.to, thread=args.thread, checkout_root=args.checkout_root,
+                           github=None if args.github is None else args.github == "yes")
         print(json.dumps(card))
         return 0 if card.get("ok") else 1
     if args.cmd == "preflight":

@@ -70,13 +70,17 @@ class WizardProseMatchesWire(unittest.TestCase):
             self.assertIn(remedy, doc, "docstring should name the real remedy classes")
 
     def test_docs_explain_the_gate_for_the_hidden_verbs(self):
-        # The TRUE reason a public tools/list lacks seat/join/launch is the
-        # write gate. Whichever doc talks about the public catalog lagging must
-        # attribute the hidden verbs to the gate, not to non-existence.
+        # The TRUE reason a public tools/list lacks seat/join/launch/onboard is
+        # the write gate. Whichever doc talks about the public catalog lagging
+        # must attribute the hidden verbs to the gate, not to non-existence.
+        # onboard joined the gate 2026-09-04 (item D): it binds the thread and
+        # clones a URL.
         gated = sorted(v for v in _registered_wizard_verbs() if v in _WRITE_TOOLS)
-        self.assertEqual(gated, ["join", "launch", "seat"])
+        self.assertEqual(gated, ["join", "launch", "onboard", "seat"])
         readme = DOCS["plugin/convoy/README.md"].read_text(encoding="utf-8-sig")
         self.assertIn("CONVOY_MCP_WRITE_TOOLS", readme, "README must name the gate that hides seat/join/launch")
+        for verb in gated:
+            self.assertIn("`" + verb + "`", readme, "README must name " + verb + " among the write-gated verbs")
 
 
 if __name__ == "__main__":

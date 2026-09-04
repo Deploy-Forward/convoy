@@ -76,6 +76,25 @@ def read_thread(root: Path) -> str | None:
     text = path.read_text(encoding="utf-8-sig").strip()
     return text or None
 
+def _github_path(root: Path) -> Path:
+    return Path(root) / ".convoy" / "github"
+
+def read_github(root: Path) -> str | None:
+    """The wizard's 'GitHub?' answer on this bind: 'yes' | 'no' | None when
+    never asked. Null is never upgraded to a guess."""
+    path = _github_path(root)
+    if not path.is_file():
+        return None
+    text = path.read_text(encoding="utf-8-sig").strip().lower()
+    return text if text in ("yes", "no") else None
+
+def set_github(root: Path, yes: bool) -> str:
+    answer = "yes" if yes else "no"
+    path = _github_path(root)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(answer + "\n", encoding="utf-8")
+    return answer
+
 def bind(root: Path, thread: str) -> dict[str, Any]:
     if not thread or not str(thread).strip():
         raise ValueError("refuse empty thread")

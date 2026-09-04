@@ -19,8 +19,9 @@ state.
    cached response, repository source, documentation, or a historical count;
    never freeze a static tool menu.
 3. Extract the live-returned names and require every verb the wizard calls:
-   `choices`, `onboard`, `join`, `launch`, `seat`, `bring_up`, `neurons`,
-   `graph`, `send`, and `inbox`. This dependency set is a gate, not a menu;
+   `choices`, `repos`, `onboard`, `join`, `launch`, `seat`, `bring_up`,
+   `neurons`, `graph`, `send`, and `inbox`. This dependency set is a gate, not
+   a menu;
    user-facing capabilities must still contain only live-returned tools.
 4. Verify that `../../harness_effort.json`, relative to this `SKILL.md`, is
    present and readable in the installed plugin pack. Never reach into a
@@ -57,16 +58,23 @@ source checkout.
 After Gate 0 is GREEN:
 
 1. Ask `GitHub?` as a yes/no decision.
-2. If yes, ask for the target repository path or URL. If no, ask for the local
-   worktree path. Show the resolved repository, worktrees, and proposed thread,
-   then get explicit user approval before binding or launching anything.
+2. If yes, call live `repos` and offer only the repositories it returns (name,
+   url, private); when it says gh is absent, show its install hint and ask for
+   the target repository path or URL instead. If no, ask for the local
+   worktree path. A URL given to `onboard` as `checkout_root` is cloned once
+   into the Convoy-owned checkout root and reused after; the yes/no answer is
+   recorded on the bind as `github`. Show the resolved repository, worktrees,
+   and proposed thread, then get explicit user approval before binding or
+   launching anything.
 3. Call live `choices` using its live-returned input schema. Render only its
    current local/cloud, harness, worktree, terminal, and seat facts. Use
    `onboard` only for user-selected harnesses after the repository approval;
    passing its approved thread and checkout root is the bind.
 4. Ask for `N` neurons and the harness for each seat from those live choices.
-   Enforce one chair per worktree before calling `join` or `seat`; never retry a
-   refused duplicate with another invented chair name.
+   Enforce one chair per worktree before calling `join` or `seat`: call `mint`
+   once with the bound checkout, `N`, and the seat names, and give each chair
+   the worktree it returns; never retry a refused duplicate with another
+   invented chair name.
 5. Take model/effort constraints from live `choices` alone:
    `harnesses[].effort` (keys, and whether a choice is applied to argv) and
    `harnesses[].models` with `harnesses[].models_evidence`. Render what the

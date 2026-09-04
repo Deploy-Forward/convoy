@@ -66,7 +66,7 @@ Write (thread state):
 
 - `init` — create the thread layer at `--root`.
 - `bind --thread <name>` — bind this root to a named thread.
-- `onboard --to <harness> [--to ...] [--thread <name>]` — name installed harnesses and bind.
+- `onboard --to <harness> [--to ...] [--thread <name>] [--checkout-root <path|git-url>] [--github yes|no]` — name installed harnesses and bind; a URL is cloned once under `$CONVOY_HOME/checkouts/<owner>/<repo>` (`.convoy/` and `thread.md` go into that clone's `.git/info/exclude`).
 - `seat --to <harness> --session-id <chair> [--worktree <path>] [--model M] [--resume <vendor-id>] [--title T] [--effort E]` — register a seated neuron.
 - `join --to <harness> [--worktree <path>] [--title T] [--as <chair>] [--launch] [--consent <id>]` — register one fresh chair.
 - `swap --seat <chair> --to <harness> --handoff <.ola/*handoff*> --as <chair>` — replace the occupant, keep the chair.
@@ -101,10 +101,15 @@ convoy mcp --root <thread-root> --port 8788
 Then attach `http://127.0.0.1:8788/mcp` in your MCP client. Write tools are
 off by default on the RPC layer: set `CONVOY_MCP_WRITE_TOOLS=1` on a
 gated/loopback deploy to expose `stamp`, `note`, `join`, `seat`, `launch`,
-`resume` with `go=true`, and `inbox` with `drain=true`. An ungated public
-`tools/list` hides the write tools rather than listing and refusing them, so a
-listed verb is a promise. Reads (`choices`, `neurons`, `inbox` pending, `graph`)
-stay public, and a public inbox read never echoes the row token. `convoy
+`onboard`, `clone`, `mint`, `resume` with `go=true`, and `inbox` with
+`drain=true`. An ungated public `tools/list` hides the write tools rather than
+listing and refusing them, so a listed verb is a promise. Reads (`choices`,
+`repos`, `neurons`, `inbox` pending, `graph`) stay public, and a public inbox
+read never echoes the row token. `repos` wraps `gh repo list` on the MCP
+process PATH (name, url, private, updated_at; gh absent is an install hint);
+`clone` puts a URL under `$CONVOY_HOME/checkouts/<owner>/<repo>`; `mint`
+derives one worktree per seat from that checkout as `<checkout>-wt-<name>`
+on branch `convoy/<name>`, so nobody hand-makes worktrees for N neurons. `convoy
 preflight` tells you which of the wizard's verbs a live `tools/list` is missing
 and why.
 The public `https://convoy.bot/mcp` is bound to one root; a different thread
