@@ -49,6 +49,7 @@ from convoy.mcp_http import _WRITE_TOOLS, make_server
 from convoy.wizard_preflight import REQUIRED_WIZARD_VERBS
 
 NULL_PROBE = {"usage_remaining": None, "limited": False, "raw": None}
+FAKES = Path(__file__).resolve().parents[1] / "fakes"
 CREW = [
     {"harness": "grok", "effort": "high", "title": "scout"},
     {"harness": "claude", "effort": "high", "title": "builder"},
@@ -119,6 +120,13 @@ class WizardE2EGated(unittest.TestCase):
         ensure_id(self.root)
         self.checkout = self.root
         self.spawns = []
+        # A clean CI/stranger machine need not have three paid vendor CLIs.
+        # Resolve the repository's inert executable stubs so the E2E tests
+        # Convoy's wire walk rather than whichever harnesses its host installed.
+        path = str(FAKES) + os.pathsep + os.environ.get("PATH", "")
+        env = mock.patch.dict(os.environ, {"PATH": path})
+        env.start()
+        self.addCleanup(env.stop)
 
         def fake_spawn(argv, cwd=None, rect=None, **_k):
             self.spawns.append({"argv": list(argv), "cwd": cwd})
