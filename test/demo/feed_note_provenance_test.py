@@ -215,8 +215,10 @@ class SynapseRunnerProvenance(unittest.TestCase):
 class ChipSeatFields(unittest.TestCase):
     """Conductor chip contract: harness/model/effort/session%/vendor-id/
     worktree renderable from feed + glance reads, no jsonl archaeology.
-    effort is stored on the seat row (real-or-null, Convoy never sets vendor
-    effort flags); glance by-thread seat cards surface effort and resume."""
+    effort is stored on the seat row (real-or-null; since 2026-09-04 it is
+    validated per harness and applied to argv only where harness_effort.json
+    evidences a flag, see effort_contract_test); glance by-thread seat cards
+    surface effort and resume."""
 
     def setUp(self):
         self.root = Path(tempfile.mkdtemp())

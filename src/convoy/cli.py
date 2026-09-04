@@ -82,7 +82,7 @@ def main(argv: list[str] | None = None) -> int:
     se.add_argument("--resume", help="vendor session_id for --resume; default session_id")
     se.add_argument("--title", help="optional pane title to restore on bring-up")
     se.add_argument("--agent", help="optional agent file path used for native resume")
-    se.add_argument("--effort", help="declared effort for this seat (real-or-null; Convoy never sets vendor effort flags)")
+    se.add_argument("--effort", help="declared effort for this seat, validated against the harness's own keys (convoy choices shows them); applied to argv only where harness_effort.json evidences a flag")
 
     jn = sub.add_parser("join")
     jn.add_argument("--to", required=True, help="harness for the new chair")
@@ -113,6 +113,7 @@ def main(argv: list[str] | None = None) -> int:
     sw.add_argument("--seat", required=True, help="chair session_id (identity survives the swap)")
     sw.add_argument("--to", required=True, help="replacement harness")
     sw.add_argument("--model")
+    sw.add_argument("--effort", help="declared effort for the incoming harness; unset, the old one survives only if that harness takes it")
     sw.add_argument("--handoff", required=True, help="fresh .ola/*handoff* file written by the outgoing neuron")
     sw.add_argument("--as", dest="author", required=True, help="outgoing neuron's session_id (neuron-authored; conductor asks via stamp)")
 
@@ -323,7 +324,7 @@ def main(argv: list[str] | None = None) -> int:
                         card["next"] = "launch"
             elif args.cmd == "swap":
                 card = swap(root, args.seat, to=args.to, handoff=args.handoff,
-                            author=args.author, model=args.model)
+                            author=args.author, model=args.model, effort=args.effort)
             else:
                 card = seated_ack(root, args.seat, token=args.token)
         except ValueError as e:

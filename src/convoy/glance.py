@@ -215,6 +215,9 @@ def build_by_thread(
         effort = seat.get("effort")
         if isinstance(effort, str) and effort.strip():
             row["effort"] = effort
+            # False = recorded, not applied (no evidenced flag for this
+            # harness); null on rows older than the field (2026-09-04).
+            row["effort_applied"] = seat.get("effort_applied")
         resume = seat.get("resume")
         if isinstance(resume, str) and resume.strip():
             row["resume"] = resume

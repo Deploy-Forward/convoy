@@ -46,6 +46,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from .identity import ensure_grok_agent, ensure_inbox_hooks, install_neuron_identity
+from .harness_contract import effort_argv
 from .convoy import (
     CONDUCTOR,
     list_seats,
@@ -290,11 +291,14 @@ def resume_argv(seat: dict[str, Any]) -> list[str]:
 
     FileName is shutil.which absolute path when found, else the bare harness name.
     Grok keeps seat identity flags:
-        [exe, '-m', MODEL?, '--agent', PATH?, '--resume', sid]
+        [exe, '-m', MODEL?, '--agent', PATH?, EFFORT_FLAG?, '--resume', sid]
     Codex resume shape:
         [exe, 'resume', sid]
     Other harnesses:
-        [exe, '--resume', sid]
+        [exe, EFFORT_FLAG?, '--resume', sid]
+    EFFORT_FLAG is the contract's evidenced flag for the seat's declared effort
+    (grok --reasoning-effort, claude --effort, agy --effort, pi --thinking);
+    absent when the contract has no evidenced flag (codex, cursor-agent, hermes).
     First-run seat with no vendor UUID: no resume token is passed.
     Never -d, never `--` separator, never -p/-c, never ola-brain, never side-chat, never wt.
     """
@@ -313,6 +317,9 @@ def resume_argv(seat: dict[str, Any]) -> list[str]:
         agent = seat.get("agent")
         if isinstance(agent, str) and agent.strip():
             argv.extend(["--agent", agent.strip()])
+    # Declared effort rides argv only through the contract's evidenced flag,
+    # and only as a value that harness's --help lists (effort_argv re-checks).
+    argv.extend(effort_argv(to, seat.get("effort")))
     # First-run seat: no vendor UUID yet. Do not pass --resume.
     if sid:
         if _harness_bin(to) == "codex":

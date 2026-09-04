@@ -27,7 +27,7 @@ from .bringup import (
 )
 from .consent import consume_consent, request_consent
 from .convoy import list_seats, update_seat
-from .harness_contract import harness_entries, harness_exec
+from .harness_contract import effort_contract, harness_entries, harness_exec
 
 Which = Callable[[str], str | None]
 Runner = Callable[[list[str]], dict[str, Any]]
@@ -396,6 +396,10 @@ def launch_choices(
                 "name": entry.get("name"),
                 "installed": bool(path),
                 "executable": str(path) if path else None,
+                # Per-harness effort straight from harness_effort.json so a
+                # host on the wire can render harness -> effort without the
+                # file; null where the contract is silent.
+                "effort": effort_contract(str(entry.get("id") or "")),
             }
         )
 
