@@ -474,14 +474,18 @@ def _opt_bool(args: dict[str, Any], key: str, default: bool) -> bool:
 
 
 def call_tool(root: Path, name: str, arguments: dict[str, Any] | None) -> dict[str, Any]:
+    card = _call_tool(root, name, arguments)
+    if not _write_tools_enabled():
+        _redact_public(name, card)
+    return card
+
+
+def _call_tool(root: Path, name: str, arguments: dict[str, Any] | None) -> dict[str, Any]:
     args = arguments if isinstance(arguments, dict) else {}
     if name == "roster":
         return build_roster(root)
     if name == "glance":
-        card = build_glance(root, thread=_opt_str(args, "thread"), convoy_id=_opt_str(args, "convoy_id"))
-        if not _write_tools_enabled():
-            _redact_glance_resume(card)
-        return card
+        return build_glance(root, thread=_opt_str(args, "thread"), convoy_id=_opt_str(args, "convoy_id"))
     if name == "onboard":
         raw_to = args.get("to")
         to: list[str] = []
@@ -666,24 +670,55 @@ def call_tool(root: Path, name: str, arguments: dict[str, Any] | None) -> dict[s
     return {"ok": False, "error": "tool not found: " + name}
 
 
-def _redact_glance_resume(card: Any) -> None:
-    """Two locked contracts collide on the glance by-thread card. SPEC.md:56
+_WINDOW_TOOLS = frozenset({"bring_up", "open", "terminals", "hide", "minimize", "background"})
+
+
+def _redact_public(name: str, card: Any) -> None:
+    """Two locked contracts collide on every card that names a seat. SPEC.md:56
     makes seat.resume (the vendor session id) chip front matter for the
     conductor; graph.py:16 says tokens never leave seats.jsonl. The write gate
-    is the arbiter: behind it (conductor-local loopback) the chip keeps the id;
-    on the ungated public wire every seat row carries only the shape graph
-    already uses, {available, for}, so a chip can still say "resumable" and
-    nobody can lift a session id off a public endpoint. Found live 2026-09-04.
-    The row WITHOUT a token says available=false rather than omitting the key,
-    so redaction and absence are told apart."""
-    by_thread = card.get("by_thread") if isinstance(card, dict) else None
-    if not isinstance(by_thread, dict):
+    is the arbiter: behind it (conductor-local loopback) the cards are whole;
+    on the ungated public wire a row carries only the shape graph already
+    uses, {available, for}, so a chip can still say "resumable" and nobody
+    can lift a session id off a public endpoint. glance found live 2026-09-04
+    (3b18a8e); adversarial review the same day reproduced the identical leak
+    on terminals / bring_up / open / hide windows and the resume dry read, and
+    a second one: the inbox token join/swap mint (the receiver's proof of
+    receipt) rides the kind=join feed row and the boot prompt, which is the
+    last argv element bring_up would exec. So argv takes the same shape (it
+    is a fact here, not a payload), and feed rows drop the token key the way
+    the public inbox read does. A row WITHOUT a token says available=false
+    rather than omitting the key, so redaction and absence are told apart."""
+    if not isinstance(card, dict):
         return
-    for row in by_thread.get("seats") or []:
-        if not isinstance(row, dict):
-            continue
-        raw = row.pop("resume", None)
-        row["resume"] = {"available": isinstance(raw, str) and bool(raw.strip()), "for": row.get("to")}
+    if name == "glance":
+        by_thread = card.get("by_thread")
+        for row in (by_thread.get("seats") or []) if isinstance(by_thread, dict) else []:
+            _redact_row(row, ("resume",))
+    elif name in _WINDOW_TOOLS:
+        for row in card.get("windows") or []:
+            _redact_row(row, ("resume", "argv"))
+    elif name == "resume" and "argv" in card:
+        current = card.get("current")
+        card["argv"] = _shape(card["argv"], current.get("harness") if isinstance(current, dict) else None)
+    elif name == "feed":
+        card["events"] = [{k: v for k, v in r.items() if k != "token"} if isinstance(r, dict) else r
+                          for r in card.get("events") or []]
+
+
+def _redact_row(row: Any, keys: tuple[str, ...]) -> None:
+    if not isinstance(row, dict):
+        return
+    for key in keys:
+        # resume is always answered (absence must read as available=false);
+        # argv only where the card had one (hide windows never carry argv).
+        if key == "resume" or key in row:
+            row[key] = _shape(row.pop(key, None), row.get("to"))
+
+
+def _shape(raw: Any, harness: Any) -> dict[str, Any]:
+    present = (isinstance(raw, str) and bool(raw.strip())) or (isinstance(raw, list) and bool(raw))
+    return {"available": present, "for": harness}
 
 
 def _gate_text(verb: str) -> str:

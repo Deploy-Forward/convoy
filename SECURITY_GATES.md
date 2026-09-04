@@ -55,6 +55,11 @@ When the write gate is closed:
 ### No tokens on the wire
 
 - `seat` schema does not accept public `resume`.
-- Read paths do not expose inbox tokens.
+- Read paths do not expose inbox tokens: public `feed` rows drop the `token` key
+  (join / swap / seated), the same as the public `inbox` read.
+- Public `glance` seats and `terminals` / `bring_up` / `open` / `hide` windows carry
+  `resume` as `{available, for}`, never the vendor id; `bring_up` / `open` windows and
+  the `resume` dry read carry `argv` in the same shape (the id and the boot-prompt
+  token ride in it). Behind the gate the cards are whole (`mcp_http._redact_public`).
 - Tokens remain local to chair state/disk and trusted local flows.
 

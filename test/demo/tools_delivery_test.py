@@ -14,6 +14,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 
@@ -89,7 +90,10 @@ class ToolEligibility(unittest.TestCase):
         self.assertIsInstance(t["threads"], list)
 
     def test_resume_tool_is_dry_and_go_is_gated(self):
-        dry = call_tool(self.root, "resume", {"neuron": "c-t1"})
+        # The vendor id in argv reads behind the gate (public_wire_redaction_test
+        # owns the ungated shape); the go refusal below stays ungated.
+        with mock.patch.dict(os.environ, {"CONVOY_MCP_WRITE_TOOLS": "1"}):
+            dry = call_tool(self.root, "resume", {"neuron": "c-t1"})
         self.assertTrue(dry["ok"])
         self.assertFalse(dry["spawned"])
         self.assertEqual(dry["argv"][1:], ["resume", "codex-uuid"])
