@@ -1,0 +1,16 @@
+{
+  "name": "convoy",
+  "version": "0.1.0",
+  "description": "Convoy MCP + wizard skills for Grok Bot neuron orchestration.",
+  "author": {
+    "name": "Deploy Forward"
+  },
+  "skills": "skills",
+  "mcpServers": "mcp.json",
+  "keywords": [
+    "convoy",
+    "grok-bot",
+    "mcp",
+    "wizard"
+  ]
+}

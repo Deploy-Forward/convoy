@@ -1,0 +1,21 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "convoy",
+  "version": "0.1.0",
+  "description": "Convoy marketplace Agent Plugin for Grok Bot with live MCP + wizard skills.",
+  "author": {
+    "name": "Deploy Forward",
+    "url": "https://github.com/Deploy-Forward/convoy"
+  },
+  "homepage": "https://convoy.bot",
+  "repository": "https://github.com/Deploy-Forward/convoy",
+  "license": "MIT",
+  "keywords": [
+    "convoy",
+    "grok-bot",
+    "mcp",
+    "neurons",
+    "threads",
+    "skills"
+  ]
+}
