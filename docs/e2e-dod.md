@@ -21,7 +21,7 @@ before pinning or deploying.
 | Python origin redeploy | **RED** | no Windows origin host access or supervisor path (see Blockers) |
 | Worker deploy | **NOT RUN** | live route already matches `MCP_ORIGIN=https://convoy.bot`; Worker deploy is conditional on Worker-input changes |
 | Public security parity | **RED** | stale live origin still lists `onboard`, which current `_WRITE_TOOLS` must hide publicly |
-| xai-org/plugin-marketplace listing | **RED** (PR open, not merged) | [#560](https://github.com/xai-org/plugin-marketplace/pull/560) pins `b4b186d925bdb24e414cedd8abfa208d342d98b9`; `mergeable_state=blocked` (owners/CI) |
+| xai-org/plugin-marketplace listing | **RED** (PR open, not merged) | [#560](https://github.com/xai-org/plugin-marketplace/pull/560) pins `b4030e4bac62807115fac1d787e33543d7c1218c`; `mergeable_state=blocked` (owners/CI) |
 
 Public Gate 0 stays RED until a *fresh* `tools/list` against
 `https://convoy.bot/mcp` lists every required wizard verb. A Worker deploy
@@ -135,7 +135,7 @@ Official SoT: https://github.com/xai-org/plugin-marketplace
 - Catalog lives in `.grok-plugin/marketplace.json` on that repo (not convoy's
   `.cursor-plugin/marketplace.json`).
 - Plugin root to pin: `plugin/convoy` at
-  `b4b186d925bdb24e414cedd8abfa208d342d98b9`.
+  `b4030e4bac62807115fac1d787e33543d7c1218c`.
 - Pack mirrors Exa: `.grok-plugin/plugin.json`, `.mcp.json` (`type: http`),
   `skills/{convoy,convoy-wizard}/SKILL.md`.
 - `gh repo view xai-org/plugin-marketplace` → `viewerPermission: READ`.
