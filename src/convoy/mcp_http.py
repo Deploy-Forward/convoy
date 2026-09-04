@@ -35,7 +35,7 @@ from .harness_contract import (
 )
 from .install import install as install_harness
 from .onboard import onboard as run_onboard
-from .repo import checkout_path_for, clone as clone_repo, list_repos, mint_worktrees
+from .repo import checkout_path_for, clone as clone_repo, is_repo_url, list_repos, mint_worktrees
 from .context import pack
 from .convoy import list_seats, read_thread
 from .activity import neuron_activity
@@ -601,6 +601,27 @@ def _call_tool(root: Path, name: str, arguments: dict[str, Any] | None) -> dict[
     if name == "glance":
         return build_glance(root, thread=_opt_str(args, "thread"), convoy_id=_opt_str(args, "convoy_id"))
     if name == "onboard":
+        # An MCP process is bound to ONE root for its lifetime (module
+        # docstring). onboard writes the thread at the root its checkout_root
+        # resolves to, so a checkout elsewhere - a git URL, or another local
+        # path - would bind a thread this endpoint can never answer for, and
+        # every later card would describe the wrong place. Found by the e2e
+        # walk 2026-09-04: onboard returned ok=true and the server kept
+        # serving the old root. Refuse, and say where to attach instead.
+        want = _opt_str(args, "checkout_root")
+        if want:
+            try:
+                dest = checkout_path_for(want) if is_repo_url(want) else Path(want).expanduser()
+                elsewhere = dest.resolve() != Path(root).resolve()
+            except OSError:
+                elsewhere = True
+                dest = Path(want)
+            if elsewhere:
+                return {"ok": False, "root": str(root), "checkout_root": str(dest), "bound": False,
+                        "error": ("this endpoint is bound to " + str(root) + " and cannot bind a thread at "
+                                  + str(dest) + "; clone with the `clone` tool if needed, then attach a Convoy "
+                                  "endpoint whose root IS that checkout and call onboard there"),
+                        "next": "attach-endpoint-at-checkout"}
         raw_to = args.get("to")
         to: list[str] = []
         if isinstance(raw_to, list):
