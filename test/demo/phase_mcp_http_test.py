@@ -11,8 +11,11 @@ from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 from convoy.convoy import bind, ensure_id, seat
+from convoy.inbox import enqueue
 from convoy.layer import hook
-from convoy.mcp_http import HOME_LINE, make_server
+from convoy.mcp_http import HOME_LINE, make_server, packaged_tool_names
+
+REQUIRED_WIZARD_VERBS = ("choices", "graph", "inbox", "join", "launch", "seat", "neurons")
 
 def _rpc(url, method, params=None, rpc_id=1):
     body = {"jsonrpc": "2.0", "method": method, "id": rpc_id}
@@ -78,6 +81,147 @@ class PhaseMcpHttp(unittest.TestCase):
         names = [t["name"] for t in listed["result"]["tools"]]
         for want in ("roster", "glance", "terminals", "context", "send", "feed", "bring_up"):
             self.assertIn(want, names)
+        for want in REQUIRED_WIZARD_VERBS:
+            self.assertIn(want, names)
+
+    def test_packaged_tool_names_include_required_wizard_verbs(self):
+        names = packaged_tool_names()
+        for want in REQUIRED_WIZARD_VERBS:
+            self.assertIn(want, names)
+
+    def test_tool_call_smoke_for_new_wizard_verbs(self):
+        choices = _tool_payload(_rpc(self.mcp, "tools/call", {"name": "choices", "arguments": {}}))
+        self.assertTrue(choices["ok"])
+        self.assertIn("harnesses", choices)
+        self.assertIn("worktrees", choices)
+        self.assertIn("seats", choices)
+
+        seat_wt = Path(tempfile.mkdtemp())
+        seated = _tool_payload(
+            _rpc(
+                self.mcp,
+                "tools/call",
+                {
+                    "name": "seat",
+                    "arguments": {
+                        "to": "codex",
+                        "session_id": "smoke-seat",
+                        "worktree": str(seat_wt),
+                    },
+                },
+            )
+        )
+        self.assertEqual(seated.get("session_id"), "smoke-seat")
+        self.assertEqual(seated.get("to"), "codex")
+
+        join_wt = Path(tempfile.mkdtemp())
+        joined = _tool_payload(
+            _rpc(
+                self.mcp,
+                "tools/call",
+                {
+                    "name": "join",
+                    "arguments": {
+                        "to": "codex",
+                        "session_id": "smoke-join",
+                        "worktree": str(join_wt),
+                        "launch": False,
+                    },
+                },
+            )
+        )
+        self.assertTrue(joined.get("ok"))
+        self.assertEqual(joined.get("seat", {}).get("session_id"), "smoke-join")
+
+        planned_launch = _tool_payload(
+            _rpc(
+                self.mcp,
+                "tools/call",
+                {
+                    "name": "launch",
+                    "arguments": {
+                        "seat": "smoke-join",
+                        "dry_run": True,
+                    },
+                },
+            )
+        )
+        self.assertEqual(planned_launch.get("session_id"), "smoke-join")
+        self.assertIn("ok", planned_launch)
+        if not planned_launch.get("ok"):
+            self.assertIn("error", planned_launch)
+
+        noted = enqueue(self.root, "smoke-seat", "hello inbox")
+        self.assertEqual(noted.get("session_id"), "smoke-seat")
+        inbox = _tool_payload(_rpc(self.mcp, "tools/call", {"name": "inbox", "arguments": {"seat": "smoke-seat"}}))
+        self.assertTrue(inbox.get("ok"))
+        self.assertEqual(inbox.get("session_id"), "smoke-seat")
+        self.assertGreaterEqual(inbox.get("n", 0), 1)
+        drained = _tool_payload(
+            _rpc(self.mcp, "tools/call", {"name": "inbox", "arguments": {"seat": "smoke-seat", "drain": True}})
+        )
+        self.assertTrue(drained.get("ok"))
+        self.assertEqual(drained.get("session_id"), "smoke-seat")
+
+        neurons = _tool_payload(_rpc(self.mcp, "tools/call", {"name": "neurons", "arguments": {}}))
+        self.assertTrue(neurons.get("ok"))
+        self.assertIn("neurons", neurons)
+        self.assertIn("active_count", neurons)
+
+    def test_join_launch_then_launch_refuses_duplicate_spawn(self):
+        def fake_which(name):
+            key = str(name).lower()
+            if key in ("codex", "codex.exe"):
+                return "/usr/bin/codex"
+            if key in ("tmux", "tmux.exe"):
+                return "/usr/bin/tmux"
+            return None
+
+        with mock.patch.dict(
+            "convoy.targeted_launch.os.environ",
+            {"TMUX": "/tmp/tmux-1000/default,1,0", "TMUX_PANE": "%9"},
+            clear=False,
+        ):
+            with mock.patch("convoy.bringup.shutil.which", side_effect=fake_which):
+                with mock.patch("convoy.targeted_launch.shutil.which", side_effect=fake_which):
+                    with mock.patch("convoy.targeted_launch.ensure_first_run", return_value={"ok": True}):
+                        with mock.patch("convoy.mcp_http.active_pane_runner", return_value={"ok": True, "pid": 4242}) as runner:
+                            launch_wt = Path(tempfile.mkdtemp())
+                            joined = _tool_payload(
+                                _rpc(
+                                    self.mcp,
+                                    "tools/call",
+                                    {
+                                        "name": "join",
+                                        "arguments": {
+                                            "to": "codex",
+                                            "session_id": "join-launch-once",
+                                            "worktree": str(launch_wt),
+                                            "launch": True,
+                                            "dry_run": False,
+                                        },
+                                    },
+                                )
+                            )
+                            self.assertTrue(joined.get("ok"))
+                            self.assertTrue(joined.get("launch", {}).get("ok"))
+
+                            second = _tool_payload(
+                                _rpc(
+                                    self.mcp,
+                                    "tools/call",
+                                    {
+                                        "name": "launch",
+                                        "arguments": {
+                                            "seat": "join-launch-once",
+                                            "dry_run": False,
+                                        },
+                                    },
+                                )
+                            )
+                            self.assertFalse(second.get("ok"))
+                            self.assertIn("already claimed", str(second.get("error") or ""))
+                            self.assertEqual(runner.call_count, 1)
 
     def test_roster_present_bools_usage_remaining_null_not_zero(self):
         def fake_probe(_harness):

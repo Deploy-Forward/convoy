@@ -20,6 +20,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 from .bringup import bring_up, ensure_interactive_path, hide_windows, live_applier, live_runner, terminals
+from .activity import neuron_activity
 from .harness_contract import (
     canonical_harness_id,
     contract_path,
@@ -32,15 +33,18 @@ from .harness_contract import (
 from .install import install as install_harness
 from .onboard import onboard as run_onboard
 from .context import pack
-from .convoy import list_seats, read_thread
+from .convoy import list_seats, read_thread, seat as write_seat
 from .glance import build_glance
 from .graph import build_graph, neighborhood
 from .graph_html import resume_neuron
+from .inbox import drain as drain_inbox, pending as pending_inbox, seats_for_worktree
 from .index import index_path, list_threads
+from .lifecycle import join as join_chair
 from .panes import bodies
 from .gitstate import git_state
 from .layer import SCHEMA_VERSION, conductor_stamp, feed_since, neuron_note
 from .synapse import fake_runner, native_runner, send_one
+from .targeted_launch import active_pane_runner, launch_choices, launch_seat
 from .usage import normalize_usage_remaining, probe
 
 PROTOCOL_LATEST = "2025-03-26"
@@ -133,6 +137,78 @@ TOOLS: list[dict[str, Any]] = [
                 "checkout_root": {"type": "string"},
             },
             required=["to"],
+        ),
+    },
+    {
+        "name": "choices",
+        "description": "Live launch chooser: installed harnesses, known worktrees, existing seats, and active-pane terminal capability. Never a token; this is the no-memory discovery card before join/launch.",
+        "inputSchema": _schema({}),
+    },
+    {
+        "name": "join",
+        "description": "Register one fresh chair using Convoy's lifecycle.join. Optional launch=true chains into launch for that new seat. Launch defaults dry_run true so a public URL cannot silently split panes; pass dry_run false (+consent when required) to spawn.",
+        "inputSchema": _schema(
+            {
+                "to": {"type": "string", "description": "harness for the new chair"},
+                "session_id": {"type": "string"},
+                "worktree": {"type": "string"},
+                "model": {"type": "string"},
+                "title": {"type": "string"},
+                "effort": {"type": "string"},
+                "author": {"type": "string", "description": "authoring seat for neuron-authored rows"},
+                "launch": {"type": "boolean", "default": False},
+                "dry_run": {"type": "boolean", "default": True, "description": "launch behavior only; ignored unless launch=true"},
+                "consent": {"type": "string", "description": "one-time consent receipt for trust-worktree when required"},
+            },
+            required=["to"],
+        ),
+    },
+    {
+        "name": "launch",
+        "description": "Split one already-joined fresh chair into the active supported pane host. dry_run defaults true so a public URL cannot silently split panes. Pass dry_run false (+consent when required) to spawn.",
+        "inputSchema": _schema(
+            {
+                "seat": {"type": "string", "description": "fresh join/swap chair session_id"},
+                "dry_run": {"type": "boolean", "default": True},
+                "consent": {"type": "string", "description": "one-time consent receipt for trust-worktree when required"},
+            },
+            required=["seat"],
+        ),
+    },
+    {
+        "name": "seat",
+        "description": "Register or update a chair row using convoy.seat fields (harness, session_id, worktree, model, resume token, title, agent, effort).",
+        "inputSchema": _schema(
+            {
+                "to": {"type": "string"},
+                "session_id": {"type": "string"},
+                "worktree": {"type": "string"},
+                "model": {"type": "string"},
+                "resume": {"type": "string"},
+                "title": {"type": "string"},
+                "agent": {"type": "string"},
+                "effort": {"type": "string"},
+            },
+            required=["to", "session_id"],
+        ),
+    },
+    {
+        "name": "neurons",
+        "description": "Thread activity card from activity.neuron_activity: bus recency first, process evidence second, plus the exact message command per chair.",
+        "inputSchema": _schema(
+            {
+                "since": {"type": "string", "description": "ISO UTC lower bound for active; default last 90 minutes"},
+            }
+        ),
+    },
+    {
+        "name": "inbox",
+        "description": "Live-seat inbox read/drain. seat is optional only when cwd resolves to exactly one chair; multi-match is refused. drain=true consumes pending lines with consumed-markers.",
+        "inputSchema": _schema(
+            {
+                "seat": {"type": "string"},
+                "drain": {"type": "boolean", "default": False},
+            }
         ),
     },
     {
@@ -284,6 +360,13 @@ TOOLS: list[dict[str, Any]] = [
 ]
 
 
+def packaged_tool_names(*, include_write_gated: bool = True) -> list[str]:
+    names = [str(t.get("name") or "") for t in TOOLS]
+    if include_write_gated:
+        return [n for n in names if n]
+    return [n for n in names if n and n not in _WRITE_TOOLS]
+
+
 def _null_if_blank(val: Any) -> Any:
     if val is None:
         return None
@@ -412,6 +495,98 @@ def call_tool(root: Path, name: str, arguments: dict[str, Any] | None) -> dict[s
             thread=_opt_str(args, "thread"),
             checkout_root=_opt_str(args, "checkout_root"),
         )
+    if name == "choices":
+        return launch_choices(root)
+    if name == "join":
+        to = _opt_str(args, "to")
+        if not to:
+            return {"ok": False, "error": "join requires to"}
+        try:
+            card = join_chair(
+                root,
+                to,
+                session_id=_opt_str(args, "session_id"),
+                worktree=_opt_str(args, "worktree"),
+                model=_opt_str(args, "model"),
+                title=_opt_str(args, "title"),
+                effort=_opt_str(args, "effort"),
+                author=_opt_str(args, "author"),
+            )
+        except ValueError as e:
+            return {"ok": False, "error": str(e)}
+        if _opt_bool(args, "launch", False):
+            dry = _opt_bool(args, "dry_run", True)
+            launched = launch_seat(
+                root,
+                str(card.get("seat", {}).get("session_id") or ""),
+                runner=None if dry else active_pane_runner,
+                consent=_opt_str(args, "consent"),
+            )
+            card["launch"] = launched
+            card["ok"] = bool(card.get("ok")) and bool(launched.get("ok"))
+            if launched.get("ok"):
+                card["next"] = "launch" if dry else "seated"
+            elif launched.get("state") == "awaiting-user-consent":
+                card["next"] = "consent"
+            else:
+                card["next"] = "launch"
+        return card
+    if name == "launch":
+        seat = _opt_str(args, "seat")
+        if not seat:
+            return {"ok": False, "error": "launch requires seat"}
+        dry = _opt_bool(args, "dry_run", True)
+        card = launch_seat(
+            root,
+            seat,
+            runner=None if dry else active_pane_runner,
+            consent=_opt_str(args, "consent"),
+        )
+        if "dry_run" not in card:
+            card["dry_run"] = dry
+        return card
+    if name == "seat":
+        to = _opt_str(args, "to")
+        session_id = _opt_str(args, "session_id")
+        if not to or not session_id:
+            return {"ok": False, "error": "seat requires to and session_id"}
+        try:
+            row = write_seat(
+                root,
+                to,
+                session_id,
+                worktree=_opt_str(args, "worktree"),
+                model=_opt_str(args, "model"),
+                resume=_opt_str(args, "resume"),
+                title=_opt_str(args, "title"),
+                agent=_opt_str(args, "agent"),
+                effort=_opt_str(args, "effort"),
+            )
+        except ValueError as e:
+            return {"ok": False, "error": str(e)}
+        return row
+    if name == "neurons":
+        return neuron_activity(root, since=_opt_str(args, "since"))
+    if name == "inbox":
+        sid = _opt_str(args, "seat")
+        if not sid:
+            matches = seats_for_worktree(root, Path.cwd())
+            if len(matches) > 1:
+                chairs = [str(r.get("session_id") or "") for r in matches]
+                return {
+                    "ok": False,
+                    "error": "inbox refuse: cwd matches more than one chair; pass seat",
+                    "chairs": chairs,
+                }
+            row = matches[0] if matches else None
+            sid = str((row or {}).get("session_id") or "").strip()
+        if not sid:
+            return {"ok": False, "error": "inbox requires seat"}
+        if _opt_bool(args, "drain", False):
+            taken = drain_inbox(root, sid)
+            return {"ok": True, "session_id": sid, "drained": taken, "n": len(taken)}
+        waiting = pending_inbox(root, sid)
+        return {"ok": True, "session_id": sid, "pending": waiting, "n": len(waiting)}
     if name == "terminals":
         return terminals(root, convoy_id=_opt_str(args, "convoy_id"), thread=_opt_str(args, "thread"))
     if name == "context":
