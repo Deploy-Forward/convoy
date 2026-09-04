@@ -8,7 +8,7 @@ from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 from convoy import cli
-from convoy.mcp_http import TOOLS
+from convoy.mcp_http import TOOLS, _WRITE_TOOLS
 from convoy.wizard_preflight import (
     REMEDY_NOT_REGISTERED,
     REMEDY_REDEPLOY,
@@ -18,7 +18,9 @@ from convoy.wizard_preflight import (
     run_preflight,
 )
 
-# Verbatim public tools/list, 2026-09-04 (13 tools). A fixture, not a menu.
+# Recorded 2026-09-04 from https://convoy.bot/mcp tools/list. Reconfirmed
+# 2026-09-04T15:53Z on PR #52: still these 13 names. A fixture, not a menu.
+# Live Gate 0 stays RED until redeploy; this list is not a GREEN claim.
 LIVE_2026_09_04 = ["roster", "glance", "onboard", "terminals", "context", "send", "feed",
                    "bring_up", "open", "hide", "minimize", "background", "install"]
 
@@ -44,15 +46,17 @@ class WizardPreflight(unittest.TestCase):
         for verb in card["missing"]:
             self.assertIn(verb, packaged, verb + " must be a packaged tool on this branch")
         # Every required verb is packaged now. Read verbs are a redeploy away;
-        # the write verbs stay hidden until the deploy opts in. (Until item F
-        # this named join/seat/launch/mint and choices; the wizard no longer
-        # calls those - card and crew replaced them - so they left the set.)
-        for verb in ("card", "neurons", "inbox", "graph"):
-            self.assertEqual(card["remedy"][verb], REMEDY_REDEPLOY, verb)
-        # crew mints git worktrees and spawns, repos runs gh as the host's
-        # login, consent mints a grant, await_seated holds the request.
-        for verb in ("crew", "repos", "consent", "await_seated"):
-            self.assertEqual(card["remedy"][verb], REMEDY_WRITE_GATED, verb)
+        # the write verbs stay hidden until the deploy opts in. Derived from
+        # _WRITE_TOOLS so clone cannot fall off this list the way a frozen
+        # tuple did. (Until item F this named join/seat/launch/mint and
+        # choices; the wizard no longer calls those - card and crew replaced
+        # them - so they left the set. onboard is still on the 2026-09-04
+        # public fixture, so it is not missing here.)
+        for verb in card["missing"]:
+            if verb in _WRITE_TOOLS:
+                self.assertEqual(card["remedy"][verb], REMEDY_WRITE_GATED, verb)
+            else:
+                self.assertEqual(card["remedy"][verb], REMEDY_REDEPLOY, verb)
         self.assertEqual(card["next"], "enable-write-tools-on-deploy")
         self.assertIn("redeploy the public MCP", card["ask"])
         self.assertIn("CONVOY_MCP_WRITE_TOOLS=1", card["ask"])
@@ -67,7 +71,7 @@ class WizardPreflight(unittest.TestCase):
         self.assertEqual(card["next"], "reconnect-or-redeploy-mcp")
 
     def test_write_gated_verbs_point_at_the_deploy_switch(self):
-        gated = ("repos", "onboard", "crew", "consent", "await_seated")
+        gated = tuple(v for v in REQUIRED_WIZARD_VERBS if v in _WRITE_TOOLS)
         listed = [v for v in REQUIRED_WIZARD_VERBS if v not in gated]
         card = preflight(listed)
         self.assertEqual(card["missing"], list(gated), "missing keeps the constant's order")
