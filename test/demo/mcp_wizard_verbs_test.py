@@ -1,11 +1,15 @@
-"""The @convoy wizard's Gate 0 requires ten verbs from the LIVE tools/list and
-goes RED otherwise. Six of them were CLI-only (grok-bot review of PR 50,
-2026-09-04 ~06:00Z): choices, join, launch, seat, neurons, inbox. Redeploy
-alone could not make Gate 0 green; the server had to register them.
+"""Wire coverage for verbs that were CLI-only until PR 50 (grok-bot review,
+2026-09-04 ~06:00Z): choices, join, launch, seat, neurons, inbox.
+
+Current Gate 0 is convoy.wizard_preflight.REQUIRED_WIZARD_VERBS and is scored
+by wizard_preflight / the wizard sequence test. This module still pins that
+those original mutating verbs stay hidden on a public process, that a gated
+process lists both them and the current Gate 0 set, and that a refusal never
+pretends to have acted.
 
 Three guarantees, and the shape they must keep:
 
-1. All ten Gate 0 verbs appear in tools/list on a fresh server.
+1. The original ten plus current Gate 0 appear in tools/list on a gated server.
 2. Read-only verbs (choices, neurons, inbox without drain) answer on a public
    process. Mutating verbs (seat, join, inbox drain) and the one that SPAWNS
    (launch) sit behind the same write gate resume go=true already uses, so a
@@ -29,7 +33,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 
 from convoy.convoy import bind, ensure_id, list_seats, seat
 from convoy.inbox import enqueue, pending
-from convoy.mcp_http import make_server
+from convoy.mcp_http import TOOLS, _WRITE_TOOLS, make_server
+from convoy.wizard_preflight import REQUIRED_WIZARD_VERBS
 
 GATE0 = ("choices", "onboard", "join", "launch", "seat", "bring_up",
          "neurons", "graph", "send", "inbox")
@@ -93,7 +98,9 @@ class McpWizardVerbs(unittest.TestCase):
         self._open_gate()
         names = {t["name"] for t in _rpc(self.mcp, "tools/list")["result"]["tools"]}
         missing = [v for v in GATE0 if v not in names]
-        self.assertEqual(missing, [], "Gate 0 verbs absent from tools/list: " + repr(missing))
+        self.assertEqual(missing, [], "PR50 Gate 0 verbs absent from tools/list: " + repr(missing))
+        still = [v for v in REQUIRED_WIZARD_VERBS if v not in names]
+        self.assertEqual(still, [], "current Gate 0 verbs absent from gated tools/list: " + repr(still))
 
     def test_public_tools_list_hides_seat_join_launch_so_gate0_goes_red_honestly(self):
         # A public endpoint cannot seat or launch. It must not LIST them and
@@ -101,16 +108,11 @@ class McpWizardVerbs(unittest.TestCase):
         # is a promise. Hidden here means Gate 0 is RED on a public deploy by
         # design, and the wizard stops with an install card. The read-only
         # verbs stay listed everywhere.
-        # onboard moved to the hidden side 2026-09-04 (item D): it binds the
-        # thread and, given a URL, spawns git clone. A public deploy that
-        # listed it would promise a write it must not perform. repos followed
-        # after review: gh runs as the MCP host's login, so a public repos
-        # could only list the operator's inventory to strangers.
+        # Derived from _WRITE_TOOLS so clone/crew/consent/await_seated cannot
+        # leak the way a frozen ("seat","join","launch") tuple did.
         names = {t["name"] for t in _rpc(self.mcp, "tools/list")["result"]["tools"]}
-        for hidden in ("seat", "join", "launch", "onboard", "repos"):
-            self.assertNotIn(hidden, names, hidden + " must not be promised on a public process")
-        for public in ("choices", "neurons", "inbox", "graph", "bring_up", "send"):
-            self.assertIn(public, names)
+        expected = {t["name"] for t in TOOLS if t["name"] not in _WRITE_TOOLS}
+        self.assertEqual(names, expected)
 
     # 2a. read-only verbs answer on a public process
     def test_choices_is_read_only_and_answers_public(self):

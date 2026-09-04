@@ -9,6 +9,11 @@ registered since PR 50 (mcp_http.TOOLS). A skill or README that denies a tool
 the server serves makes the wizard refuse work it can do - the honesty bar cuts
 both ways.
 
+The repo-root sheet skills/convoy/SKILL.md still had that CLI-only list
+(multiline, so a same-line regex missed `seat`/`join`/`choices`/`launch`/
+`consent`) after Gate 0 moved on; this test now covers that file and every
+name in TOOLS, not only current Gate 0.
+
 Truth here is DERIVED from mcp_http.TOOLS and _WRITE_TOOLS, never a frozen
 list, so this test cannot itself drift. It checks the docs for the specific
 false claims, per registered verb, rather than for phrasing.
@@ -28,8 +33,10 @@ DOCS = {
     "plugin/convoy/README.md": REPO / "plugin" / "convoy" / "README.md",
     "plugin/convoy/skills/convoy/SKILL.md": REPO / "plugin" / "convoy" / "skills" / "convoy" / "SKILL.md",
     "plugin/convoy/skills/convoy-wizard/SKILL.md": REPO / "plugin" / "convoy" / "skills" / "convoy-wizard" / "SKILL.md",
+    "skills/convoy/SKILL.md": REPO / "skills" / "convoy" / "SKILL.md",
 }
 # Each pattern, with a verb substituted, is a claim that the verb is NOT served.
+# Same-line only: a multiline "CLI-only: `a`,\\n`b`" list is caught separately.
 DENIALS = (
     r"`{v}`[^.\n]{{0,80}}\bno MCP tool\b",
     r"\bno MCP tool\b[^.\n]{{0,120}}`{v}`",
@@ -37,30 +44,49 @@ DENIALS = (
     r"\bCLI-only\b[^.\n]{{0,120}}`{v}`",
     r"`{v}`[^.\n]{{0,80}}\bCLI-only\b",
 )
+CLI_ONLY_LIST = re.compile(
+    r"(?:CLI-only|never on the wire)\s*:?\s*(.*?)(?:\.(?:\s|$))",
+    re.I | re.S,
+)
+
+
+def _registered_tool_names():
+    return [str(t["name"]) for t in TOOLS]
 
 
 def _registered_wizard_verbs():
-    names = {str(t["name"]) for t in TOOLS}
+    names = set(_registered_tool_names())
     return [v for v in wp.REQUIRED_WIZARD_VERBS if v in names]
+
+
+def _cli_only_listed_names(text: str) -> list[str]:
+    names = []
+    for m in CLI_ONLY_LIST.finditer(text):
+        names.extend(re.findall(r"`([A-Za-z][A-Za-z0-9_-]*)`", m.group(1)))
+    return names
 
 
 class WizardProseMatchesWire(unittest.TestCase):
     def test_every_gate0_verb_is_registered_so_the_denials_would_all_be_false(self):
         # Precondition for the rest: if this fails the docs may be RIGHT and
         # the server wrong. The reader must decide which, not this test.
-        names = {str(t["name"]) for t in TOOLS}
+        names = set(_registered_tool_names())
         missing = [v for v in wp.REQUIRED_WIZARD_VERBS if v not in names]
         self.assertEqual(missing, [], "Gate 0 verbs not registered on this build: " + repr(missing))
 
     def test_no_doc_denies_a_registered_verb(self):
+        registered = set(_registered_tool_names())
         offenders = []
         for label, path in DOCS.items():
             text = path.read_text(encoding="utf-8-sig")
-            for verb in _registered_wizard_verbs():
+            for verb in registered:
                 for pat in DENIALS:
                     m = re.search(pat.format(v=re.escape(verb)), text)
                     if m:
                         offenders.append((label, verb, m.group(0)[:100]))
+            for verb in _cli_only_listed_names(text):
+                if verb in registered:
+                    offenders.append((label, verb, "cli-only-list"))
         self.assertEqual(offenders, [], "docs deny a tool the server serves:\n" + "\n".join(map(str, offenders)))
 
     def test_preflight_docstring_names_only_remedies_the_classifier_has(self):
