@@ -4,13 +4,15 @@ import sys
 import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 from convoy import cli
 from convoy.mcp_http import TOOLS
 from convoy.wizard_preflight import (
-    REMEDY_CLI_ONLY,
+    REMEDY_NOT_REGISTERED,
     REMEDY_REDEPLOY,
+    REMEDY_WRITE_GATED,
     REQUIRED_WIZARD_VERBS,
     preflight,
     run_preflight,
@@ -27,22 +29,56 @@ class WizardPreflight(unittest.TestCase):
         self.assertTrue(card["ok"])
         self.assertEqual(card["status"], "GREEN")
         self.assertEqual(card["missing"], [])
+        self.assertIsNone(card["next"])
         self.assertFalse(card["frozen_menu"])
 
     def test_lagging_public_deploy_is_red_and_names_remedy_per_verb(self):
         card = preflight(LIVE_2026_09_04, url="https://convoy.bot/mcp")
         self.assertFalse(card["ok"])
         self.assertEqual(card["status"], "RED")
-        self.assertEqual(card["missing"], list(REQUIRED_WIZARD_VERBS))
+        # onboard, bring_up, send are live already; the rest are missing.
+        self.assertEqual(card["missing"], [v for v in REQUIRED_WIZARD_VERBS if v not in LIVE_2026_09_04])
+        self.assertEqual(card["reason"], "required-tools-missing")
+        self.assertFalse(card["mutation_attempted"])
         packaged = {t["name"] for t in TOOLS}
-        for verb, remedy in card["remedy"].items():
-            self.assertEqual(remedy, REMEDY_REDEPLOY if verb in packaged else REMEDY_CLI_ONLY, verb)
-        # All required wizard verbs are now packaged MCP tools on main, so a
-        # lagging public tools/list is a redeploy problem for each one.
-        for verb in REQUIRED_WIZARD_VERBS:
-            self.assertEqual(card["remedy"][verb], REMEDY_REDEPLOY)
-        self.assertIn("redeploy", card["ask"])
-        self.assertNotIn("cli-only", card["ask"])
+        for verb in card["missing"]:
+            self.assertIn(verb, packaged, verb + " must be a packaged tool on this branch")
+        # Every required verb is packaged now. Read verbs are a redeploy away;
+        # join and seat write chair rows and stay hidden until the deploy opts in.
+        for verb in ("choices", "neurons", "inbox", "graph"):
+            self.assertEqual(card["remedy"][verb], REMEDY_REDEPLOY, verb)
+        for verb in ("join", "seat", "launch"):
+            self.assertEqual(card["remedy"][verb], REMEDY_WRITE_GATED, verb)
+        self.assertEqual(card["next"], "enable-write-tools-on-deploy")
+        self.assertIn("redeploy the public MCP", card["ask"])
+        self.assertIn("CONVOY_MCP_WRITE_TOOLS=1", card["ask"])
+        self.assertIn("not a source checkout", card["ask"])
+        self.assertNotIn("python -m convoy", card["ask"], "the card must not offer a CLI fallback to a marketplace install")
+
+    def test_only_lagging_read_tools_point_at_redeploy(self):
+        listed = [v for v in REQUIRED_WIZARD_VERBS if v != "graph"]
+        card = preflight(listed)
+        self.assertEqual(card["missing"], ["graph"])
+        self.assertEqual(card["remedy"], {"graph": REMEDY_REDEPLOY})
+        self.assertEqual(card["next"], "reconnect-or-redeploy-mcp")
+
+    def test_write_gated_verbs_point_at_the_deploy_switch(self):
+        listed = [v for v in REQUIRED_WIZARD_VERBS if v not in ("join", "seat", "launch")]
+        card = preflight(listed)
+        self.assertEqual(card["missing"], ["join", "launch", "seat"])
+        self.assertEqual(card["remedy"], {v: REMEDY_WRITE_GATED for v in ("join", "launch", "seat")})
+        self.assertEqual(card["next"], "enable-write-tools-on-deploy")
+        self.assertNotIn("redeploy the public MCP", card["ask"])
+
+    def test_unregistered_verb_is_not_a_redeploy_problem(self):
+        # Shrink the packaged set: a verb the server does not register at all
+        # needs a server commit; a redeploy cannot conjure it.
+        with mock.patch("convoy.wizard_preflight.PACKAGED_TOOLS", [{"name": "graph"}]):
+            card = preflight(["roster"])
+        self.assertEqual(card["remedy"]["graph"], REMEDY_REDEPLOY)
+        self.assertEqual(card["remedy"]["choices"], REMEDY_NOT_REGISTERED)
+        self.assertEqual(card["next"], "mcp-server-commit")
+        self.assertIn("server needs a commit", card["ask"])
 
     def test_listed_is_only_what_live_returned_never_padded(self):
         card = preflight(["roster", "roster", "glance"])
@@ -58,7 +94,9 @@ class WizardPreflight(unittest.TestCase):
         self.assertIsNone(card["listed"])
         self.assertEqual(card["missing"], list(REQUIRED_WIZARD_VERBS))
         self.assertIn("TimeoutError: timed out after 20s", card["error"])
-        self.assertIn("must not propose seats", card["ask"])
+        self.assertEqual(card["reason"], "tools-list-failed")
+        self.assertEqual(card["next"], "reconnect-or-redeploy-mcp")
+        self.assertIn("propose seats", card["ask"])
 
     def test_offline_tools_bypass_network(self):
         called = []
@@ -82,7 +120,7 @@ class WizardPreflight(unittest.TestCase):
         self.assertEqual(rc, 1)
         card = json.loads(out.getvalue())
         self.assertEqual(card["status"], "RED")
-        self.assertEqual(card["remedy"]["seat"], REMEDY_REDEPLOY)
+        self.assertEqual(card["remedy"]["seat"], REMEDY_WRITE_GATED)
 
 
 if __name__ == "__main__":

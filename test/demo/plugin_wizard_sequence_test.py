@@ -1,6 +1,10 @@
-﻿import re
+import re
+import sys
 import unittest
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
+from convoy.wizard_preflight import REQUIRED_WIZARD_VERBS
 
 REPO = Path(__file__).resolve().parents[2]
 WIZARD = REPO / "plugin" / "convoy" / "skills" / "convoy-wizard" / "SKILL.md"
@@ -53,8 +57,8 @@ class WizardSequence(unittest.TestCase):
     def test_preflight_is_fail_closed_and_names_required_verbs(self):
         self.assertIn("fail-closed", self.gate0.lower().replace("fail closed", "fail-closed"))
         self.assertTrue("fail-closed" in self.gate0 or "fail closed" in self.gate0)
-        for verb in ("choices", "graph", "inbox", "join", "launch", "seat"):
-            self.assertIn("`" + verb + "`", self.gate0)
+        for verb in REQUIRED_WIZARD_VERBS:
+            self.assertIn("`" + verb + "`", self.gate0, "Gate 0 must name every verb the preflight module requires")
         self.assertIn("never freeze a static tool menu", self.gate0)
         self.assertIn("stop", self.gate0.lower())
         self.assertTrue(

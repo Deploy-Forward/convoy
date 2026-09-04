@@ -100,7 +100,13 @@ convoy mcp --root <thread-root> --port 8788
 
 Then attach `http://127.0.0.1:8788/mcp` in your MCP client. Write tools are
 off by default on the RPC layer: set `CONVOY_MCP_WRITE_TOOLS=1` on a
-gated/loopback deploy to expose `stamp`, `note`, and `resume` with `go=true`.
+gated/loopback deploy to expose `stamp`, `note`, `join`, `seat`, `launch`,
+`resume` with `go=true`, and `inbox` with `drain=true`. An ungated public
+`tools/list` hides the write tools rather than listing and refusing them, so a
+listed verb is a promise. Reads (`choices`, `neurons`, `inbox` pending, `graph`)
+stay public, and a public inbox read never echoes the row token. `convoy
+preflight` tells you which of the wizard's verbs a live `tools/list` is missing
+and why.
 The public `https://convoy.bot/mcp` is bound to one root; a different thread
 means running your own server with your own `--root`.
 
