@@ -16,6 +16,8 @@ class PluginMarketplacePackContract(unittest.TestCase):
         self.assertEqual(data.get("repository"), "https://github.com/Deploy-Forward/convoy")
         self.assertTrue(data.get("version"))
         self.assertTrue(data.get("description"))
+        self.assertEqual(data.get("logo"), "assets/logo.svg")
+        self.assertTrue((PLUGIN_ROOT / data["logo"]).is_file(), "plugin logo missing")
 
     def test_xai_grok_mcp_contract(self):
         mcp = PLUGIN_ROOT / ".mcp.json"
