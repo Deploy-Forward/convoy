@@ -113,6 +113,9 @@ class WizardProseMatchesWire(unittest.TestCase):
         self.assertIn("CONVOY_MCP_WRITE_TOOLS", readme, "README must name the gate that hides seat/join/launch")
         for verb in gated:
             self.assertIn("`" + verb + "`", readme, "README must name " + verb + " among the write-gated verbs")
+        pack_skill = DOCS["plugin/convoy/skills/convoy/SKILL.md"].read_text(encoding="utf-8-sig")
+        self.assertIn("write-gated", pack_skill, "pack skill must name the third #51 class, not only redeploy/not-registered")
+        self.assertIn("`card`", pack_skill, "pack skill must read model/effort from card, not only choices")
 
 
 if __name__ == "__main__":

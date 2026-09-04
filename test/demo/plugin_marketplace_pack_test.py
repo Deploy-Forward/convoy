@@ -123,6 +123,12 @@ class PluginMarketplacePackContract(unittest.TestCase):
         self.assertIn("harness", text)
         self.assertIn("model", text)
         self.assertIn("effort", text)
+        # #51 classifier is three-way; a two-class "redeploy or not-registered"
+        # card would send a marketplace host looking for a CLI that is not there.
+        self.assertIn("write-gated", text)
+        self.assertIn("redeploy", text)
+        self.assertIn("not-registered", text)
+        self.assertIn("`card`", text)
 
     def test_convoy_wizard_skill_flow_contract(self):
         skill = PLUGIN_ROOT / "skills" / "convoy-wizard" / "SKILL.md"
@@ -131,16 +137,15 @@ class PluginMarketplacePackContract(unittest.TestCase):
         self.assertIn("GitHub?", text)
         self.assertIn("tools/list", text)
         self.assertIn("never freeze a static tool menu", text)
-        self.assertIn("choices", text)
-        self.assertIn("join --launch", text)
-        self.assertIn("bring_up", text)
         self.assertIn("graph", text)
         self.assertIn("onboard", text)
-        self.assertIn("seat", text)
         self.assertIn("send", text)
         self.assertIn("inbox", text)
         self.assertIn("harness_effort.json", text)
         self.assertIn("cvy_*", text)
+        # Gate 0 walk after item F: card + crew, not per-chair join/launch/seat.
+        for verb in ("card", "repos", "clone", "crew", "consent", "await_seated"):
+            self.assertIn("`" + verb + "`", text, "wizard skill must name Gate 0 verb " + verb)
 
 
 if __name__ == "__main__":
