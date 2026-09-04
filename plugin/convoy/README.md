@@ -12,6 +12,7 @@ can find **Convoy** and install both:
 plugin/convoy/
 ├── plugin.json
 ├── mcp.json
+├── harness_effort.json   (byte-identical copy of src/convoy/harness_effort.json)
 ├── skills/
 │   ├── convoy/SKILL.md
 │   └── convoy-wizard/SKILL.md
@@ -41,4 +42,7 @@ https://cursor.com/marketplace/publish
 
 The plugin skills always require live `tools/list` and must never hardcode a
 frozen catalog. Public MCP `tools/list` may lag `main` until the deployed
-server is redeployed.
+server is redeployed, and some wizard verbs (`choices`, `inbox`, `join`,
+`launch`, `seat`) have no MCP tool on `main` at all: they run through the
+CLI. `python -m convoy preflight` prints the fail-closed card that says
+which is which.

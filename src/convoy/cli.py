@@ -189,6 +189,10 @@ def main(argv: list[str] | None = None) -> int:
     ob.add_argument("--thread")
     ob.add_argument("--checkout-root")
 
+    pf = sub.add_parser("preflight", help="fail-closed wizard preflight: live MCP tools/list vs the verbs the @convoy wizard needs")
+    pf.add_argument("--url", default=None, help="MCP endpoint (default: public https://convoy.bot/mcp)")
+    pf.add_argument("--tools", default=None, help="comma-separated tool names to score offline instead of fetching")
+
     mcp = sub.add_parser("mcp")
     mcp.add_argument("--root", default=argparse.SUPPRESS, help="layer root (also accepted after subcommand)")
     mcp.add_argument("--host", default="127.0.0.1")
@@ -475,6 +479,12 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.cmd == "onboard":
         card = run_onboard(root, args.to, thread=args.thread, checkout_root=args.checkout_root)
+        print(json.dumps(card))
+        return 0 if card.get("ok") else 1
+    if args.cmd == "preflight":
+        from .wizard_preflight import PUBLIC_MCP_URL, run_preflight
+        tools = [t.strip() for t in args.tools.split(",") if t.strip()] if args.tools is not None else None
+        card = run_preflight(args.url or PUBLIC_MCP_URL, tools=tools)
         print(json.dumps(card))
         return 0 if card.get("ok") else 1
     if args.cmd == "mcp":
