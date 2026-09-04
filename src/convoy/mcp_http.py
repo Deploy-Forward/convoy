@@ -466,7 +466,10 @@ def call_tool(root: Path, name: str, arguments: dict[str, Any] | None) -> dict[s
     if name == "roster":
         return build_roster(root)
     if name == "glance":
-        return build_glance(root, thread=_opt_str(args, "thread"), convoy_id=_opt_str(args, "convoy_id"))
+        card = build_glance(root, thread=_opt_str(args, "thread"), convoy_id=_opt_str(args, "convoy_id"))
+        if not _write_tools_enabled():
+            _redact_glance_resume(card)
+        return card
     if name == "onboard":
         raw_to = args.get("to")
         to: list[str] = []
@@ -649,6 +652,26 @@ def call_tool(root: Path, name: str, arguments: dict[str, Any] | None) -> dict[s
         except ValueError as e:
             return {"ok": False, "seat": sid, "spawned": False, "error": str(e)}
     return {"ok": False, "error": "tool not found: " + name}
+
+
+def _redact_glance_resume(card: Any) -> None:
+    """Two locked contracts collide on the glance by-thread card. SPEC.md:56
+    makes seat.resume (the vendor session id) chip front matter for the
+    conductor; graph.py:16 says tokens never leave seats.jsonl. The write gate
+    is the arbiter: behind it (conductor-local loopback) the chip keeps the id;
+    on the ungated public wire every seat row carries only the shape graph
+    already uses, {available, for}, so a chip can still say "resumable" and
+    nobody can lift a session id off a public endpoint. Found live 2026-09-04.
+    The row WITHOUT a token says available=false rather than omitting the key,
+    so redaction and absence are told apart."""
+    by_thread = card.get("by_thread") if isinstance(card, dict) else None
+    if not isinstance(by_thread, dict):
+        return
+    for row in by_thread.get("seats") or []:
+        if not isinstance(row, dict):
+            continue
+        raw = row.pop("resume", None)
+        row["resume"] = {"available": isinstance(raw, str) and bool(raw.strip()), "for": row.get("to")}
 
 
 def _gate_text(verb: str) -> str:
