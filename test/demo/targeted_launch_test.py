@@ -1,6 +1,5 @@
 import io
 import json
-import os
 import sys
 import tempfile
 import unittest
@@ -31,6 +30,10 @@ def _which(*present):
         return None
 
     return lookup
+
+
+def _base_name_portable(value: object) -> str:
+    return str(value).replace("\\", "/").split("/")[-1].lower()
 
 
 def _run(root, *argv):
@@ -108,7 +111,7 @@ class TargetedLaunch(unittest.TestCase):
         self.assertEqual(argv[:4], ["C:\\Tools\\wt", "-w", "0", "split-pane"])
         self.assertIn("-d", argv)
         self.assertIn(str(self.worktree), argv)
-        self.assertEqual(sum(os.path.basename(str(a)).lower() == "codex.exe" for a in argv), 1)
+        self.assertEqual(sum(_base_name_portable(a) == "codex.exe" for a in argv), 1)
         self.assertNotIn("--window", argv)
         self.assertNotIn("new", argv[:4])
         self.assertNotIn("resume", argv)

@@ -1,0 +1,17 @@
+{
+  "name": "deploy-forward-marketplace",
+  "owner": {
+    "name": "Deploy Forward"
+  },
+  "metadata": {
+    "description": "Deploy Forward plugin collection",
+    "pluginRoot": "plugin"
+  },
+  "plugins": [
+    {
+      "name": "convoy",
+      "source": "convoy",
+      "description": "Convoy MCP + /convoy and @convoy wizard skills"
+    }
+  ]
+}

@@ -33,8 +33,13 @@ from .install import install as install_harness
 from .onboard import onboard as run_onboard
 from .context import pack
 from .convoy import list_seats, read_thread
+from .activity import neuron_activity
+from .convoy import seat as seat_chair
 from .glance import build_glance
 from .graph import build_graph, neighborhood
+from .inbox import drain as drain_inbox, pending as pending_inbox
+from .lifecycle import join as join_chair
+from .targeted_launch import active_pane_runner, launch_choices, launch_seat
 from .graph_html import resume_neuron
 from .index import index_path, list_threads
 from .panes import bodies
@@ -76,7 +81,14 @@ HARNESSES = tuple((row["id"], str(row.get("name") or row["id"])) for row in harn
 # N-5 gate: SoT write tools are never exposed on an ungated public process.
 # RPC-layer only — CLI and in-process call_tool stay usable; a gated/loopback
 # deploy opts in via CONVOY_MCP_WRITE_TOOLS=1.
-_WRITE_TOOLS = frozenset({"stamp", "note"})
+# seat/join/launch joined this set with the wizard verbs (2026-09-04). They
+# are HIDDEN from a public tools/list, not listed-and-refusing, on purpose:
+# the @convoy wizard's Gate 0 reads tools/list to decide whether it can seat
+# and launch, and a public endpoint that cannot do those must not say it can.
+# Gate 0 goes RED there and stops with an install card - fail-closed, which is
+# the behaviour the wizard promises. inbox stays listed: its read is public;
+# only drain is gated, inside the handler, like resume go=true.
+_WRITE_TOOLS = frozenset({"stamp", "note", "seat", "join", "launch"})
 
 
 def _write_tools_enabled() -> bool:
@@ -279,6 +291,62 @@ TOOLS: list[dict[str, Any]] = [
                 "opt_in": {"type": "boolean", "default": False},
             },
             required=["to"],
+        ),
+    },
+    # The six verbs below were CLI-only until grok-bot's PR 50 review
+    # (2026-09-04 ~06:00Z): the @convoy wizard's Gate 0 requires them from the
+    # LIVE tools/list and goes RED otherwise, so redeploying the old server
+    # could never make the wizard green. Read-only verbs answer anywhere.
+    # Anything that mutates the thread or SPAWNS sits behind the same write
+    # gate as `resume go=true`: a public endpoint never mints a chair or starts
+    # a process on a stranger's behalf.
+    {
+        "name": "choices",
+        "description": "Read-only: installed harnesses, known git worktrees, current seats, and whether this host can split an active pane. The wizard renders ONLY what this returns; never a remembered menu. Never a token.",
+        "inputSchema": _schema({}),
+    },
+    {
+        "name": "neurons",
+        "description": "Read-only: who is active on the bound thread and the command that messages each. Bus recency first (a chair that authored a row is alive whatever the process table says), process evidence second. A chair Convoy cannot place is never reported dead. Never a token.",
+        "inputSchema": _schema({"since": {"type": "string", "description": "ISO timestamp; default is a 90-minute window"}}),
+    },
+    {
+        "name": "inbox",
+        "description": "Pending live-seat messages for one chair. Read (default) is public and lists pending rows. drain=true appends a consumed-marker per row and is behind the write gate. A drain is NOT a receipt: only the chair's own ack row proves delivery. Requires seat; never guesses a chair from cwd.",
+        "inputSchema": _schema(
+            {"seat": {"type": "string", "description": "chair session_id"},
+             "drain": {"type": "boolean", "default": False}},
+            required=["seat"],
+        ),
+    },
+    {
+        "name": "seat",
+        "description": "Register or update a chair on the bound thread (write gate). A worktree belongs to ONE chair: seating a second chair on a held worktree is refused naming both chairs (C8). The same chair may re-seat. Echoes what it was given; never invents a resume token.",
+        "inputSchema": _schema(
+            {"to": {"type": "string", "description": "harness: grok, claude, codex, cursor-agent, agy, hermes, pi"},
+             "session_id": {"type": "string", "description": "chair id; identity of the seat"},
+             "worktree": {"type": "string"}, "model": {"type": "string"},
+             "title": {"type": "string"}, "effort": {"type": "string"}},
+            required=["to", "session_id"],
+        ),
+    },
+    {
+        "name": "join",
+        "description": "Add a NEW chair: seat + boot prompt + join row with a minted inbox token (write gate). Refuses a chair id that already exists and a worktree another chair holds (C8). Does not launch; call launch for that.",
+        "inputSchema": _schema(
+            {"to": {"type": "string"}, "session_id": {"type": "string"}, "worktree": {"type": "string"},
+             "model": {"type": "string"}, "title": {"type": "string"}, "effort": {"type": "string"},
+             "author": {"type": "string"}},
+            required=["to"],
+        ),
+    },
+    {
+        "name": "launch",
+        "description": "Split one already-joined fresh chair into the active pane host. This SPAWNS a process, so it is behind the write gate and refused on a public deploy without spawning anything. consent carries the user's explicit yes when the host asks for it. Never a token.",
+        "inputSchema": _schema(
+            {"seat": {"type": "string", "description": "chair session_id from join"},
+             "consent": {"type": "string"}},
+            required=["seat"],
         ),
     },
 ]
@@ -522,7 +590,70 @@ def call_tool(root: Path, name: str, arguments: dict[str, Any] | None) -> dict[s
         dry = _opt_bool(args, "dry_run", True)
         opt_in = _opt_bool(args, "opt_in", False)
         return install_harness(to, dry_run=dry, opt_in=opt_in)
+    if name == "choices":
+        return launch_choices(root)
+    if name == "neurons":
+        return neuron_activity(root, since=_opt_str(args, "since"))
+    if name == "inbox":
+        sid = (_opt_str(args, "seat") or "").strip()
+        if not sid:
+            return {"ok": False, "error": "inbox requires seat; the wire never guesses a chair from cwd"}
+        if not _opt_bool(args, "drain", False):
+            # The inbox token is the RECEIVER's proof of receipt: an ack that
+            # cites it is evidence precisely because only Convoy and the target
+            # know it. A public read that echoed it would let anyone forge an
+            # ack. Redact it here; the chair reads its own token from disk.
+            rows = [{k: v for k, v in r.items() if k != "token"} for r in pending_inbox(root, sid)]
+            return {"ok": True, "seat": sid, "drained": False, "pending_count": len(rows), "pending": rows}
+        if not _write_tools_enabled():
+            return {"ok": False, "seat": sid, "drained": False,
+                    "error": _gate_text("inbox drain=true")}
+        rows = drain_inbox(root, sid)
+        return {"ok": True, "seat": sid, "drained": True, "count": len(rows), "rows": rows}
+    if name == "seat":
+        to = _opt_str(args, "to")
+        sid = _opt_str(args, "session_id")
+        if not to or not sid:
+            return {"ok": False, "error": "seat requires to and session_id"}
+        if not _write_tools_enabled():
+            return {"ok": False, "error": _gate_text("seat")}
+        try:
+            # seat() returns the bare row and signals failure by raising, so
+            # it has no ok key. Every other tool has one; give it one.
+            row = seat_chair(root, to, sid, worktree=_opt_str(args, "worktree"), model=_opt_str(args, "model"),
+                             title=_opt_str(args, "title"), effort=_opt_str(args, "effort"))
+            return {"ok": True, **row}
+        except ValueError as e:
+            return {"ok": False, "error": str(e)}
+    if name == "join":
+        to = _opt_str(args, "to")
+        if not to:
+            return {"ok": False, "error": "join requires to"}
+        if not _write_tools_enabled():
+            return {"ok": False, "error": _gate_text("join")}
+        try:
+            return join_chair(root, to, session_id=_opt_str(args, "session_id"), worktree=_opt_str(args, "worktree"),
+                              model=_opt_str(args, "model"), title=_opt_str(args, "title"),
+                              effort=_opt_str(args, "effort"), author=_opt_str(args, "author"))
+        except ValueError as e:
+            return {"ok": False, "error": str(e)}
+    if name == "launch":
+        sid = (_opt_str(args, "seat") or "").strip()
+        if not sid:
+            return {"ok": False, "spawned": False, "error": "launch requires seat"}
+        if not _write_tools_enabled():
+            # Refused BEFORE launch_seat is reached: nothing is spawned.
+            return {"ok": False, "seat": sid, "spawned": False, "error": _gate_text("launch")}
+        try:
+            return launch_seat(root, sid, runner=active_pane_runner, consent=_opt_str(args, "consent"))
+        except ValueError as e:
+            return {"ok": False, "seat": sid, "spawned": False, "error": str(e)}
     return {"ok": False, "error": "tool not found: " + name}
+
+
+def _gate_text(verb: str) -> str:
+    return (verb + " is behind the write gate on this process (set CONVOY_MCP_WRITE_TOOLS=1 "
+            "on a gated/loopback deploy); nothing was written or spawned")
 
 
 def _dumps(obj: Any) -> str:
@@ -578,6 +709,12 @@ def handle_rpc(root: Path, msg: dict[str, Any]) -> dict[str, Any] | None:
                     arguments = raw_args
             if name not in {t["name"] for t in TOOLS} and name != "open":
                 payload = {"ok": False, "error": "tool not found: " + name}
+                is_err = True
+            elif name == "launch" and not _write_tools_enabled():
+                sid = str(arguments.get("seat") or "").strip()
+                payload = {"ok": False, "spawned": False, "error": _gate_text("launch")}
+                if sid:
+                    payload["seat"] = sid
                 is_err = True
             elif name in _WRITE_TOOLS and not _write_tools_enabled():
                 payload = {"ok": False, "error": "write tool disabled on this process: " + name + " (set CONVOY_MCP_WRITE_TOOLS=1 on a gated/loopback deploy)"}
