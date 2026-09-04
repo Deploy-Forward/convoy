@@ -41,10 +41,18 @@ https://cursor.com/marketplace/publish
 ## Notes on live MCP catalog
 
 The plugin skills always require live `tools/list` and must never hardcode a
-frozen catalog. Public MCP `tools/list` may lag `main` until the deployed
-server is redeployed, and some wizard verbs (`choices`, `inbox`, `join`,
-`launch`, `seat`, `neurons`) have no MCP tool on `main` at all, so a
-redeploy alone cannot make the wizard GREEN. The wizard fails closed on
-either gap; it never falls back to the CLI, because a marketplace install is
-not a source checkout. Operators with a checkout can run
-`python -m convoy preflight` for the card that says which gap is which.
+frozen catalog. Every verb the wizard calls is registered on `main`
+(`src/convoy/mcp_http.py`), but a live `tools/list` can still lack some of
+them for two different reasons, and the wizard's Gate 0 tells them apart:
+
+- **redeploy** - the public deploy lags `main`, so a registered verb is not
+  served yet. A redeploy fixes it.
+- **write-gated** - `seat`, `join`, and `launch` mutate the thread or spawn a
+  process, so an ungated public process hides them from `tools/list` on
+  purpose and Gate 0 is RED there by design. They appear only on a deploy
+  with `CONVOY_MCP_WRITE_TOOLS=1` (a gated loopback process). A redeploy alone
+  does not change this; the gate does.
+
+The wizard fails closed on either gap; it never falls back to the CLI, because
+a marketplace install is not a source checkout. Operators with a checkout can
+run `python -m convoy preflight` for the card that names which gap is which.

@@ -1,8 +1,13 @@
 """Fail-closed preflight for the @convoy wizard.
 
 The wizard may only drive verbs the live MCP endpoint actually lists. It never
-freezes a menu (PR23) and never assumes a redeploy will fix a gap: a verb the
-packaged server does not register either is CLI-only and the card says so.
+freezes a menu (PR23) and never assumes a redeploy will fix a gap. Each missing
+verb is classified from the packaged server's own registry, so the card says
+WHICH gap it is: `redeploy` (registered on main, the live deploy lags),
+`write-gated` (registered, but tools/list hides it until
+CONVOY_MCP_WRITE_TOOLS=1 on that deploy), or `not-registered` (no MCP tool on
+main either; needs a server commit). There is no CLI fallback: a marketplace
+install is not a source checkout.
 """
 from __future__ import annotations
 
