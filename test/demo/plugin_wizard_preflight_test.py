@@ -37,13 +37,12 @@ class WizardPreflight(unittest.TestCase):
         packaged = {t["name"] for t in TOOLS}
         for verb, remedy in card["remedy"].items():
             self.assertEqual(remedy, REMEDY_REDEPLOY if verb in packaged else REMEDY_CLI_ONLY, verb)
-        # graph is registered on main: a redeploy fixes it. choices/inbox/join/
-        # launch/seat have no MCP tool on main: honesty says cli-only.
-        self.assertEqual(card["remedy"]["graph"], REMEDY_REDEPLOY)
-        for verb in ("choices", "inbox", "join", "launch", "seat"):
-            self.assertEqual(card["remedy"][verb], REMEDY_CLI_ONLY)
-        self.assertIn("python -m convoy --root <root>", card["ask"])
+        # All required wizard verbs are now packaged MCP tools on main, so a
+        # lagging public tools/list is a redeploy problem for each one.
+        for verb in REQUIRED_WIZARD_VERBS:
+            self.assertEqual(card["remedy"][verb], REMEDY_REDEPLOY)
         self.assertIn("redeploy", card["ask"])
+        self.assertNotIn("cli-only", card["ask"])
 
     def test_listed_is_only_what_live_returned_never_padded(self):
         card = preflight(["roster", "roster", "glance"])
@@ -83,7 +82,7 @@ class WizardPreflight(unittest.TestCase):
         self.assertEqual(rc, 1)
         card = json.loads(out.getvalue())
         self.assertEqual(card["status"], "RED")
-        self.assertEqual(card["remedy"]["seat"], REMEDY_CLI_ONLY)
+        self.assertEqual(card["remedy"]["seat"], REMEDY_REDEPLOY)
 
 
 if __name__ == "__main__":
