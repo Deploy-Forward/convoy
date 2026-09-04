@@ -1,21 +1,26 @@
 # E2E definition of done — plugin-finalize (g2)
 
-Dated snapshot: **2026-09-04T16:09Z**. Neuron: grok-2. Branch tip:
+Dated snapshot: **2026-09-04T16:09Z**. Neuron: grok-2. Evidence baseline:
 `b4b186d925bdb24e414cedd8abfa208d342d98b9`
 (`origin/feat/convoy-wizard-vision`, PR
 [#52](https://github.com/Deploy-Forward/convoy/pull/52)).
 
 This file is evidence, not a frozen tool menu. Live names below were read from
 `https://convoy.bot/mcp` in this run. Do not copy them forward as a catalog.
+This document landed later at `7cb25c28761f4bcf59ebf9ac1ba53257c355ca8e`;
+neither SHA is the moving PR tip. Record and retest the final reviewed SHA
+before pinning or deploying.
 
 ## Verdict board
 
 | Gate | Color | Evidence |
 |---|---|---|
-| Pack files vs xAI SoT (Exa layout) | **GREEN** | `.grok-plugin/plugin.json` + `.mcp.json` (`type: http`, `url: https://convoy.bot/mcp`) on PR #52 tip; pack tests pass |
-| Wizard + Gate 0 + security on loopback | **GREEN** | `test/run.py` suite on this tip (see Tests) |
+| Pack files vs xAI SoT (Exa layout) | **GREEN** | `.grok-plugin/plugin.json` + `.mcp.json` (`type: http`, `url: https://convoy.bot/mcp`) at evidence baseline; pack tests pass |
+| Wizard + Gate 0 + security on loopback | **GREEN** | `test/run.py` suite at evidence baseline (see Tests) |
 | Public `https://convoy.bot/mcp` Gate 0 | **RED** | live `tools/list` returned **13** names; `python -m convoy preflight` exit 1 |
-| Worker / Python origin redeploy | **RED** | no Wrangler/Cloudflare API credentials; no Windows origin host access (see Blockers) |
+| Python origin redeploy | **RED** | no Windows origin host access or supervisor path (see Blockers) |
+| Worker deploy | **NOT RUN** | live route already matches `MCP_ORIGIN=https://convoy.bot`; Worker deploy is conditional on Worker-input changes |
+| Public security parity | **RED** | stale live origin still lists `onboard`, which current `_WRITE_TOOLS` must hide publicly |
 | xai-org/plugin-marketplace listing | **RED** (PR open, not merged) | [#560](https://github.com/xai-org/plugin-marketplace/pull/560) pins `b4b186d925bdb24e414cedd8abfa208d342d98b9`; `mergeable_state=blocked` (owners/CI) |
 
 Public Gate 0 stays RED until a *fresh* `tools/list` against
@@ -101,7 +106,7 @@ the Windows connector, and/or (b) `CLOUDFLARE_API_TOKEN` + account for a
 Worker-only change. Then follow `docs/deploy-convoy-bot-mcp.md`. Keep
 `CONVOY_MCP_WRITE_TOOLS` unset on the internet-facing process.
 
-## Tests (this worktree, tip `b4b186d`)
+## Tests (evidence baseline `b4b186d`)
 
 Targeted Gate 0 / pack / security modules, 2026-09-04T16:07Z: **55 tests, OK**.
 
@@ -139,7 +144,7 @@ Official SoT: https://github.com/xai-org/plugin-marketplace
 
 Re-pin after #52 merges onto `main` if that commit is not this SHA.
 
-## What GREEN public Gate 0 would take
+## Production redeploy DoD (public wizard Gate 0 remains RED)
 
 1. Restart the Python origin on this SHA (or later #52 tip).
 2. Confirm loopback `http://127.0.0.1:8788/mcp` `tools/list` matches the
@@ -154,4 +159,7 @@ Re-pin after #52 merges onto `main` if that commit is not this SHA.
    `CONVOY_MCP_WRITE_TOOLS=1` whose live `tools/list` contains every
    `REQUIRED_WIZARD_VERBS` name.
 
-Until step 3 is captured from production, public Gate 0 is RED.
+After step 3, public Gate 0 is still expected RED: the capture proves the
+origin update and public security parity, not wizard readiness. Wizard GREEN
+requires an authenticated/gated endpoint whose fresh list contains every
+`REQUIRED_WIZARD_VERBS` name.
