@@ -283,16 +283,17 @@ This repo includes a Cloudflare Worker config that serves the landing page/stati
 - Config: `wrangler.jsonc`
 - Worker entry: `workers-site.mjs`
 - Static assets directory: `src/convoy/site`
+- Production runbook: [`docs/deploy-convoy-bot-mcp.md`](docs/deploy-convoy-bot-mcp.md)
 
 Routing behavior:
 
 - `/mcp` and `/mcp/*` are proxied byte-for-byte to `MCP_ORIGIN` (the current Python MCP origin).
 - all other paths are served from Worker static assets (`env.ASSETS.fetch(request)`).
 
-Deploy steps (from an authenticated environment):
-
-1. Set `MCP_ORIGIN` in `wrangler.jsonc` (or with environment-specific vars) to the current Python MCP origin URL.
-2. Run `wrangler deploy`.
-3. Attach the `convoy.bot/*` route to this Worker in Cloudflare.
-
-This repo does not assume that Cloudflare Worker routing is live until those steps are completed.
+Production currently uses a Worker Route on `convoy.bot/*`,
+`MCP_ORIGIN=https://convoy.bot`, and a proxied Cloudflare Tunnel whose ingress
+is the separate Python process on `127.0.0.1:8788`. A Worker deploy cannot
+update that process. Follow the runbook to restart and prove the Python origin
+first, then deploy the Worker only when its code/config/assets changed. Public
+Gate 0 remains RED when the write gate is correctly closed; do not claim GREEN
+from an updated build stamp or remembered tool count.
