@@ -1,8 +1,8 @@
 # xai-org/plugin-marketplace PR body (convoy)
 
 Official SoT: https://github.com/xai-org/plugin-marketplace
-Pin (PR [#52](https://github.com/Deploy-Forward/convoy/pull/52) tip):
-`b4b186d925bdb24e414cedd8abfa208d342d98b9`
+Pin (reviewed pack commit on PR [#52](https://github.com/Deploy-Forward/convoy/pull/52)):
+`b4030e4bac62807115fac1d787e33543d7c1218c`
 
 Opened: https://github.com/xai-org/plugin-marketplace/pull/560
 (`ruffinellimarco:add-convoy-plugin` @ `f3579ac4311c22f9e9439b81e542cd2183556402`,
@@ -28,7 +28,7 @@ railway / stripe):
   "source": {
     "source": "url",
     "url": "https://github.com/Deploy-Forward/convoy.git",
-    "sha": "b4b186d925bdb24e414cedd8abfa208d342d98b9",
+    "sha": "b4030e4bac62807115fac1d787e33543d7c1218c",
     "path": "plugin/convoy"
   },
   "homepage": "https://convoy.bot",
@@ -46,7 +46,7 @@ python3 scripts/generate-plugin-index.py --check
 ```
 
 The SHA is a public commit on `feat/convoy-wizard-vision` (reachable:
-`git fetch https://github.com/Deploy-Forward/convoy.git b4b186d925bdb24e414cedd8abfa208d342d98b9`
+`git fetch https://github.com/Deploy-Forward/convoy.git b4030e4bac62807115fac1d787e33543d7c1218c`
 succeeded in this run). Re-pin after #52 merges if `main` is a different SHA.
 
 ## PR title
@@ -70,7 +70,7 @@ Run these locally before opening the PR — they're exactly what CI checks:
 
 - Plugin name: convoy
 - Type: remote source
-- Source URL + pinned SHA (remote): https://github.com/Deploy-Forward/convoy.git @ `b4b186d925bdb24e414cedd8abfa208d342d98b9` path `plugin/convoy`
+- Source URL + pinned SHA (remote): https://github.com/Deploy-Forward/convoy.git @ `b4030e4bac62807115fac1d787e33543d7c1218c` path `plugin/convoy`
 - Homepage: https://convoy.bot
 
 Adds **convoy** as a third-party remote listing, same shape as Exa
@@ -90,9 +90,10 @@ README and skill, not a silent enable.
 - [x] The `source` repo is published under our official org (or I've explained why not below).
 
 Source org: [Deploy-Forward/convoy](https://github.com/Deploy-Forward/convoy)
-(MIT). Pack path: `plugin/convoy`. SHA is PR
-[#52](https://github.com/Deploy-Forward/convoy/pull/52) tip
-`b4b186d925bdb24e414cedd8abfa208d342d98b9`. Re-pin after merge if needed.
+(MIT). Pack path: `plugin/convoy`. SHA is the reviewed pack commit on PR
+[#52](https://github.com/Deploy-Forward/convoy/pull/52)
+`b4030e4bac62807115fac1d787e33543d7c1218c`. Re-pin after #52 merges onto
+`main` if that commit is not the reviewed pack SHA.
 
 ## Checklist
 
@@ -132,7 +133,7 @@ Source org: [Deploy-Forward/convoy](https://github.com/Deploy-Forward/convoy)
 
 ```json
 "convoy": {
-  "sha": "b4b186d925bdb24e414cedd8abfa208d342d98b9",
+  "sha": "b4030e4bac62807115fac1d787e33543d7c1218c",
   "version": "0.1.0",
   "components": {
     "mcpServers": [
@@ -164,7 +165,7 @@ python3 scripts/generate-plugin-index.py
 python3 scripts/validate-catalog.py
 python3 scripts/generate-plugin-index.py --check
 git add .grok-plugin/marketplace.json .grok-plugin/plugin-index.json
-git commit -m "Add convoy plugin (Deploy-Forward/convoy @ b4b186d925bdb24e414cedd8abfa208d342d98b9)"
+git commit -m "Add convoy plugin (Deploy-Forward/convoy @ b4030e4bac62807115fac1d787e33543d7c1218c)"
 git push -u origin add-convoy-plugin
 gh pr create --repo xai-org/plugin-marketplace --title "Add convoy plugin (remote source, Deploy-Forward/convoy)" --body-file - <<'EOF'
 # paste PR body
