@@ -94,7 +94,11 @@ HARNESSES = tuple((row["id"], str(row.get("name") or row["id"])) for row in harn
 # only drain is gated, inside the handler, like resume go=true.
 # onboard joined (2026-09-04, item D): it binds the thread (writes .convoy/)
 # and, given a URL, SPAWNS git clone. clone and mint spawn git outright.
-_WRITE_TOOLS = frozenset({"stamp", "note", "seat", "join", "launch", "onboard", "clone", "mint"})
+# repos joined after review the same day: `gh repo list` runs as whoever is
+# logged in on the MCP HOST, so on a public deploy it could only hand the
+# operator's inventory (private names included) to strangers and spend
+# their API quota. It is the conductor's account; the gate says so.
+_WRITE_TOOLS = frozenset({"stamp", "note", "seat", "join", "launch", "onboard", "clone", "mint", "repos"})
 
 
 def _write_tools_enabled() -> bool:
@@ -178,13 +182,14 @@ TOOLS: list[dict[str, Any]] = [
             required=["to"],
         ),
     },
-    # The repository step (2026-09-04, item D). repos is a public read: names
-    # and URLs from `gh repo list`, never a token, and a missing gh is an
-    # install hint rather than a guessed list. clone and mint spawn git, so
-    # they sit behind the write gate with launch and are hidden publicly.
+    # The repository step (2026-09-04, item D). repos reads names and URLs
+    # from `gh repo list` as the MCP host's login, never a token, and a
+    # missing gh is an install hint rather than a guessed list. It sits
+    # behind the write gate with clone and mint (which spawn git): the
+    # inventory is the conductor's, so it is hidden publicly.
     {
         "name": "repos",
-        "description": "Read-only: the user's GitHub repositories via `gh repo list` on the MCP process PATH (name, url, private, updated_at). gh absent is ok=false with an install hint and repos null; never a remembered list, never a token.",
+        "description": "Read-only: the GitHub repositories of the gh login on the MCP host (the conductor's account, not the caller's) via `gh repo list` on the process PATH (name, url, private, updated_at). Write gate: it discloses that inventory. gh absent is ok=false with an install hint and repos null; never a remembered list, never a token.",
         "inputSchema": _schema({"limit": {"type": "integer", "default": 30}}),
     },
     {
@@ -549,6 +554,9 @@ def _call_tool(root: Path, name: str, arguments: dict[str, Any] | None) -> dict[
             github=None if args.get("github") is None else _opt_bool(args, "github", False),
         )
     if name == "repos":
+        if not _write_tools_enabled():
+            # Refused BEFORE gh runs: no rows, null not [], nothing spawned.
+            return {"ok": False, "gh_present": None, "repos": None, "count": None, "error": _gate_text("repos")}
         limit = args.get("limit")
         return list_repos(limit=int(limit) if isinstance(limit, (int, float)) and not isinstance(limit, bool) else 30)
     if name == "clone":

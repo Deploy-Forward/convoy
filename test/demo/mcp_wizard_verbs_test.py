@@ -103,11 +103,13 @@ class McpWizardVerbs(unittest.TestCase):
         # verbs stay listed everywhere.
         # onboard moved to the hidden side 2026-09-04 (item D): it binds the
         # thread and, given a URL, spawns git clone. A public deploy that
-        # listed it would promise a write it must not perform.
+        # listed it would promise a write it must not perform. repos followed
+        # after review: gh runs as the MCP host's login, so a public repos
+        # could only list the operator's inventory to strangers.
         names = {t["name"] for t in _rpc(self.mcp, "tools/list")["result"]["tools"]}
-        for hidden in ("seat", "join", "launch", "onboard"):
+        for hidden in ("seat", "join", "launch", "onboard", "repos"):
             self.assertNotIn(hidden, names, hidden + " must not be promised on a public process")
-        for public in ("choices", "neurons", "inbox", "graph", "repos", "bring_up", "send"):
+        for public in ("choices", "neurons", "inbox", "graph", "bring_up", "send"):
             self.assertIn(public, names)
 
     # 2a. read-only verbs answer on a public process

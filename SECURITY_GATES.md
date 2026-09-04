@@ -25,7 +25,7 @@ contract implemented to fail closed on public MCP deploys.
 
 ### Write-gated verbs
 
-`_WRITE_TOOLS = {"stamp", "note", "seat", "join", "launch", "onboard", "clone", "mint"}`
+`_WRITE_TOOLS = {"stamp", "note", "seat", "join", "launch", "onboard", "clone", "mint", "repos"}`
 
 - Public process (gate closed): these verbs are hidden from `tools/list`.
 - Gated/loopback process (`CONVOY_MCP_WRITE_TOOLS=1`): verbs are listed and
@@ -34,15 +34,19 @@ contract implemented to fail closed on public MCP deploys.
   binds the thread (writes `.convoy/`) and, given a URL, spawns `git clone`;
   clone and mint spawn git outright. Before this, onboard was listed and
   mutating on the public wire.
+- `repos` joined the same day after review: `gh repo list` runs as whoever is
+  logged in on the MCP host, so a public `repos` could only disclose the
+  operator's inventory (private names included) and spend their API quota.
+  It reads, but what it reads is the conductor's.
 
 ### Public list behavior (truthful Gate 0 signal)
 
 - Public `tools/list` **must hide**: `seat`, `join`, `launch`, `onboard`,
-  `clone`, `mint`.
+  `clone`, `mint`, `repos`.
 - Public `tools/list` **must keep** read-only verbs listed (including `inbox`
-  read mode and `repos`), so the wire truthfully reflects what is usable
-  without mutation. `repos` lists names and URLs from `gh repo list`; a
-  missing gh is an install hint, never a remembered list.
+  read mode), so the wire truthfully reflects what is usable without
+  mutation. `repos` lists names and URLs from `gh repo list`; a missing gh is
+  an install hint, never a remembered list.
 
 ### Handler-level refusal behavior
 
@@ -51,6 +55,9 @@ When the write gate is closed:
 - `seat` / `join` refuse before any mutation.
 - `launch` refuses before spawn and returns `spawned: false`.
 - `clone` / `mint` refuse before git runs (`cloned: false`, `worktrees: []`).
+- `repos` refuses before gh runs (`repos: null`, `count: null`, never `[]`/`0`).
+- `clone` refuses a URL starting with `-` and passes `--` before the URL, so
+  `--upload-pack=...` can never reach git as an option.
 - `inbox` with `drain=true` refuses before drain.
 - Refusal text names `CONVOY_MCP_WRITE_TOOLS` and does not claim action.
 

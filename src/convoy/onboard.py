@@ -209,10 +209,9 @@ def onboard(
 
     path_card = ensure_interactive_path()
     convoy_id, bound_thread, bind_status = _thread_bind(target_root, thread)
-    # A URL is a GitHub answer in itself; otherwise record only what was said.
-    if repo is not None or github is not None:
-        set_github(target_root, True if repo is not None else bool(github))
     if bind_status.get("error"):
+        # Refused: this root belongs to another thread. Nothing below is
+        # written onto it, the GitHub answer included (review 2026-09-04).
         return {
             "ok": False,
             "error": str(bind_status["error"]),
@@ -222,6 +221,9 @@ def onboard(
             "root": str(target_root),
             "path": path_card,
         }
+    # A URL is a GitHub answer in itself; otherwise record only what was said.
+    if repo is not None or github is not None:
+        set_github(target_root, True if repo is not None else bool(github))
     if declared_checkout and convoy_id is None:
         convoy_id = ensure_id(target_root)
 
