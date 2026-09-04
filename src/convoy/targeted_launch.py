@@ -27,7 +27,8 @@ from .bringup import (
 )
 from .consent import consume_consent, request_consent
 from .convoy import list_seats, update_seat
-from .harness_contract import harness_entries, harness_exec
+from .harness_contract import effort_contract, harness_entries, harness_exec, model_catalog, where_options
+from .inbox import connect_mode
 
 Which = Callable[[str], str | None]
 Runner = Callable[[list[str]], dict[str, Any]]
@@ -257,6 +258,10 @@ def launch_seat(
         row = _seat_for_launch(root, session_id)
         if resume_target(row) is not None or not str(row.get("boot_prompt") or "").strip():
             raise ValueError("refuse launch: chair is not a fresh join/swap")
+        if row.get("where") == "cloud":
+            # A pane is a local process; splitting one for a cloud chair would
+            # label a local session "cloud". No cloud launcher exists (2026-09-04).
+            raise ValueError("refuse launch: chair " + session_id + " is where=cloud and no cloud launcher exists; a pane is not a cloud session")
         worktree = str(row.get("worktree") or "").strip()
         if not worktree:
             raise ValueError("refuse targeted launch without a worktree")
@@ -382,6 +387,7 @@ def launch_choices(
             "to": row.get("to"),
             "model": row.get("model"),
             "title": row.get("title"),
+            "where": row.get("where"),
             "worktree": row.get("worktree"),
         }
         for row in rows
@@ -390,12 +396,30 @@ def launch_choices(
     for entry in harness_entries():
         executable = harness_exec(str(entry.get("id") or ""))
         path = which(executable)
+        catalog = model_catalog(str(entry.get("id") or ""))
         harnesses.append(
             {
                 "id": entry.get("id"),
                 "name": entry.get("name"),
                 "installed": bool(path),
                 "executable": str(path) if path else None,
+                # Per-harness effort straight from harness_effort.json so a
+                # host on the wire can render harness -> effort without the
+                # file; null where the contract is silent.
+                "effort": effort_contract(str(entry.get("id") or "")),
+                # Same for the model catalog: null (with the evidence saying
+                # why) wherever no local --help enumerates a closed list.
+                "models": catalog["models"],
+                "models_evidence": catalog["evidence"],
+                # local always; cloud offered only where the contract quotes
+                # an interactive attach, else {offered: false, mode, evidence}
+                # so the card can say why before a join is refused.
+                "where": where_options(str(entry.get("id") or "")),
+                # How a launched neuron receives (inbox.HARNESS_INBOX): hook,
+                # native-queue-or-cli-drain, or cli-drain. A label the card
+                # shows so a hookless harness is never sold as auto-connecting;
+                # the seated row, not this word, is the connection.
+                "connect_mode": connect_mode(str(entry.get("id") or "")),
             }
         )
 

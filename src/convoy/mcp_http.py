@@ -20,17 +20,22 @@ from typing import Any
 from urllib.parse import urlparse
 
 from .bringup import bring_up, ensure_interactive_path, hide_windows, live_applier, live_runner, terminals
+from .card import CARD_OUTPUT_SCHEMA, build_card
 from .harness_contract import (
     canonical_harness_id,
     contract_path,
+    effort_contract,
     harness_entries,
     harness_exec,
     load_harness_contract,
+    model_catalog,
     usage_probe_key,
     usage_remaining_null_until_live_probe,
+    where_options,
 )
 from .install import install as install_harness
 from .onboard import onboard as run_onboard
+from .repo import checkout_path_for, clone as clone_repo, is_repo_url, list_repos, mint_worktrees
 from .context import pack
 from .convoy import list_seats, read_thread
 from .activity import neuron_activity
@@ -38,7 +43,9 @@ from .convoy import seat as seat_chair
 from .glance import build_glance
 from .graph import build_graph, neighborhood
 from .inbox import drain as drain_inbox, pending as pending_inbox
-from .lifecycle import join as join_chair
+from .lifecycle import join as join_chair, seated_ack
+from .consent import grant_consent
+from .crew import await_seated, crew as crew_chairs
 from .targeted_launch import active_pane_runner, launch_choices, launch_seat
 from .graph_html import resume_neuron
 from .index import index_path, list_threads
@@ -88,11 +95,53 @@ HARNESSES = tuple((row["id"], str(row.get("name") or row["id"])) for row in harn
 # Gate 0 goes RED there and stops with an install card - fail-closed, which is
 # the behaviour the wizard promises. inbox stays listed: its read is public;
 # only drain is gated, inside the handler, like resume go=true.
-_WRITE_TOOLS = frozenset({"stamp", "note", "seat", "join", "launch"})
+# onboard joined (2026-09-04, item D): it binds the thread (writes .convoy/)
+# and, given a URL, SPAWNS git clone. clone and mint spawn git outright.
+# repos joined after review the same day: `gh repo list` runs as whoever is
+# logged in on the MCP HOST, so on a public deploy it could only hand the
+# operator's inventory (private names included) to strangers and spend
+# their API quota. It is the conductor's account; the gate says so.
+# crew / seated / consent joined 2026-09-04 (item E): crew mints worktrees,
+# joins N chairs and may spawn the window; seated stamps a chair's proof of
+# life; consent mints a one-time grant. await_seated only reads, but it holds
+# the request thread up to its timeout, which a public endpoint must not offer.
+_WRITE_TOOLS = frozenset({"stamp", "note", "seat", "join", "launch", "onboard", "clone", "mint", "repos",
+                          "crew", "seated", "consent", "await_seated"})
+AWAIT_SEATED_MAX_S = 600.0
 
 
 def _write_tools_enabled() -> bool:
     return os.environ.get("CONVOY_MCP_WRITE_TOOLS", "").strip() == "1"
+
+
+def _listed_tools() -> list[dict[str, Any]]:
+    """What tools/list answers on THIS process: everything behind the gate,
+    the read-only verbs otherwise. card scores its preflight on the same list."""
+    return TOOLS if _write_tools_enabled() else [t for t in TOOLS if t["name"] not in _WRITE_TOOLS]
+
+
+# No enum here on purpose: the vocabulary is per harness (grok xhigh, codex
+# extra-high, pi --thinking levels). The handler refuses a value the named
+# harness does not take and the error lists that harness's real keys.
+_EFFORT_ARG = {
+    "type": "string",
+    "description": "declared effort, validated for the named harness; valid keys are choices.harnesses[].effort.keys, refused otherwise naming them. Reaches argv only where effort.applied is true.",
+}
+# Model is checked the same way, against choices.harnesses[].models. That
+# catalog is null wherever no local --help enumerates a closed list (live
+# 2026-09-04: every harness), and null accepts anything — a field, not a menu.
+_MODEL_ARG = {
+    "type": "string",
+    "description": "declared model, passed through as typed when choices.harnesses[].models is null; when that catalog is a list, a model outside it is refused naming the list.",
+}
+# where IS a closed axis, so an enum is honest here. cloud is refused per
+# harness unless choices.harnesses[].where.cloud.offered is true (only an
+# evidenced interactive attach; live 2026-09-04: claude --cloud).
+_WHERE_ARG = {
+    "type": "string",
+    "enum": ["local", "cloud"],
+    "description": "local (default) or cloud. cloud is accepted only where choices.harnesses[].where.cloud.offered is true, refused otherwise naming that harness's cloud mode and evidence. A cloud chair has no worktree, and no launcher exists for it yet.",
+}
 
 _SITE_ASSETS: dict[str, tuple[str, str]] = {
     "/": ("index.html", "text/html; charset=utf-8"),
@@ -133,7 +182,7 @@ TOOLS: list[dict[str, Any]] = [
     },
     {
         "name": "onboard",
-        "description": "First-run after MCP attach: user names harnesses they already have. Checks PATH honestly per named harness only; no silent additions. Refuses wrappers (gemini-cli, grok-cli, ultracode-shim, ola-brain). Optional thread + checkout_root bind without stomping an existing different thread. Missing harnesses point to install opt-in when a vendor installer is cataloged; no installer fetch here.",
+        "description": "First-run after MCP attach: user names harnesses they already have (write gate: it binds the thread and may clone). Checks PATH honestly per named harness only; no silent additions. Refuses wrappers (gemini-cli, grok-cli, ultracode-shim, ola-brain). Optional thread + checkout_root bind without stomping an existing different thread; a git URL as checkout_root is cloned once into the Convoy-owned checkout root and reused after. Missing harnesses point to install opt-in when a vendor installer is cataloged; no installer fetch here.",
         "inputSchema": _schema(
             {
                 "to": {
@@ -142,9 +191,35 @@ TOOLS: list[dict[str, Any]] = [
                     "description": "Named harness ids you already have (grok, claude, codex, cursor-agent, agy/antigravity, hermes, pi)",
                 },
                 "thread": {"type": "string"},
-                "checkout_root": {"type": "string"},
+                "checkout_root": {"type": "string", "description": "an existing path, or a git URL (https://... or git@...) cloned under <CONVOY_HOME>/checkouts/<owner>/<repo>"},
+                "github": {"type": "boolean", "description": "the wizard's GitHub? answer, recorded on the bind as yes|no; a URL records yes by itself; omitted stays null"},
             },
             required=["to"],
+        ),
+    },
+    # The repository step (2026-09-04, item D). repos reads names and URLs
+    # from `gh repo list` as the MCP host's login, never a token, and a
+    # missing gh is an install hint rather than a guessed list. It sits
+    # behind the write gate with clone and mint (which spawn git): the
+    # inventory is the conductor's, so it is hidden publicly.
+    {
+        "name": "repos",
+        "description": "Read-only: the GitHub repositories of the gh login on the MCP host (the conductor's account, not the caller's) via `gh repo list` on the process PATH (name, url, private, updated_at). Write gate: it discloses that inventory. gh absent is ok=false with an install hint and repos null; never a remembered list, never a token.",
+        "inputSchema": _schema({"limit": {"type": "integer", "default": 30}}),
+    },
+    {
+        "name": "clone",
+        "description": "git clone one URL into the Convoy-owned checkout root, <CONVOY_HOME>/checkouts/<owner>/<repo> (write gate: this SPAWNS git). Refuses a non-empty dest. .convoy/ and thread.md go into the clone's .git/info/exclude so the bind is never a tracked file of the user's repo.",
+        "inputSchema": _schema({"url": {"type": "string"}}, required=["url"]),
+    },
+    {
+        "name": "mint",
+        "description": "git worktree add one worktree per seat, DERIVED from the checkout: sibling <checkout>-wt-<name> on branch convoy/<name> (write gate: this SPAWNS git). names defaults to neuron-1..n; an existing sibling is reused; stops at the first git failure naming it.",
+        "inputSchema": _schema(
+            {"checkout": {"type": "string", "description": "path of a git checkout, e.g. onboard's root"},
+             "n": {"type": "integer"},
+             "names": {"type": "array", "items": {"type": "string"}}},
+            required=["checkout", "n"],
         ),
     },
     {
@@ -305,6 +380,17 @@ TOOLS: list[dict[str, Any]] = [
         "description": "Read-only: installed harnesses, known git worktrees, current seats, and whether this host can split an active pane. The wizard renders ONLY what this returns; never a remembered menu. Never a token.",
         "inputSchema": _schema({}),
     },
+    # ONE card (2026-09-04, item F): the @convoy wizard's single read. Rows are
+    # choices rows plus the usage probe glance runs and a crew attach template;
+    # preflight is this server's own tools/list scored by wizard_preflight, so
+    # the card carries its Gate 0 verdict. outputSchema is declared so a host
+    # can render structuredContent as a card without parsing the text copy.
+    {
+        "name": "card",
+        "description": "Read-only: the one card a host renders for @convoy - header, tagline, summary (installed harnesses, seats, thread, GitHub? answer), this server's own wizard preflight verdict, repo (checkout, worktrees), and one row per harness in contract order: where offered, installed, USAGE REMAINING (number|object|null from the live probe, never an invented 0), models catalog or null, effort keys, connect_mode, and attach (a crew call for that harness). Never a token, never a resume id, never a boot prompt.",
+        "inputSchema": _schema({}),
+        "outputSchema": CARD_OUTPUT_SCHEMA,
+    },
     {
         "name": "neurons",
         "description": "Read-only: who is active on the bound thread and the command that messages each. Bus recency first (a chair that authored a row is alive whatever the process table says), process evidence second. A chair Convoy cannot place is never reported dead. Never a token.",
@@ -325,8 +411,8 @@ TOOLS: list[dict[str, Any]] = [
         "inputSchema": _schema(
             {"to": {"type": "string", "description": "harness: grok, claude, codex, cursor-agent, agy, hermes, pi"},
              "session_id": {"type": "string", "description": "chair id; identity of the seat"},
-             "worktree": {"type": "string"}, "model": {"type": "string"},
-             "title": {"type": "string"}, "effort": {"type": "string"}},
+             "worktree": {"type": "string"}, "model": _MODEL_ARG,
+             "title": {"type": "string"}, "effort": _EFFORT_ARG, "where": _WHERE_ARG},
             required=["to", "session_id"],
         ),
     },
@@ -335,8 +421,8 @@ TOOLS: list[dict[str, Any]] = [
         "description": "Add a NEW chair: seat + boot prompt + join row with a minted inbox token (write gate). Refuses a chair id that already exists and a worktree another chair holds (C8). Does not launch; call launch for that.",
         "inputSchema": _schema(
             {"to": {"type": "string"}, "session_id": {"type": "string"}, "worktree": {"type": "string"},
-             "model": {"type": "string"}, "title": {"type": "string"}, "effort": {"type": "string"},
-             "author": {"type": "string"}},
+             "model": _MODEL_ARG, "title": {"type": "string"}, "effort": _EFFORT_ARG,
+             "where": _WHERE_ARG, "author": {"type": "string"}},
             required=["to"],
         ),
     },
@@ -348,6 +434,41 @@ TOOLS: list[dict[str, Any]] = [
              "consent": {"type": "string"}},
             required=["seat"],
         ),
+    },
+    # N neurons -> N chairs -> ONE window -> observed connects (2026-09-04, item E).
+    # crew replaces the join/launch/seat/bring_up walk that left chairs 2..N
+    # without a boot prompt: every chair it mints carries one. seated is the
+    # proof-of-life stamp a neuron makes from its pane by CLI; on the wire it
+    # is how a neuron that attached by MCP (a cloud chair) proves the same.
+    {
+        "name": "crew",
+        "description": "Validate N seats (where/model/effort, refused in the harness's own words before any write), mint one worktree per local seat from the checkout, join every chair with a boot prompt + token, and bring the crew up ONCE: one new terminal window with N panes (write gate: this writes chairs, runs git and, with launch=true, SPAWNS). launched is not connected: the card's `seated` snapshot says pending until await_seated observes each chair's ack. connect_mode per seat says how that harness receives (hook | native-queue-or-cli-drain | cli-drain); a cli-drain harness is never auto-connecting.",
+        "inputSchema": _schema(
+            {"seats": {"type": "array", "description": "one entry per neuron",
+                       "items": _schema({"harness": {"type": "string"}, "model": _MODEL_ARG, "effort": _EFFORT_ARG,
+                                         "where": _WHERE_ARG, "title": {"type": "string", "description": "seat name; default <harness>-<n>"}},
+                                        required=["harness"])},
+             "checkout": {"type": "string", "description": "git checkout to mint worktrees from; default the bound root"},
+             "thread": {"type": "string", "description": "must match the bound thread when given"},
+             "launch": {"type": "boolean", "default": False, "description": "false writes chairs + worktrees and shows the argv; true spawns the window once"}},
+            required=["seats"],
+        ),
+    },
+    {
+        "name": "seated",
+        "description": "Proof-of-life: the chair's new occupant echoes the token from its boot prompt (write gate: stamps kind=seated and clears the one-shot boot prompt). From a pane this is `convoy seated`; over the wire it is how a neuron attached by MCP proves it sat down. Never returns the token.",
+        "inputSchema": _schema({"seat": {"type": "string"}, "token": {"type": "string"}}, required=["seat", "token"]),
+    },
+    {
+        "name": "consent",
+        "description": "Grant a prior consent request after the user explicitly approved it (write gate: mints a one-time, action-scoped grant). Pass the returned consent only to the exact pending command (launch).",
+        "inputSchema": _schema({"grant": {"type": "string", "description": "request_id from the awaiting-user-consent card"}}, required=["grant"]),
+    },
+    {
+        "name": "await_seated",
+        "description": "Observe, do not trust: polls kind=seated rows for the named chairs until each has acked with the token its join/swap minted, or timeout (seconds, max 600; 0 is one snapshot). Per chair connected | pending | stale (an ack citing a token this mint never issued) and the seconds waited. Write gate: it holds the request up to timeout. Never a token.",
+        "inputSchema": _schema({"seats": {"type": "array", "items": {"type": "string"}},
+                                "timeout": {"type": "number", "default": 120}}, required=["seats"]),
     },
 ]
 
@@ -369,11 +490,12 @@ def _seat_for(seats: list[dict[str, Any]], hid: str) -> dict[str, Any] | None:
 
 
 def _roster_contract_view() -> dict[str, Any]:
+    # effort lives on each agent row (effort_contract): the global
+    # effort_types echo read as one menu for every harness and it never was.
     contract = load_harness_contract()
     return {
         "path": contract_path(),
         "schema_version": contract.get("schema_version"),
-        "effort_types": contract.get("effort_types"),
     }
 
 
@@ -395,7 +517,8 @@ def build_roster(root: Path) -> dict[str, Any]:
         usage_remaining = None
         availability = None
         auth = None
-        models = None
+        # the catalog is a contract fact, not a liveness fact: read it either way
+        catalog = model_catalog(hid)
         if present:
             probed = probe(usage_probe_key(hid))
             usage_remaining = normalize_usage_remaining(probed.get("usage_remaining"))
@@ -423,7 +546,10 @@ def build_roster(root: Path) -> dict[str, Any]:
             "present": present,
             "wired": wired,
             "auth": auth,
-            "models": models,
+            "models": catalog["models"],
+            "models_evidence": catalog["evidence"],
+            "effort": effort_contract(hid),
+            "where": where_options(hid),
             "availability": availability,
             "usage_remaining": usage_remaining,
             "tracking": "off",
@@ -462,12 +588,40 @@ def _opt_bool(args: dict[str, Any], key: str, default: bool) -> bool:
 
 
 def call_tool(root: Path, name: str, arguments: dict[str, Any] | None) -> dict[str, Any]:
+    card = _call_tool(root, name, arguments)
+    if not _write_tools_enabled():
+        _redact_public(name, card)
+    return card
+
+
+def _call_tool(root: Path, name: str, arguments: dict[str, Any] | None) -> dict[str, Any]:
     args = arguments if isinstance(arguments, dict) else {}
     if name == "roster":
         return build_roster(root)
     if name == "glance":
         return build_glance(root, thread=_opt_str(args, "thread"), convoy_id=_opt_str(args, "convoy_id"))
     if name == "onboard":
+        # An MCP process is bound to ONE root for its lifetime (module
+        # docstring). onboard writes the thread at the root its checkout_root
+        # resolves to, so a checkout elsewhere - a git URL, or another local
+        # path - would bind a thread this endpoint can never answer for, and
+        # every later card would describe the wrong place. Found by the e2e
+        # walk 2026-09-04: onboard returned ok=true and the server kept
+        # serving the old root. Refuse, and say where to attach instead.
+        want = _opt_str(args, "checkout_root")
+        if want:
+            try:
+                dest = checkout_path_for(want) if is_repo_url(want) else Path(want).expanduser()
+                elsewhere = dest.resolve() != Path(root).resolve()
+            except OSError:
+                elsewhere = True
+                dest = Path(want)
+            if elsewhere:
+                return {"ok": False, "root": str(root), "checkout_root": str(dest), "bound": False,
+                        "error": ("this endpoint is bound to " + str(root) + " and cannot bind a thread at "
+                                  + str(dest) + "; clone with the `clone` tool if needed, then attach a Convoy "
+                                  "endpoint whose root IS that checkout and call onboard there"),
+                        "next": "attach-endpoint-at-checkout"}
         raw_to = args.get("to")
         to: list[str] = []
         if isinstance(raw_to, list):
@@ -479,7 +633,34 @@ def call_tool(root: Path, name: str, arguments: dict[str, Any] | None) -> dict[s
             to,
             thread=_opt_str(args, "thread"),
             checkout_root=_opt_str(args, "checkout_root"),
+            github=None if args.get("github") is None else _opt_bool(args, "github", False),
         )
+    if name == "repos":
+        if not _write_tools_enabled():
+            # Refused BEFORE gh runs: no rows, null not [], nothing spawned.
+            return {"ok": False, "gh_present": None, "repos": None, "count": None, "error": _gate_text("repos")}
+        limit = args.get("limit")
+        return list_repos(limit=int(limit) if isinstance(limit, (int, float)) and not isinstance(limit, bool) else 30)
+    if name == "clone":
+        url = (_opt_str(args, "url") or "").strip()
+        if not url:
+            return {"ok": False, "cloned": False, "error": "clone requires url"}
+        if not _write_tools_enabled():
+            # Refused BEFORE git runs: nothing is spawned.
+            return {"ok": False, "url": url, "cloned": False, "error": _gate_text("clone")}
+        try:
+            return clone_repo(url, checkout_path_for(url))
+        except ValueError as e:
+            return {"ok": False, "url": url, "cloned": False, "error": str(e)}
+    if name == "mint":
+        checkout = (_opt_str(args, "checkout") or "").strip()
+        n = args.get("n")
+        if not checkout or not isinstance(n, int) or isinstance(n, bool):
+            return {"ok": False, "worktrees": [], "error": "mint requires checkout and an integer n"}
+        if not _write_tools_enabled():
+            return {"ok": False, "checkout": checkout, "worktrees": [], "error": _gate_text("mint")}
+        names = args.get("names")
+        return mint_worktrees(checkout, n, names=[str(x) for x in names] if isinstance(names, list) else None)
     if name == "terminals":
         return terminals(root, convoy_id=_opt_str(args, "convoy_id"), thread=_opt_str(args, "thread"))
     if name == "context":
@@ -561,6 +742,11 @@ def call_tool(root: Path, name: str, arguments: dict[str, Any] | None) -> dict[s
         return {"ok": True, "schema_version": SCHEMA_VERSION, **row}
     if name in ("bring_up", "open"):
         dry = _opt_bool(args, "dry_run", True)
+        # dry_run=false SPAWNS: a live wt.exe on the server host. Same class
+        # as the PR 50 launch hole; the read stays public, the spawn is gated
+        # (found by the item A verifier, 2026-09-04, pre-existing on main).
+        if not dry and not _write_tools_enabled():
+            return {"ok": False, "dry_run": False, "spawned": False, "windows": [], "error": _gate_text(name + " dry_run=false")}
         runner = None if dry else live_runner
         card = bring_up(
             root,
@@ -573,6 +759,9 @@ def call_tool(root: Path, name: str, arguments: dict[str, Any] | None) -> dict[s
     if name in ("hide", "minimize", "background"):
         dry = _opt_bool(args, "dry_run", True)
         mode = _opt_str(args, "mode") or "minimize"
+        # dry_run=false calls ShowWindow on the host's desktop. Gated like a spawn.
+        if not dry and not _write_tools_enabled():
+            return {"ok": False, "dry_run": False, "applied": False, "windows": [], "error": _gate_text(name + " dry_run=false")}
         applier = None if dry else live_applier
         card = hide_windows(
             root,
@@ -589,9 +778,19 @@ def call_tool(root: Path, name: str, arguments: dict[str, Any] | None) -> dict[s
             return {"ok": False, "error": "install requires to", "ran": False}
         dry = _opt_bool(args, "dry_run", True)
         opt_in = _opt_bool(args, "opt_in", False)
+        # A live install runs a vendor installer on the host. The catalog read
+        # (dry) stays public. A live run needs BOTH the user's opt_in and the
+        # write gate; opt_in is checked first so its refusal ("opt_in
+        # required") reads the same on every process, gated or not.
+        if not dry and not opt_in:
+            return install_harness(to, dry_run=False, opt_in=False)
+        if not dry and not _write_tools_enabled():
+            return {"ok": False, "to": to, "dry_run": False, "ran": False, "error": _gate_text("install dry_run=false")}
         return install_harness(to, dry_run=dry, opt_in=opt_in)
     if name == "choices":
         return launch_choices(root)
+    if name == "card":
+        return build_card(root, listed=[t["name"] for t in _listed_tools()])
     if name == "neurons":
         return neuron_activity(root, since=_opt_str(args, "since"))
     if name == "inbox":
@@ -621,7 +820,8 @@ def call_tool(root: Path, name: str, arguments: dict[str, Any] | None) -> dict[s
             # seat() returns the bare row and signals failure by raising, so
             # it has no ok key. Every other tool has one; give it one.
             row = seat_chair(root, to, sid, worktree=_opt_str(args, "worktree"), model=_opt_str(args, "model"),
-                             title=_opt_str(args, "title"), effort=_opt_str(args, "effort"))
+                             title=_opt_str(args, "title"), effort=_opt_str(args, "effort"),
+                             where=_opt_str(args, "where"))
             return {"ok": True, **row}
         except ValueError as e:
             return {"ok": False, "error": str(e)}
@@ -634,7 +834,8 @@ def call_tool(root: Path, name: str, arguments: dict[str, Any] | None) -> dict[s
         try:
             return join_chair(root, to, session_id=_opt_str(args, "session_id"), worktree=_opt_str(args, "worktree"),
                               model=_opt_str(args, "model"), title=_opt_str(args, "title"),
-                              effort=_opt_str(args, "effort"), author=_opt_str(args, "author"))
+                              effort=_opt_str(args, "effort"), author=_opt_str(args, "author"),
+                              where=_opt_str(args, "where"))
         except ValueError as e:
             return {"ok": False, "error": str(e)}
     if name == "launch":
@@ -648,7 +849,118 @@ def call_tool(root: Path, name: str, arguments: dict[str, Any] | None) -> dict[s
             return launch_seat(root, sid, runner=active_pane_runner, consent=_opt_str(args, "consent"))
         except ValueError as e:
             return {"ok": False, "seat": sid, "spawned": False, "error": str(e)}
+    if name == "crew":
+        seats = args.get("seats")
+        if not isinstance(seats, list) or not seats:
+            return {"ok": False, "seats": [], "launched": False, "error": "crew requires seats: a non-empty list"}
+        if not _write_tools_enabled():
+            # Refused BEFORE validation, mint or join: no chair, no git, no window.
+            return {"ok": False, "seats": [], "launched": False, "error": _gate_text("crew")}
+        launch = _opt_bool(args, "launch", False)
+        return crew_chairs(root, seats, thread=_opt_str(args, "thread"), checkout=_opt_str(args, "checkout"),
+                           runner=live_runner if launch else None)
+    if name == "seated":
+        sid = (_opt_str(args, "seat") or "").strip()
+        token = _opt_str(args, "token") or ""
+        if not sid or not token.strip():
+            return {"ok": False, "error": "seated requires seat and token"}
+        if not _write_tools_enabled():
+            return {"ok": False, "seat": sid, "error": _gate_text("seated")}
+        try:
+            row = seated_ack(root, sid, token)["row"]
+        except ValueError as e:
+            return {"ok": False, "seat": sid, "error": str(e)}
+        # the ack row carries the token it echoed; the caller supplied it, so
+        # the card answers with the fact of the row, not the token again
+        return {"ok": True, "seat": sid, "seated_at": row.get("ts"), "kind": row.get("kind")}
+    if name == "consent":
+        rid = (_opt_str(args, "grant") or "").strip()
+        if not rid:
+            return {"ok": False, "error": "consent requires grant: the request_id to approve"}
+        if not _write_tools_enabled():
+            return {"ok": False, "request_id": rid, "error": _gate_text("consent")}
+        try:
+            return grant_consent(root, rid)
+        except ValueError as e:
+            return {"ok": False, "request_id": rid, "error": str(e)}
+    if name == "await_seated":
+        seats = args.get("seats")
+        if not isinstance(seats, list) or not seats:
+            return {"ok": False, "chairs": [], "error": "await_seated requires seats: a non-empty list of chair ids"}
+        if not _write_tools_enabled():
+            return {"ok": False, "chairs": [], "error": _gate_text("await_seated")}
+        # Coerce like _opt_bool does, never default past a value the caller
+        # sent: the string "0" (what an LLM client sends for the documented
+        # snapshot) fell through to 120 real seconds (review 2026-09-04).
+        # Out-of-schema values are refused, not replaced.
+        raw = args.get("timeout")
+        if raw is None:
+            timeout = 120.0
+        elif isinstance(raw, bool) or not isinstance(raw, (int, float, str)):
+            return {"ok": False, "chairs": [], "error": "await_seated timeout must be a number of seconds, got " + repr(raw)}
+        else:
+            try:
+                timeout = float(str(raw).strip())
+            except ValueError:
+                return {"ok": False, "chairs": [], "error": "await_seated timeout must be a number of seconds, got " + repr(raw)}
+            if timeout != timeout or timeout in (float("inf"), float("-inf")):
+                return {"ok": False, "chairs": [], "error": "await_seated timeout must be finite, got " + repr(raw)}
+        try:
+            return await_seated(root, [str(s) for s in seats], timeout=min(max(timeout, 0.0), AWAIT_SEATED_MAX_S))
+        except ValueError as e:
+            return {"ok": False, "chairs": [], "error": str(e)}
     return {"ok": False, "error": "tool not found: " + name}
+
+
+_WINDOW_TOOLS = frozenset({"bring_up", "open", "terminals", "hide", "minimize", "background"})
+
+
+def _redact_public(name: str, card: Any) -> None:
+    """Two locked contracts collide on every card that names a seat. SPEC.md:56
+    makes seat.resume (the vendor session id) chip front matter for the
+    conductor; graph.py:16 says tokens never leave seats.jsonl. The write gate
+    is the arbiter: behind it (conductor-local loopback) the cards are whole;
+    on the ungated public wire a row carries only the shape graph already
+    uses, {available, for}, so a chip can still say "resumable" and nobody
+    can lift a session id off a public endpoint. glance found live 2026-09-04
+    (3b18a8e); adversarial review the same day reproduced the identical leak
+    on terminals / bring_up / open / hide windows and the resume dry read, and
+    a second one: the inbox token join/swap mint (the receiver's proof of
+    receipt) rides the kind=join feed row and the boot prompt, which is the
+    last argv element bring_up would exec. So argv takes the same shape (it
+    is a fact here, not a payload), and feed rows drop the token key the way
+    the public inbox read does. A row WITHOUT a token says available=false
+    rather than omitting the key, so redaction and absence are told apart."""
+    if not isinstance(card, dict):
+        return
+    if name == "glance":
+        by_thread = card.get("by_thread")
+        for row in (by_thread.get("seats") or []) if isinstance(by_thread, dict) else []:
+            _redact_row(row, ("resume",))
+    elif name in _WINDOW_TOOLS:
+        for row in card.get("windows") or []:
+            _redact_row(row, ("resume", "argv"))
+    elif name == "resume" and "argv" in card:
+        current = card.get("current")
+        card["argv"] = _shape(card["argv"], current.get("harness") if isinstance(current, dict) else None)
+    elif name == "feed":
+        card["events"] = [{k: v for k, v in r.items() if k != "token"} if isinstance(r, dict) else r
+                          for r in card.get("events") or []]
+
+
+def _redact_row(row: Any, keys: tuple[str, ...]) -> None:
+    if not isinstance(row, dict):
+        return
+    for key in keys:
+        # resume is always answered (absence must read as available=false);
+        # argv only where the card had one (hide windows never carry argv).
+        if key == "resume" or key in row:
+            row[key] = _shape(row.pop(key, None), row.get("to"))
+
+
+def _shape(raw: Any, harness: Any) -> dict[str, Any]:
+    present = (isinstance(raw, str) and bool(raw.strip())) or (isinstance(raw, list) and bool(raw))
+    return {"available": present, "for": harness}
 
 
 def _gate_text(verb: str) -> str:
@@ -695,8 +1007,7 @@ def handle_rpc(root: Path, msg: dict[str, Any]) -> dict[str, Any] | None:
         if method == "tools/list":
             if is_notification:
                 return None
-            listed = TOOLS if _write_tools_enabled() else [t for t in TOOLS if t["name"] not in _WRITE_TOOLS]
-            return {"jsonrpc": "2.0", "id": rpc_id, "result": {"tools": listed}}
+            return {"jsonrpc": "2.0", "id": rpc_id, "result": {"tools": _listed_tools()}}
         if method == "tools/call":
             if is_notification:
                 return None

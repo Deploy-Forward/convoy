@@ -20,19 +20,20 @@ fallback — it is the primary surface.
 1. Call `tools/list` on the live MCP endpoint.
 2. Render only what the wire returns now (names + descriptions).
 3. If a tool is missing on the wire, mark it absent instead of assuming.
-4. For write tools (`stamp`, `note`), mention the gate behavior and recommend
+4. For write-gated tools, mention `CONVOY_MCP_WRITE_TOOLS` and recommend
    CLI-on-root when the public MCP is read-only.
 5. Never copy/paste historical counts ("13 tools", "14 tools") into this file.
 
-On the wire (in the tree's MCP tool list; the live server may lag until
-redeploy): `roster`, `glance`, `onboard`, `terminals`, `context`, `send`,
-`feed`, `stamp`*, `note`*, `bring_up`/`open`, `hide`/`minimize`/`background`,
-`install`, `graph`, `panes`, `threads`, `resume` (`go=true`*). Starred tools
-sit behind the write gate. CLI-only, never on the wire: `init`, `id`, `bind`,
-`attach`, `seat`, `seats`, `join`, `swap`, `seated`, `lead`, `whoami`,
-`hook` (incl. `hook note … --as-me`), `choices`, `launch`, `consent`,
-`close`, `probe`. Render what `tools/list` returns now; do not invent a
-catalog count.
+On the wire: call `tools/list`. The packaged registry is
+`src/convoy/mcp_http.py` (`TOOLS`). A live public process can lag that
+registry (`redeploy`) or hide write tools until `CONVOY_MCP_WRITE_TOOLS=1`
+(`write-gated`, including `stamp`, `note`, `seat`, `join`, `launch`,
+`onboard`, `clone`, `mint`, `repos`, `crew`, `seated`, `consent`,
+`await_seated`). Those registered verbs are served on a gated deploy; they
+are not absent from the server. Never registered as MCP tools: `init`,
+`id`, `bind`, `attach`, `seats`, `swap`, `lead`, `whoami`, `hook` (incl.
+`hook note … --as-me`), `close`, `probe`. Render what `tools/list` returns
+now; do not invent a catalog count.
 
 ## Detect, identify, then send: `panes` and `whoami`
 
