@@ -1,0 +1,17 @@
+{
+  "name": "convoy",
+  "version": "0.1.0",
+  "description": "Orchestrate BYO AI harnesses as neurons on one Convoy thread with a live, fail-closed MCP wizard.",
+  "author": {
+    "name": "Deploy Forward",
+    "url": "https://github.com/Deploy-Forward"
+  },
+  "repository": "https://github.com/Deploy-Forward/convoy",
+  "homepage": "https://convoy.bot",
+  "license": "MIT",
+  "keywords": [
+    "convoy",
+    "convoy wizard",
+    "convoy bot"
+  ]
+}

@@ -5,9 +5,10 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from .bringup import ensure_first_run, ensure_interactive_path
-from .convoy import bind, ensure_id, read_id, read_thread
+from .convoy import bind, ensure_id, read_github, read_id, read_thread, set_github
 from .harness_contract import canonical_harness_id, harness_entries
 from .install import HARNESSES, _which
+from .repo import Runner, checkout_path_for, clone, is_repo_url
 from .usage import normalize_usage_remaining, probe
 
 REFUSED_HARNESSES = frozenset({
@@ -60,13 +61,27 @@ def _normalize_harnesses(harnesses: Iterable[str]) -> tuple[list[str], list[str]
     return _dedupe(named), _dedupe(unknown), _dedupe(refused)
 
 
-def _resolve_root(root: Path, checkout_root: str | None) -> tuple[Path, bool]:
+def _resolve_root(root: Path, checkout_root: str | None,
+                  clone_runner: Runner | None = None) -> tuple[Path, bool, dict[str, Any] | None]:
+    """A path must already exist. A URL (the wizard's 'repository path or
+    URL', SKILL.md step 2) is cloned into the Convoy-owned checkout root,
+    <CONVOY_HOME>/checkouts/<owner>/<repo>; an existing clone there is reused.
+    A failed clone raises before anything is bound."""
     if checkout_root is None:
-        return Path(root).resolve(), False
+        return Path(root).resolve(), False, None
+    if is_repo_url(checkout_root):
+        dest = checkout_path_for(checkout_root)
+        repo: dict[str, Any] = {"url": checkout_root.strip(), "dest": str(dest), "cloned": False}
+        if not (dest / ".git").exists():
+            card = clone(repo["url"], dest, runner=clone_runner)
+            if not card.get("ok"):
+                raise ValueError(str(card.get("error") or "git clone failed"))
+            repo["cloned"] = True
+        return dest.resolve(), True, repo
     target = Path(checkout_root).expanduser().resolve()
     if not target.is_dir():
         raise ValueError("checkout_root missing: " + str(target))
-    return target, True
+    return target, True, None
 
 
 def _thread_bind(root: Path, thread: str | None) -> tuple[str | None, str | None, dict[str, Any]]:
@@ -168,6 +183,8 @@ def onboard(
     *,
     thread: str | None = None,
     checkout_root: str | None = None,
+    github: bool | None = None,
+    clone_runner: Runner | None = None,
 ) -> dict[str, Any]:
     named, unknown, refused = _normalize_harnesses(harnesses)
     if not named:
@@ -186,13 +203,15 @@ def onboard(
         }
 
     try:
-        target_root, declared_checkout = _resolve_root(root, checkout_root)
+        target_root, declared_checkout, repo = _resolve_root(root, checkout_root, clone_runner)
     except ValueError as e:
         return {"ok": False, "error": str(e)}
 
     path_card = ensure_interactive_path()
     convoy_id, bound_thread, bind_status = _thread_bind(target_root, thread)
     if bind_status.get("error"):
+        # Refused: this root belongs to another thread. Nothing below is
+        # written onto it, the GitHub answer included (review 2026-09-04).
         return {
             "ok": False,
             "error": str(bind_status["error"]),
@@ -202,6 +221,9 @@ def onboard(
             "root": str(target_root),
             "path": path_card,
         }
+    # A URL is a GitHub answer in itself; otherwise record only what was said.
+    if repo is not None or github is not None:
+        set_github(target_root, True if repo is not None else bool(github))
     if declared_checkout and convoy_id is None:
         convoy_id = ensure_id(target_root)
 
@@ -213,6 +235,8 @@ def onboard(
         "thread": bound_thread,
         "thread_bind": bind_status,
         "root": str(target_root),
+        "github": read_github(target_root),
+        "repo": repo,
         "named": named,
         "harnesses": harness_cards,
         "missing": missing,

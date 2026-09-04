@@ -154,6 +154,9 @@ def build_graph(root: Path) -> dict[str, Any]:
         add_node({
             "id": _chair_id(sid), "kind": "chair", "session_id": sid,
             "title": s.get("title"), "worktree": s.get("worktree"),
+            # null on a row written before the axis existed (2026-09-04); a
+            # reader never upgrades that to local
+            "where": s.get("where"),
             "current": {"harness": harness, "model": model, "effort": s.get("effort")},
             "resume": {"available": resume_ok, "for": s.get("resume_for") if resume_ok else None},
             "lineage": lineage,

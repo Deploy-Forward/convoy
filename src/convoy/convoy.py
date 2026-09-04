@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from .context import pack
+from .harness_contract import effort_applied, validate_effort, validate_model, validate_where
 from .index import record as index_record
 from .layer import SCHEMA_VERSION, feed_since, hook
 from .registry import register
@@ -75,6 +76,25 @@ def read_thread(root: Path) -> str | None:
     text = path.read_text(encoding="utf-8-sig").strip()
     return text or None
 
+def _github_path(root: Path) -> Path:
+    return Path(root) / ".convoy" / "github"
+
+def read_github(root: Path) -> str | None:
+    """The wizard's 'GitHub?' answer on this bind: 'yes' | 'no' | None when
+    never asked. Null is never upgraded to a guess."""
+    path = _github_path(root)
+    if not path.is_file():
+        return None
+    text = path.read_text(encoding="utf-8-sig").strip().lower()
+    return text if text in ("yes", "no") else None
+
+def set_github(root: Path, yes: bool) -> str:
+    answer = "yes" if yes else "no"
+    path = _github_path(root)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(answer + "\n", encoding="utf-8")
+    return answer
+
 def bind(root: Path, thread: str) -> dict[str, Any]:
     if not thread or not str(thread).strip():
         raise ValueError("refuse empty thread")
@@ -98,11 +118,19 @@ def seat(
     title: str | None = None,
     agent: str | None = None,
     effort: str | None = None,
+    where: str | None = None,
 ) -> dict[str, Any]:
     if not session_id:
         raise ValueError("refuse empty session_id")
     cid = ensure_id(root)
     wt = str(worktree) if worktree is not None else None
+    # where: local (default) or cloud. cloud is refused unless this harness's
+    # cloud block evidences an interactive attach (harness_effort.json). A
+    # cloud chair has no local checkout, so a worktree is refused, not
+    # dropped; C8 below is a local rule and never sees a cloud chair.
+    where_val = validate_where(to, where)
+    if where_val == "cloud" and wt:
+        raise ValueError("refuse seat: where='cloud' takes no worktree (a cloud neuron has no local checkout); got " + wt)
     # A worktree bound to ANOTHER thread shadows this root for every CLI call
     # made without --root (2026-09-03: a codex chair on fable-opus sat in a
     # worktree carrying fable-luna's .convoy/id and heard nothing). Refuse.
@@ -128,15 +156,23 @@ def seat(
     rkey = make_resume_key(cid, thread, to, wt)
     title_val = title.strip() if isinstance(title, str) and title.strip() else None
     agent_val = agent.strip() if isinstance(agent, str) and agent.strip() else None
+    # Effort is the seat's declared level, real-or-null (chip front matter),
+    # validated against THIS harness's keys (harness_effort.json). Since the
+    # wizard pass (2026-09-04) Convoy does set the vendor flag — exactly when
+    # the contract carries cli_flag + evidence; effort_applied records which.
+    effort_val = validate_effort(to, effort)
+    # Model likewise: refused only against a NON-null catalog (harness_effort.json
+    # models); null there means no local --help lists one, and null accepts.
+    model_val = validate_model(to, model)
     row: dict[str, Any] = {
         "convoy_id": cid,
         "to": to,
         "session_id": session_id,
+        "where": where_val,
         "worktree": wt,
-        "model": model,
-        # Effort is the seat's declared level, real-or-null (chip front matter).
-        # Convoy stores it; it never sets vendor effort flags.
-        "effort": effort.strip() if isinstance(effort, str) and effort.strip() else None,
+        "model": model_val,
+        "effort": effort_val,
+        "effort_applied": effort_applied(to, effort_val),
         "resume": resume_val,
         # Token-to-harness binding (opus-2 RED at baa6a55): resume_for records
         # the harness this token is claimed for; resume_target refuses on
@@ -157,8 +193,9 @@ def seat(
         to,
         extra={
             "convoy_id": cid,
+            "where": where_val,
             "worktree": wt,
-            "model": model,
+            "model": model_val,
             "to": to,
             "resume": resume_val,
             "title": title_val,
@@ -285,6 +322,34 @@ def update_seat(root: Path, session_id: str, **changes: Any) -> dict[str, Any]:
             updated["resume"] = None
         if "vendor_session_id" not in changes:
             updated["vendor_session_id"] = None
+    if "effort" in changes:
+        updated["effort"] = validate_effort(str(updated.get("to") or ""), changes["effort"])
+    elif harness_changed:
+        # A declaration is per harness: claude's max does not follow the chair
+        # onto grok. It is dropped, not refused — a swap is not the place to
+        # relitigate an old declaration; pass effort= to set a new one.
+        try:
+            updated["effort"] = validate_effort(str(updated.get("to") or ""), row.get("effort"))
+        except ValueError:
+            updated["effort"] = None
+    if "effort" in changes or harness_changed:
+        updated["effort_applied"] = effort_applied(str(updated.get("to") or ""), updated.get("effort"))
+    if "model" in changes:
+        updated["model"] = validate_model(str(updated.get("to") or ""), changes["model"])
+    elif harness_changed:
+        # same rule as effort: a model the incoming harness's catalog lacks is
+        # dropped, not refused; a null catalog lets it ride
+        try:
+            updated["model"] = validate_model(str(updated.get("to") or ""), row.get("model"))
+        except ValueError:
+            updated["model"] = None
+    # where is re-validated for the harness it now sits on: a cloud chair
+    # cannot swap onto a harness with no evidenced cloud attach (refused, not
+    # dropped — there is no local fallback for a chair that has no worktree).
+    # A row from before the axis has no field and validates as local.
+    updated["where"] = validate_where(str(updated.get("to") or ""), changes.get("where", row.get("where")))
+    if updated["where"] == "cloud" and updated.get("worktree"):
+        raise ValueError("refuse seat: where='cloud' takes no worktree; got " + str(updated.get("worktree")))
     if updated.get("resume"):
         if "resume" in changes and changes["resume"]:
             updated["resume_for"] = updated.get("to")
@@ -300,7 +365,7 @@ def update_seat(root: Path, session_id: str, **changes: Any) -> dict[str, Any]:
         root,
         sid,
         str(updated.get("to") or ""),
-        extra={"convoy_id": cid, "worktree": updated.get("worktree"), "model": updated.get("model"),
+        extra={"convoy_id": cid, "where": updated.get("where"), "worktree": updated.get("worktree"), "model": updated.get("model"),
                "to": updated.get("to"), "resume": updated.get("resume"), "title": updated.get("title"),
                "agent": updated.get("agent"), "resume_key": updated.get("resume_key")},
     )

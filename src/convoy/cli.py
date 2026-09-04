@@ -12,6 +12,7 @@ from .install import install as install_harness
 from .onboard import onboard as run_onboard
 from .context import pack
 from .convoy import attach, bind, ensure_id, list_seats, read_id, read_lead, seat, set_lead, CONDUCTOR
+from .crew import await_seated, crew
 from .glance import build_glance, run_tray
 from .graph import build_graph, neighborhood
 from .graph_html import render_html, resume_neuron
@@ -25,6 +26,22 @@ from .pane_host import close_managed_pane
 from .synapse import fake_runner, native_runner, send_many, send_one
 from .targeted_launch import active_pane_runner, launch_choices, launch_seat
 from .usage import probe
+
+_SEAT_KEYS = ("model", "effort", "where", "title")
+
+
+def _seat_spec(text: str) -> dict:
+    """`grok,model=grok-4,effort=high` -> {harness, model, effort}. The first
+    token is the harness; the rest are key=value from _SEAT_KEYS."""
+    parts = [p.strip() for p in str(text or "").split(",")]
+    spec = {"harness": parts[0]}
+    for kv in parts[1:]:
+        key, sep, val = kv.partition("=")
+        if not sep or key not in _SEAT_KEYS:
+            raise ValueError("crew --seat takes <harness>[,model=M][,effort=E][,where=W][,title=T]; got " + repr(kv))
+        spec[key] = val
+    return spec
+
 
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="convoy")
@@ -82,7 +99,8 @@ def main(argv: list[str] | None = None) -> int:
     se.add_argument("--resume", help="vendor session_id for --resume; default session_id")
     se.add_argument("--title", help="optional pane title to restore on bring-up")
     se.add_argument("--agent", help="optional agent file path used for native resume")
-    se.add_argument("--effort", help="declared effort for this seat (real-or-null; Convoy never sets vendor effort flags)")
+    se.add_argument("--effort", help="declared effort for this seat, validated against the harness's own keys (convoy choices shows them); applied to argv only where harness_effort.json evidences a flag")
+    se.add_argument("--where", choices=["local", "cloud"], help="local (default) or cloud; cloud is refused unless convoy choices offers it for the harness, and takes no --worktree")
 
     jn = sub.add_parser("join")
     jn.add_argument("--to", required=True, help="harness for the new chair")
@@ -91,9 +109,21 @@ def main(argv: list[str] | None = None) -> int:
     jn.add_argument("--model")
     jn.add_argument("--title")
     jn.add_argument("--effort")
+    jn.add_argument("--where", choices=["local", "cloud"], help="local (default) or cloud; cloud is refused unless convoy choices offers it for the harness")
     jn.add_argument("--as", dest="author", help="authoring seat (neuron-authored)")
     jn.add_argument("--launch", action="store_true", help="split exactly one fresh chair into the active supported pane host")
     jn.add_argument("--consent", help="one-time scoped consent returned by `convoy consent --grant`")
+
+    cw = sub.add_parser("crew", help="N neurons at once: mint one worktree per seat, join every chair with a boot prompt, bring them up in ONE window")
+    cw.add_argument("--seat", action="append", required=True, metavar="SPEC",
+                    help="one per neuron: <harness>[,model=M][,effort=E][,where=local|cloud][,title=T]")
+    cw.add_argument("--checkout", help="git checkout to mint worktrees from (default: the root)")
+    cw.add_argument("--thread", help="must match the bound thread")
+    cw.add_argument("--launch", action="store_true", help="spawn the window once; default writes chairs and shows the argv")
+
+    aw = sub.add_parser("await-seated", help="observe the chairs' seated acks (connected | pending | stale) with the seconds waited")
+    aw.add_argument("--seat", action="append", required=True, help="chair session_id (repeat)")
+    aw.add_argument("--timeout", type=float, default=120.0, help="seconds; 0 is one snapshot")
 
     ch = sub.add_parser("choices", help="list installed harnesses, known worktrees, seats, and active-pane support")
 
@@ -113,6 +143,7 @@ def main(argv: list[str] | None = None) -> int:
     sw.add_argument("--seat", required=True, help="chair session_id (identity survives the swap)")
     sw.add_argument("--to", required=True, help="replacement harness")
     sw.add_argument("--model")
+    sw.add_argument("--effort", help="declared effort for the incoming harness; unset, the old one survives only if that harness takes it")
     sw.add_argument("--handoff", required=True, help="fresh .ola/*handoff* file written by the outgoing neuron")
     sw.add_argument("--as", dest="author", required=True, help="outgoing neuron's session_id (neuron-authored; conductor asks via stamp)")
 
@@ -187,7 +218,8 @@ def main(argv: list[str] | None = None) -> int:
     ob = sub.add_parser("onboard")
     ob.add_argument("--to", action="append", required=True, help="named harness id(s) you already have")
     ob.add_argument("--thread")
-    ob.add_argument("--checkout-root")
+    ob.add_argument("--checkout-root", help="existing path, or a git URL cloned under $CONVOY_HOME/checkouts/<owner>/<repo>")
+    ob.add_argument("--github", choices=("yes", "no"), default=None, help="record the wizard's GitHub? answer on the bind")
 
     pf = sub.add_parser("preflight", help="fail-closed wizard preflight: live MCP tools/list vs the verbs the @convoy wizard needs")
     pf.add_argument("--url", default=None, help="MCP endpoint (default: public https://convoy.bot/mcp)")
@@ -298,6 +330,7 @@ def main(argv: list[str] | None = None) -> int:
             title=args.title,
             agent=args.agent,
             effort=args.effort,
+            where=args.where,
         )
         print(json.dumps(row))
         return 0
@@ -305,7 +338,8 @@ def main(argv: list[str] | None = None) -> int:
         try:
             if args.cmd == "join":
                 card = join(root, args.to, session_id=args.session_id, worktree=args.worktree,
-                            model=args.model, title=args.title, effort=args.effort, author=args.author)
+                            model=args.model, title=args.title, effort=args.effort, author=args.author,
+                            where=args.where)
                 if args.launch:
                     launched = launch_seat(
                         root,
@@ -323,9 +357,27 @@ def main(argv: list[str] | None = None) -> int:
                         card["next"] = "launch"
             elif args.cmd == "swap":
                 card = swap(root, args.seat, to=args.to, handoff=args.handoff,
-                            author=args.author, model=args.model)
+                            author=args.author, model=args.model, effort=args.effort)
             else:
                 card = seated_ack(root, args.seat, token=args.token)
+        except ValueError as e:
+            print(json.dumps({"ok": False, "error": str(e)}))
+            return 1
+        print(json.dumps(card))
+        return 0 if card.get("ok") else 1
+    if args.cmd == "crew":
+        try:
+            seats = [_seat_spec(s) for s in args.seat]
+        except ValueError as e:
+            print(json.dumps({"ok": False, "error": str(e)}))
+            return 1
+        card = crew(root, seats, thread=args.thread, checkout=args.checkout,
+                    runner=live_runner if args.launch else None)
+        print(json.dumps(card))
+        return 0 if card.get("ok") else 1
+    if args.cmd == "await-seated":
+        try:
+            card = await_seated(root, args.seat, timeout=args.timeout)
         except ValueError as e:
             print(json.dumps({"ok": False, "error": str(e)}))
             return 1
@@ -478,7 +530,8 @@ def main(argv: list[str] | None = None) -> int:
         return 0 if card.get("ok") else 1
 
     if args.cmd == "onboard":
-        card = run_onboard(root, args.to, thread=args.thread, checkout_root=args.checkout_root)
+        card = run_onboard(root, args.to, thread=args.thread, checkout_root=args.checkout_root,
+                           github=None if args.github is None else args.github == "yes")
         print(json.dumps(card))
         return 0 if card.get("ok") else 1
     if args.cmd == "preflight":

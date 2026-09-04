@@ -105,7 +105,7 @@ class PhaseMcpHttp(unittest.TestCase):
         self.assertIn("path", payload)
         self.assertIn("contract", payload)
         self.assertTrue(str(payload["contract"]["path"]).endswith("harness_effort.json"))
-        self.assertEqual(payload["contract"]["schema_version"], "2026-09-01")
+        self.assertEqual(payload["contract"]["schema_version"], "2026-09-04")
         self.assertTrue(payload["path"]["path_ok"])
         # WT inherits user PATH on Windows; bashrc ungate is POSIX-only
         want_host = "windows-user" if os.name == "nt" else "bash-interactive"
@@ -129,8 +129,10 @@ class PhaseMcpHttp(unittest.TestCase):
         self.assertIn("i-mcp", ids)
 
     def test_bring_up_dry_run_uses_seated_session_does_not_mint_or_spawn(self):
-        from unittest import mock
-        with mock.patch("convoy.mcp_http.live_runner") as spawned:
+        # The raw id and argv are the conductor's contract, so they read behind
+        # the gate; public_wire_redaction_test owns the ungated shape.
+        with mock.patch("convoy.mcp_http.live_runner") as spawned, \
+                mock.patch.dict(os.environ, {"CONVOY_MCP_WRITE_TOOLS": "1"}):
             spawned.side_effect = AssertionError("live_runner must not run when dry_run true")
             resp = _rpc(self.mcp, "tools/call", {"name": "bring_up", "arguments": {"dry_run": True}})
         payload = _tool_payload(resp)
@@ -196,7 +198,8 @@ class PhaseMcpHttp(unittest.TestCase):
             self.assertIn("<svg", svg_res.read().decode("utf-8"))
 
     def test_open_alias_dry(self):
-        resp = _rpc(self.mcp, "tools/call", {"name": "open", "arguments": {"dry_run": True}})
+        with mock.patch.dict(os.environ, {"CONVOY_MCP_WRITE_TOOLS": "1"}):   # raw id is gated
+            resp = _rpc(self.mcp, "tools/call", {"name": "open", "arguments": {"dry_run": True}})
         payload = _tool_payload(resp)
         self.assertTrue(payload["ok"])
         resumes = {w["to"]: w["resume"] for w in payload["windows"]}

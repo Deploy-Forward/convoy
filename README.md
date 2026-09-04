@@ -22,6 +22,22 @@ install. To run from a checkout without installing, put `src` on the path:
 `PYTHONPATH=src python test/run.py` on bash, or
 `$env:PYTHONPATH='src'; python test/run.py` in PowerShell.
 
+### Grok Marketplace plugin
+
+The xAI-compatible plugin root is [`plugin/convoy`](plugin/convoy): it ships
+`.grok-plugin/plugin.json`, `.mcp.json`, and the `convoy` +
+`convoy-wizard` skills. The official source of truth for Grok Marketplace
+discovery is
+[`xai-org/plugin-marketplace`](https://github.com/xai-org/plugin-marketplace);
+its third-party entry must pin a reviewed full commit SHA from this repository
+and set `path` to `plugin/convoy`. After that catalog PR merges, Grok Build
+install is `/marketplace` → **convoy** → `i`, the same path
+[`exa-labs/exa-grok-plugin`](https://github.com/exa-labs/exa-grok-plugin)
+documents. There is no OAuth step: `.mcp.json` points at
+`https://convoy.bot/mcp`. The Agent Plugins/Cursor manifests remain
+compatibility surfaces, not the xAI catalog. A Grok Bot Settings path is
+unverified here.
+
 ### Receiving messages needs a command that resolves
 
 Neurons receive through a harness hook, and a hook runs in its own shell that
@@ -66,9 +82,11 @@ Write (thread state):
 
 - `init` — create the thread layer at `--root`.
 - `bind --thread <name>` — bind this root to a named thread.
-- `onboard --to <harness> [--to ...] [--thread <name>]` — name installed harnesses and bind.
+- `onboard --to <harness> [--to ...] [--thread <name>] [--checkout-root <path|git-url>] [--github yes|no]` — name installed harnesses and bind; a URL is cloned once under `$CONVOY_HOME/checkouts/<owner>/<repo>` (`.convoy/` and `thread.md` go into that clone's `.git/info/exclude`).
 - `seat --to <harness> --session-id <chair> [--worktree <path>] [--model M] [--resume <vendor-id>] [--title T] [--effort E]` — register a seated neuron.
 - `join --to <harness> [--worktree <path>] [--title T] [--as <chair>] [--launch] [--consent <id>]` — register one fresh chair.
+- `crew --seat <harness>[,model=M][,effort=E][,where=local|cloud][,title=T] [--seat ...] [--checkout <path>] [--launch]` — N neurons at once: validates every seat first, mints one worktree per local seat, joins every chair with a boot prompt, and (with `--launch`) brings them up in ONE window. Launched is not connected: the card's `seated` snapshot says `pending`.
+- `await-seated --seat <chair> [--seat ...] [--timeout <s>]` — observe the acks: per chair `connected` (its own `seated` row cites the minted token) | `pending` | `stale`, with the seconds waited.
 - `swap --seat <chair> --to <harness> --handoff <.ola/*handoff*> --as <chair>` — replace the occupant, keep the chair.
 - `seated --seat <chair> --token <token>` — proof-of-life echo from the new occupant.
 - `lead --to <chair> --as <you>` — pass lead to a chair.
@@ -100,7 +118,23 @@ convoy mcp --root <thread-root> --port 8788
 
 Then attach `http://127.0.0.1:8788/mcp` in your MCP client. Write tools are
 off by default on the RPC layer: set `CONVOY_MCP_WRITE_TOOLS=1` on a
-gated/loopback deploy to expose `stamp`, `note`, and `resume` with `go=true`.
+gated/loopback deploy to expose `stamp`, `note`, `join`, `seat`, `launch`,
+`crew`, `seated`, `consent`, `await_seated`, `onboard`, `clone`, `mint`,
+`repos`, `resume` with `go=true`, and `inbox` with `drain=true`. An ungated
+public `tools/list` hides the write tools rather than
+listing and refusing them, so a listed verb is a promise. Reads (`choices`,
+`neurons`, `inbox` pending, `graph`) stay public, and a public inbox
+read never echoes the row token. `repos` wraps `gh repo list` on the MCP
+process PATH (name, url, private, updated_at; gh absent is an install hint);
+it lists the gh login on the MCP host, the conductor's account, which is why
+it sits behind the gate rather than handing that inventory to strangers.
+`clone` puts a URL under `$CONVOY_HOME/checkouts/<owner>/<repo>`; `mint`
+derives one worktree per seat from that checkout as `<checkout>-wt-<name>`
+on branch `convoy/<name>`, so nobody hand-makes worktrees for N neurons. `crew`
+does the whole walk for N seats (validate, mint, join each with a boot prompt,
+one window) and `await_seated` reads the acks back, so "they all connected" is
+observed, never assumed. `convoy preflight` tells you which of the wizard's
+verbs a live `tools/list` is missing and why.
 The public `https://convoy.bot/mcp` is bound to one root; a different thread
 means running your own server with your own `--root`.
 
@@ -265,16 +299,17 @@ This repo includes a Cloudflare Worker config that serves the landing page/stati
 - Config: `wrangler.jsonc`
 - Worker entry: `workers-site.mjs`
 - Static assets directory: `src/convoy/site`
+- Production runbook: [`docs/deploy-convoy-bot-mcp.md`](docs/deploy-convoy-bot-mcp.md)
 
 Routing behavior:
 
 - `/mcp` and `/mcp/*` are proxied byte-for-byte to `MCP_ORIGIN` (the current Python MCP origin).
 - all other paths are served from Worker static assets (`env.ASSETS.fetch(request)`).
 
-Deploy steps (from an authenticated environment):
-
-1. Set `MCP_ORIGIN` in `wrangler.jsonc` (or with environment-specific vars) to the current Python MCP origin URL.
-2. Run `wrangler deploy`.
-3. Attach the `convoy.bot/*` route to this Worker in Cloudflare.
-
-This repo does not assume that Cloudflare Worker routing is live until those steps are completed.
+Production currently uses a Worker Route on `convoy.bot/*`,
+`MCP_ORIGIN=https://convoy.bot`, and a proxied Cloudflare Tunnel whose ingress
+is the separate Python process on `127.0.0.1:8788`. A Worker deploy cannot
+update that process. Follow the runbook to restart and prove the Python origin
+first, then deploy the Worker only when its code/config/assets changed. Public
+Gate 0 remains RED when the write gate is correctly closed; do not claim GREEN
+from an updated build stamp or remembered tool count.

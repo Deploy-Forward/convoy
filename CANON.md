@@ -16,6 +16,10 @@ Grok Bot is the conductor for repository work. Convoy is the singular source of 
 
 Product wording retires **hop** in favor of **neuron/synapse/thread**.
 
+### The where axis (labelled constraint, 2026-09-04)
+
+A seat carries `where`: `local` (default) or `cloud`. `harness_effort.json` carries a per-harness `cloud` block `{mode, cli, evidence}` with `mode` in `unsupported | unverified | interactive-session | task`, filled only from a local `--help` that was run and quoted: `claude --cloud` is an interactive attach (`interactive-session`), `codex cloud exec` submits a task (`task`), `grok --help` names remote sessions only on its resume path, and agy, hermes, pi and cursor-agent quote nothing (`unverified`). `join`/`seat` accept `where=cloud` only for an `interactive-session` harness and refuse otherwise in the vendor's own words; `choices` lists `where.cloud.offered` per harness so the refusal is legible before it happens. A cloud seat has `worktree` null (C8 is a local rule). **No cloud launcher exists yet**: `launch` refuses a cloud chair and `bring_up` never makes it a pane; the `connected` proof for a cloud neuron will be an MCP attach, not a pane, and until that exists a cloud seat is a recorded intention, not a running neuron.
+
 ## Keyed contract (stable keys)
 
 These keys are locked for docs and conductor language:

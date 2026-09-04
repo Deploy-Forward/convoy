@@ -110,6 +110,7 @@ def neuron_activity(
             "session_id": sid,
             "harness": s.get("to"),
             "model": s.get("model"),
+            "where": s.get("where"),
             "worktree": s.get("worktree"),
             "active": active,
             "evidence": evidence,

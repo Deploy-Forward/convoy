@@ -46,6 +46,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from .identity import ensure_grok_agent, ensure_inbox_hooks, install_neuron_identity
+from .harness_contract import effort_argv
 from .convoy import (
     CONDUCTOR,
     list_seats,
@@ -290,11 +291,14 @@ def resume_argv(seat: dict[str, Any]) -> list[str]:
 
     FileName is shutil.which absolute path when found, else the bare harness name.
     Grok keeps seat identity flags:
-        [exe, '-m', MODEL?, '--agent', PATH?, '--resume', sid]
+        [exe, '-m', MODEL?, '--agent', PATH?, EFFORT_FLAG?, '--resume', sid]
     Codex resume shape:
         [exe, 'resume', sid]
     Other harnesses:
-        [exe, '--resume', sid]
+        [exe, EFFORT_FLAG?, '--resume', sid]
+    EFFORT_FLAG is the contract's evidenced flag for the seat's declared effort
+    (grok --reasoning-effort, claude --effort, agy --effort, pi --thinking);
+    absent when the contract has no evidenced flag (codex, cursor-agent, hermes).
     First-run seat with no vendor UUID: no resume token is passed.
     Never -d, never `--` separator, never -p/-c, never ola-brain, never side-chat, never wt.
     """
@@ -313,6 +317,9 @@ def resume_argv(seat: dict[str, Any]) -> list[str]:
         agent = seat.get("agent")
         if isinstance(agent, str) and agent.strip():
             argv.extend(["--agent", agent.strip()])
+    # Declared effort rides argv only through the contract's evidenced flag,
+    # and only as a value that harness's --help lists (effort_argv re-checks).
+    argv.extend(effort_argv(to, seat.get("effort")))
     # First-run seat: no vendor UUID yet. Do not pass --resume.
     if sid:
         if _harness_bin(to) == "codex":
@@ -910,7 +917,29 @@ def _resolve(root: Path, convoy_id: str | None, thread: str | None) -> dict[str,
 
 def _hop_seats(root: Path, cid: str) -> list[dict[str, Any]]:
     seats = list_seats(root, convoy_id=cid, require_session=False)
-    return [s for s in seats if not is_conductor(s.get("to"))]
+    return [s for s in seats if not is_conductor(s.get("to")) and s.get("where") != "cloud"]
+
+
+def _cloud_seats(root: Path, cid: str, session_ids: list[str] | None = None) -> list[dict[str, Any]]:
+    """Chairs bring_up must NOT make a pane: a cloud neuron is not a local
+    process. No cloud launcher exists (2026-09-04); its connected proof will
+    be an MCP attach, and the card says so instead of spawning."""
+    return [
+        {"session_id": s.get("session_id"), "to": s.get("to"), "where": "cloud", "pane": False,
+         "reason": "no cloud launcher exists; a cloud neuron proves it is connected by MCP attach, not a pane"}
+        for s in _only(list_seats(root, convoy_id=cid, require_session=False), session_ids)
+        if s.get("where") == "cloud" and not is_conductor(s.get("to"))
+    ]
+
+
+def _only(seats: list[dict[str, Any]], session_ids: list[str] | None) -> list[dict[str, Any]]:
+    """None means every seat (the bulk show); a list names exactly the chairs
+    a caller minted. crew (2026-09-04) launches its own N chairs this way, so
+    an older chair with a live body is never handed a second --resume."""
+    if session_ids is None:
+        return seats
+    wanted = {str(s) for s in session_ids}
+    return [s for s in seats if str(s.get("session_id") or "") in wanted]
 
 
 def _seat_with_agent(root: Path, seat: dict[str, Any], first_run: dict[str, Any]) -> dict[str, Any]:
@@ -966,12 +995,13 @@ def _window_for(root: Path, seat: dict[str, Any], rect: dict[str, int] | None, c
     return win
 
 
-def bring_up(root: Path, convoy_id: str | None = None, thread: str | None = None, runner: Runner | None = None, tiler: Tiler | None = None) -> dict[str, Any]:
+def bring_up(root: Path, convoy_id: str | None = None, thread: str | None = None, runner: Runner | None = None, tiler: Tiler | None = None, session_ids: list[str] | None = None) -> dict[str, Any]:
     """Resume seated neurons in ONE isolated wt.exe window. Conductor grok-bot is not a window.
 
     Default runner is None (dry / no-op). Dry-run still calls ensure_first_run and
     must not Popen wt. Pass live_runner only for a real TUI pop (one isolated_wt_argv).
     Unit tests must not pass live_runner without mocking Popen.
+    session_ids=None is the bulk show; a list restricts the window to those chairs.
     """
     resolved = _resolve(root, convoy_id, thread)
     if not resolved.get("ok"):
@@ -980,7 +1010,7 @@ def bring_up(root: Path, convoy_id: str | None = None, thread: str | None = None
         return resolved
     cid = resolved["convoy_id"]
     bound = resolved["thread"]
-    hops = _pane_seats(_hop_seats(root, cid))
+    hops = _pane_seats(_only(_hop_seats(root, cid), session_ids))
     tile_fn = tiler or tile_rects
     rects = tile_fn(len(hops))
     windows: list[dict[str, Any]] = []
@@ -1048,6 +1078,7 @@ def bring_up(root: Path, convoy_id: str | None = None, thread: str | None = None
         "conductor": CONDUCTOR,
         "lead": read_lead(root),
         "windows": windows,
+        "cloud": _cloud_seats(root, cid, session_ids),
     }
 
 
