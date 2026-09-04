@@ -105,7 +105,7 @@ class PhaseMcpHttp(unittest.TestCase):
         self.assertIn("path", payload)
         self.assertIn("contract", payload)
         self.assertTrue(str(payload["contract"]["path"]).endswith("harness_effort.json"))
-        self.assertEqual(payload["contract"]["schema_version"], "2026-09-01")
+        self.assertEqual(payload["contract"]["schema_version"], "2026-09-04")
         self.assertTrue(payload["path"]["path_ok"])
         # WT inherits user PATH on Windows; bashrc ungate is POSIX-only
         want_host = "windows-user" if os.name == "nt" else "bash-interactive"

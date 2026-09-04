@@ -27,7 +27,7 @@ from .bringup import (
 )
 from .consent import consume_consent, request_consent
 from .convoy import list_seats, update_seat
-from .harness_contract import effort_contract, harness_entries, harness_exec
+from .harness_contract import effort_contract, harness_entries, harness_exec, model_catalog
 
 Which = Callable[[str], str | None]
 Runner = Callable[[list[str]], dict[str, Any]]
@@ -390,6 +390,7 @@ def launch_choices(
     for entry in harness_entries():
         executable = harness_exec(str(entry.get("id") or ""))
         path = which(executable)
+        catalog = model_catalog(str(entry.get("id") or ""))
         harnesses.append(
             {
                 "id": entry.get("id"),
@@ -400,6 +401,10 @@ def launch_choices(
                 # host on the wire can render harness -> effort without the
                 # file; null where the contract is silent.
                 "effort": effort_contract(str(entry.get("id") or "")),
+                # Same for the model catalog: null (with the evidence saying
+                # why) wherever no local --help enumerates a closed list.
+                "models": catalog["models"],
+                "models_evidence": catalog["evidence"],
             }
         )
 

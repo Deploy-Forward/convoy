@@ -18,7 +18,7 @@ from convoy.onboard import onboard  # noqa: E402
 class HarnessContract(unittest.TestCase):
     def test_contract_has_locked_effort_types(self):
         data = load_harness_contract()
-        self.assertEqual(data["schema_version"], "2026-09-01")
+        self.assertEqual(data["schema_version"], "2026-09-04")
         effort = data["effort_types"]
         self.assertIn("high", effort)
         self.assertIn("xhigh", effort)

@@ -26,8 +26,8 @@ thread orchestration through Convoy MCP + CLI.
   target `--root`.
 - Reuse only documented Convoy verbs and cards. Do not wrap vendor CLIs.
 - Keep unknown values as `null`; do not invent session IDs, tokens, or usage.
-- Model/effort per harness comes from the pack's `harness_effort.json`, not
-  from memory.
+- Model/effort per harness comes from live `choices` (`harnesses[].models`,
+  `harnesses[].effort`), not from memory; a `null` catalog is a free field.
 
 ## Preferred operator flow
 

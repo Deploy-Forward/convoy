@@ -27,6 +27,7 @@ from .harness_contract import (
     harness_entries,
     harness_exec,
     load_harness_contract,
+    model_catalog,
     usage_probe_key,
     usage_remaining_null_until_live_probe,
 )
@@ -102,6 +103,13 @@ def _write_tools_enabled() -> bool:
 _EFFORT_ARG = {
     "type": "string",
     "description": "declared effort, validated for the named harness; valid keys are choices.harnesses[].effort.keys, refused otherwise naming them. Reaches argv only where effort.applied is true.",
+}
+# Model is checked the same way, against choices.harnesses[].models. That
+# catalog is null wherever no local --help enumerates a closed list (live
+# 2026-09-04: every harness), and null accepts anything — a field, not a menu.
+_MODEL_ARG = {
+    "type": "string",
+    "description": "declared model, passed through as typed when choices.harnesses[].models is null; when that catalog is a list, a model outside it is refused naming the list.",
 }
 
 _SITE_ASSETS: dict[str, tuple[str, str]] = {
@@ -335,7 +343,7 @@ TOOLS: list[dict[str, Any]] = [
         "inputSchema": _schema(
             {"to": {"type": "string", "description": "harness: grok, claude, codex, cursor-agent, agy, hermes, pi"},
              "session_id": {"type": "string", "description": "chair id; identity of the seat"},
-             "worktree": {"type": "string"}, "model": {"type": "string"},
+             "worktree": {"type": "string"}, "model": _MODEL_ARG,
              "title": {"type": "string"}, "effort": _EFFORT_ARG},
             required=["to", "session_id"],
         ),
@@ -345,7 +353,7 @@ TOOLS: list[dict[str, Any]] = [
         "description": "Add a NEW chair: seat + boot prompt + join row with a minted inbox token (write gate). Refuses a chair id that already exists and a worktree another chair holds (C8). Does not launch; call launch for that.",
         "inputSchema": _schema(
             {"to": {"type": "string"}, "session_id": {"type": "string"}, "worktree": {"type": "string"},
-             "model": {"type": "string"}, "title": {"type": "string"}, "effort": _EFFORT_ARG,
+             "model": _MODEL_ARG, "title": {"type": "string"}, "effort": _EFFORT_ARG,
              "author": {"type": "string"}},
             required=["to"],
         ),
@@ -406,7 +414,8 @@ def build_roster(root: Path) -> dict[str, Any]:
         usage_remaining = None
         availability = None
         auth = None
-        models = None
+        # the catalog is a contract fact, not a liveness fact: read it either way
+        catalog = model_catalog(hid)
         if present:
             probed = probe(usage_probe_key(hid))
             usage_remaining = normalize_usage_remaining(probed.get("usage_remaining"))
@@ -434,7 +443,8 @@ def build_roster(root: Path) -> dict[str, Any]:
             "present": present,
             "wired": wired,
             "auth": auth,
-            "models": models,
+            "models": catalog["models"],
+            "models_evidence": catalog["evidence"],
             "effort": effort_contract(hid),
             "availability": availability,
             "usage_remaining": usage_remaining,
