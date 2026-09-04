@@ -39,6 +39,14 @@ class PluginMarketplacePackContract(unittest.TestCase):
         self.assertEqual(wrapper_json.get("skills"), "skills")
         self.assertEqual(wrapper_json.get("mcpServers"), "mcp.json")
 
+        grok = PLUGIN_ROOT / ".grok-plugin" / "plugin.json"
+        self.assertTrue(grok.is_file(), "plugin/convoy/.grok-plugin/plugin.json missing")
+        grok_json = json.loads(grok.read_text(encoding="utf-8"))
+        self.assertEqual(grok_json.get("name"), "convoy")
+        self.assertEqual(grok_json.get("skills"), "skills")
+        self.assertEqual(grok_json.get("mcpServers"), "mcp.json")
+        self.assertEqual(grok_json.get("license"), "MIT")
+
         marketplace = REPO / ".cursor-plugin" / "marketplace.json"
         self.assertTrue(marketplace.is_file(), ".cursor-plugin/marketplace.json missing")
         marketplace_json = json.loads(marketplace.read_text(encoding="utf-8"))
