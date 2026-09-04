@@ -29,19 +29,37 @@ surfaces; the xAI catalog and Grok Build discover `.mcp.json`,
 
 ## Install from Grok Marketplace
 
-After the catalog entry is accepted in
-[`xai-org/plugin-marketplace`](https://github.com/xai-org/plugin-marketplace),
-open **Settings → Plugins → Marketplace** in Grok Bot, search for **Convoy**,
-and install it. In Grok Build, `/marketplace` is the equivalent browser.
+The official catalog is
+[`xai-org/plugin-marketplace`](https://github.com/xai-org/plugin-marketplace).
+Until a catalog PR merges, this pack is not listed there. After it is, Grok
+Build install matches Exa:
 
-The official catalog entry is a third-party remote source:
+1. Run `grok`, then `/marketplace`.
+2. Find **convoy** and press `i`.
+3. `/mcp` should show the `convoy` server (`type: http`,
+   `https://convoy.bot/mcp`). There is no OAuth/sign-in step; this plugin
+   reads no API key.
+
+A Grok Bot **Settings → Plugins** path is unverified in this repo.
+
+The catalog entry is a third-party remote source, same shape as Exa's
+(`name` kebab-case, `source.source=url`, full 40-char `sha`, optional
+`path` because the plugin root is not the git root):
 
 ```json
 {
-  "source": "url",
-  "url": "https://github.com/Deploy-Forward/convoy.git",
-  "sha": "<full reviewed 40-character commit>",
-  "path": "plugin/convoy"
+  "name": "convoy",
+  "description": "Orchestrate BYO AI harnesses as neurons on one Convoy thread with a live, fail-closed MCP wizard.",
+  "category": "development",
+  "source": {
+    "source": "url",
+    "url": "https://github.com/Deploy-Forward/convoy.git",
+    "sha": "<full reviewed 40-character commit>",
+    "path": "plugin/convoy"
+  },
+  "homepage": "https://convoy.bot",
+  "keywords": ["convoy", "convoy wizard", "convoy bot"],
+  "domains": ["convoy.bot"]
 }
 ```
 

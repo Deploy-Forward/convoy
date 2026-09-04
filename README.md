@@ -30,10 +30,13 @@ The xAI-compatible plugin root is [`plugin/convoy`](plugin/convoy): it ships
 discovery is
 [`xai-org/plugin-marketplace`](https://github.com/xai-org/plugin-marketplace);
 its third-party entry must pin a reviewed full commit SHA from this repository
-and set `path` to `plugin/convoy`. After that catalog PR merges, install from
-**Settings → Plugins → Marketplace** in Grok Bot (or `/marketplace` in Grok
-Build). The Agent Plugins/Cursor manifests remain compatibility surfaces, not
-the xAI catalog.
+and set `path` to `plugin/convoy`. After that catalog PR merges, Grok Build
+install is `/marketplace` → **convoy** → `i`, the same path
+[`exa-labs/exa-grok-plugin`](https://github.com/exa-labs/exa-grok-plugin)
+documents. There is no OAuth step: `.mcp.json` points at
+`https://convoy.bot/mcp`. The Agent Plugins/Cursor manifests remain
+compatibility surfaces, not the xAI catalog. A Grok Bot Settings path is
+unverified here.
 
 ### Receiving messages needs a command that resolves
 
