@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from .context import pack
-from .harness_contract import effort_applied, validate_effort
+from .harness_contract import effort_applied, validate_effort, validate_model
 from .index import record as index_record
 from .layer import SCHEMA_VERSION, feed_since, hook
 from .registry import register
@@ -134,12 +134,15 @@ def seat(
     # wizard pass (2026-09-04) Convoy does set the vendor flag — exactly when
     # the contract carries cli_flag + evidence; effort_applied records which.
     effort_val = validate_effort(to, effort)
+    # Model likewise: refused only against a NON-null catalog (harness_effort.json
+    # models); null there means no local --help lists one, and null accepts.
+    model_val = validate_model(to, model)
     row: dict[str, Any] = {
         "convoy_id": cid,
         "to": to,
         "session_id": session_id,
         "worktree": wt,
-        "model": model,
+        "model": model_val,
         "effort": effort_val,
         "effort_applied": effort_applied(to, effort_val),
         "resume": resume_val,
@@ -302,6 +305,15 @@ def update_seat(root: Path, session_id: str, **changes: Any) -> dict[str, Any]:
             updated["effort"] = None
     if "effort" in changes or harness_changed:
         updated["effort_applied"] = effort_applied(str(updated.get("to") or ""), updated.get("effort"))
+    if "model" in changes:
+        updated["model"] = validate_model(str(updated.get("to") or ""), changes["model"])
+    elif harness_changed:
+        # same rule as effort: a model the incoming harness's catalog lacks is
+        # dropped, not refused; a null catalog lets it ride
+        try:
+            updated["model"] = validate_model(str(updated.get("to") or ""), row.get("model"))
+        except ValueError:
+            updated["model"] = None
     if updated.get("resume"):
         if "resume" in changes and changes["resume"]:
             updated["resume_for"] = updated.get("to")

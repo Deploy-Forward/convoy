@@ -67,9 +67,15 @@ After Gate 0 is GREEN:
 4. Ask for `N` neurons and the harness for each seat from those live choices.
    Enforce one chair per worktree before calling `join` or `seat`; never retry a
    refused duplicate with another invented chair name.
-5. Read model/effort constraints from the bundled `../../harness_effort.json`
-   and intersect them with live `choices`. Never recall combinations from
-   memory. Missing model, effort, usage, or availability stays JSON `null`.
+5. Take model/effort constraints from live `choices` alone:
+   `harnesses[].effort` (keys, and whether a choice is applied to argv) and
+   `harnesses[].models` with `harnesses[].models_evidence`. The host renders
+   what the wire returns; it has no filesystem and never reads
+   `harness_effort.json` itself. A `null` catalog means no local `--help`
+   enumerates a closed list: offer a free field and pass the model through as
+   typed. A list means `seat`/`join` refuse anything outside it. Never recall
+   combinations from memory. Missing model, effort, usage, or availability
+   stays JSON `null`.
 6. Keep one returned `cvy_*` thread for the entire run and use the input schemas
    from the fresh `tools/list` response:
    - call `join` for the first fresh chair

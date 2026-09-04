@@ -66,10 +66,18 @@ class WizardSequence(unittest.TestCase):
             "gate must name redeploy/upgrade remedy",
         )
 
-    def test_effort_comes_from_the_pack_not_src(self):
+    def test_model_and_effort_come_from_choices_not_a_file(self):
+        # Until 2026-09-04 this step told the host to read the pack's
+        # ../../harness_effort.json; a remote grok-bot has no filesystem, so the
+        # model/effort constraints ride on the wire (choices.harnesses[].models,
+        # .effort) and the step must say the host does not read the file.
         step = self.steps[self._index("harness_effort.json")]
-        self.assertIn("../../harness_effort.json", step)
+        self.assertIn("`choices`", step)
+        self.assertIn("harnesses[].models", step)
+        self.assertIn("harnesses[].effort", step)
+        self.assertIn("never reads", step)
         self.assertNotIn("src/convoy/harness_effort.json", step)
+        self.assertNotIn("../../harness_effort.json", step)
 
     def test_c8_one_chair_per_worktree(self):
         step = self.steps[self._index("one chair per worktree")]

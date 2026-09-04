@@ -169,3 +169,32 @@ def effort_applied(harness_id: str, effort: Any) -> bool | None:
     if not (isinstance(effort, str) and effort.strip()):
         return None
     return bool(effort_argv(harness_id, effort))
+
+
+def model_catalog(harness_id: str) -> dict[str, Any]:
+    """Per-harness model catalog for the wire: {models, evidence}. models is
+    the contract's list or None; None means no local --help enumerates a
+    closed list (live 2026-09-04: none does — every CLI takes a free-form
+    --model), so the card offers a field, not a menu. Never a remembered name."""
+    wanted = canonical_harness_id(harness_id)
+    for row in harness_entries():
+        if row["id"] == wanted:
+            models = row.get("models")
+            return {
+                "models": [str(m) for m in models] if isinstance(models, list) and models else None,
+                "evidence": row.get("models_evidence"),
+            }
+    return {"models": None, "evidence": None}
+
+
+def validate_model(harness_id: str, model: Any) -> str | None:
+    """Blank is None. A model outside a NON-null catalog is refused naming the
+    list; a null catalog accepts anything as declared — unknown is not a
+    refusal, and Convoy never invents the list it would check against."""
+    if not (isinstance(model, str) and model.strip()):
+        return None
+    models = model_catalog(harness_id)["models"]
+    if models is not None and model not in models:
+        hid = canonical_harness_id(harness_id)
+        raise ValueError("refuse model " + repr(model) + " for " + hid + ": " + hid + " lists " + ", ".join(models))
+    return model
