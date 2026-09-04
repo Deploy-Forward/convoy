@@ -69,6 +69,9 @@ class PluginMarketplacePackContract(unittest.TestCase):
         self.assertIn('path": "plugin/convoy"', readme)
         self.assertNotIn("cursor.com/marketplace/publish", readme)
         self.assertIn("/marketplace", readme)
+        self.assertIn("Settings → Plugins", readme)
+        self.assertIn("Marketplace", readme)
+        self.assertIn("Yours", readme)
         self.assertIn("unverified", readme.lower())
 
     def test_agent_plugin_manifest_contract(self):

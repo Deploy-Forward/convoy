@@ -34,13 +34,14 @@ The official catalog is
 Until a catalog PR merges, this pack is not listed there. After it is, Grok
 Build install matches Exa:
 
-1. Run `grok`, then `/marketplace`.
-2. Find **convoy** and press `i`.
-3. `/mcp` should show the `convoy` server (`type: http`,
+1. In Grok Bot, open **Settings → Plugins** and select **Marketplace**.
+2. Find **convoy** and install it; installed plugins are visible under **Yours**.
+3. The MCP view should show the `convoy` server (`type: http`,
    `https://convoy.bot/mcp`). There is no OAuth/sign-in step; this plugin
    reads no API key.
 
-A Grok Bot **Settings → Plugins** path is unverified in this repo.
+Grok Build's `/marketplace` command is also supported: find **convoy** and
+press `i`.
 
 The catalog entry is a third-party remote source, same shape as Exa's
 (`name` kebab-case, `source.source=url`, full 40-char `sha`, optional

@@ -64,7 +64,7 @@ $Process = Get-CimInstance Win32_Process -Filter "ProcessId = $($Listener.Owning
 $Service = Get-CimInstance Win32_Service |
   Where-Object ProcessId -eq $Listener.OwningProcess
 $Process | Select-Object ProcessId, ExecutablePath, CommandLine
-$Service | Select-Object Name, State, StartName
+$Service | Select-Object Name, State, StartName, PathName
 ```
 
 Stop if these commands do not reveal the checkout/root and a repeatable
@@ -74,20 +74,33 @@ them:
 ```powershell
 $Checkout = '<origin checkout from the running command/service>'
 $ServiceName = '<Win32_Service.Name>'
+$Python = '<exact python.exe imported by the running service; do not use the py launcher>'
 $Expected = '<reviewed PR #52 commit SHA>'
+$Previous = git -C $Checkout rev-parse HEAD
+if (git -C $Checkout status --porcelain) { throw 'origin checkout is dirty; stop and resolve it first' }
 ```
 
-Install exactly the reviewed branch tip, preserving the existing interpreter
-and service account:
+Install exactly the reviewed commit with the same interpreter and deployment
+mode the service actually uses. Do not assume `py -3` is the service's
+interpreter, and do not call a checkout an installed distribution without
+checking `PathName`/`CommandLine` above:
 
 ```powershell
 git -C $Checkout fetch origin feat/convoy-wizard-vision
-git -C $Checkout switch feat/convoy-wizard-vision
-git -C $Checkout pull --ff-only origin feat/convoy-wizard-vision
+$Fetched = git -C $Checkout rev-parse FETCH_HEAD
+if ($Fetched -ne $Expected) { throw "fetched SHA mismatch: $Fetched" }
+git -C $Checkout switch --detach $Expected
 if ((git -C $Checkout rev-parse HEAD) -ne $Expected) { throw 'origin SHA mismatch' }
-py -3 -m pip install --upgrade $Checkout
+# Only for a service proven above to import an installed distribution:
+& $Python -m pip install --force-reinstall --no-deps $Checkout
+# For checkout/editable/PYTHONPATH mode, keep that exact mode instead of pip installing.
 Restart-Service -Name $ServiceName
 ```
+
+After restart, re-query the listener and process. Confirm the PID, executable,
+command line, service `State`, `StartName`, and `PathName` are the expected
+ones; a changed account or interpreter is a stop condition, not evidence of a
+successful redeploy.
 
 If `$Service` is empty, do not kill the listener until the owner supplies the
 actual scheduled-task/supervisor restart command. A manual foreground process
@@ -107,9 +120,24 @@ $Origin = Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8788/mcp `
 $Origin.result.tools.name
 ```
 
-Also call `initialize` and confirm `serverInfo.version` contains the expected
-Git description when the package runs from a checkout. Do not use a remembered
-tool count.
+Derive the expected public set from the reviewed checkout and compare sets,
+not remembered counts. Run this in the same shell only as a probe; preserve
+the service's actual environment and deployment mode:
+
+```powershell
+$OldPythonPath = $env:PYTHONPATH
+$env:PYTHONPATH = Join-Path $Checkout 'src'
+$ExpectedPublic = @(& $Python -c 'import json; from convoy.mcp_http import TOOLS, _WRITE_TOOLS; print(json.dumps([t["name"] for t in TOOLS if t["name"] not in _WRITE_TOOLS]))' | ConvertFrom-Json)
+$env:PYTHONPATH = $OldPythonPath
+$Delta = @(Compare-Object -ReferenceObject $ExpectedPublic -DifferenceObject @($Origin.result.tools.name))
+if ($Delta.Count) { $Delta | Format-Table | Out-String | Write-Error; throw 'public/loopback tool-set mismatch' }
+```
+
+Also call `initialize`. A checkout deployment should report `0.1.0+<git
+description>`; a bare `0.1.0` from an installed package is not SHA evidence.
+If loopback proof fails, roll back to `$Previous` with the same interpreter and
+deployment mode, restart the named supervisor, and repeat the proof before
+touching the Worker.
 
 ## Worker deploy
 
@@ -150,6 +178,12 @@ The expected security verdict is:
 - authenticated/gated loopback endpoint with `CONVOY_MCP_WRITE_TOOLS=1`:
   Gate 0 **GREEN** only if the fresh `tools/list` contains every required
   wizard verb.
+
+After a public restart, expect exact parity with the derived public set:
+`card`, `neurons`, `graph`, and `inbox` should appear; stale public `onboard`
+must disappear; the public preflight remains RED with only write-gated
+missing verbs and no `redeploy` remedies. This is origin-freshness/security
+parity, not public wizard readiness.
 
 An updated version or a newly visible read tool proves that the Python restart
 landed. It does not authorize calling the public wizard GREEN.
