@@ -41,7 +41,9 @@ def _plan(root: Path, seats: list[dict[str, Any]], bound: str | None) -> list[di
     names: set[str] = set()
     for i, raw in enumerate(seats):
         spec = raw if isinstance(raw, dict) else {}
-        harness = canonical_harness_id(spec.get("harness") or spec.get("to"))
+        # `harness` only: the MCP schema names one key, and an undocumented
+        # alias is a second spelling the card never told the host about.
+        harness = canonical_harness_id(spec.get("harness"))
         if harness not in known:
             raise ValueError("refuse seat " + str(i + 1) + ": unknown harness " + repr(spec.get("harness")) +
                              "; choices.harnesses lists " + ", ".join(sorted(known)))
@@ -76,7 +78,10 @@ def crew(
     checkout defaults to the root (onboard binds the thread there)."""
     root = Path(root)
     bound = read_thread(root)
-    card: dict[str, Any] = {"ok": False, "convoy_id": read_id(root), "thread": bound, "seats": [], "launched": runner is not None}
+    # launched starts False and is read from the runner's RESULT after bring_up.
+    # It was `runner is not None`, so a crew refused before any write, with a
+    # live runner handed in, claimed to have acted (review 2026-09-04).
+    card: dict[str, Any] = {"ok": False, "convoy_id": read_id(root), "thread": bound, "seats": [], "launched": False}
     if card["convoy_id"] is None:
         card["error"] = "crew requires a bound thread root (onboard, or init + bind)"
         return card
@@ -110,11 +115,29 @@ def crew(
             return card
         card["seats"].append({**joined["seat"], "token": joined["token"], "connect_mode": connect_mode(p["harness"])})
     sids = [s["session_id"] for s in card["seats"]]
-    up = bring_up(root, thread=bound, runner=runner, session_ids=sids)
+    try:
+        up = bring_up(root, thread=bound, runner=runner, session_ids=sids)
+    except OSError as e:
+        # The chairs ARE written; the window never came up. Say both.
+        card["error"] = "launch failed: " + str(e)
+        card["seated"] = await_seated(root, sids, timeout=0)
+        return card
     card["windows"] = up.get("windows") or []
     card["cloud"] = up.get("cloud") or []
     if up.get("error"):
         card["error"] = str(up["error"])
+    else:
+        # bring_up records a failed spawn per window and drops top-level ok;
+        # the crew card carries the first window's reason itself so a caller
+        # does not have to dig windows[i] to learn the terminal never opened.
+        failed = [w for w in card["windows"] if isinstance(w, dict) and w.get("ok") is False and w.get("error")]
+        if failed:
+            card["error"] = "launch failed: " + str(failed[0]["error"])
+    # launched is what the runner reported, not what we hoped: a dry pass
+    # (runner None) never launched, and a runner that returned ok=False or
+    # failed a window did not either.
+    card["launched"] = runner is not None and bool(up.get("ok")) and all(
+        bool(w.get("ok", True)) for w in card["windows"] if isinstance(w, dict))
     # A snapshot, not a wait: right after launch every chair is pending, and
     # the card says so instead of implying the panes connected.
     card["seated"] = await_seated(root, sids, timeout=0)

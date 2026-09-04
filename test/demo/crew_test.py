@@ -169,6 +169,16 @@ class CrewMintsJoinsAndLaunchesOnce(unittest.TestCase):
             self.assertFalse(card["ok"], (seats, card))
             self.assertIn(needle, card["error"], card["error"])
             self.assertEqual(card["seats"], [])
+            # review 2026-09-04: launched was `runner is not None`, so a refusal
+            # with a runner handed in claimed to have acted. It never spawned.
+            self.assertFalse(card["launched"], (seats, card))
+        # `to` was an undocumented alias for harness; the schema names harness only
+        alias = crew(self.root, [{"to": "codex"}], runner=runner, mint_runner=minted)
+        self.assertFalse(alias["ok"])
+        self.assertIn("harness", alias["error"])
+        self.assertFalse(alias["launched"])
+        mismatch = crew(self.root, [{"harness": "grok"}], thread="other", runner=runner, mint_runner=minted)
+        self.assertFalse(mismatch["launched"], mismatch)
         self.assertEqual(list_seats(self.root), [], "a refused crew writes no chair")
         self.assertEqual(feed_since(self.root, EPOCH), [], "a refused crew mints no token")
         self.assertEqual(minted.calls, [], "a refused crew runs no git")
@@ -177,10 +187,34 @@ class CrewMintsJoinsAndLaunchesOnce(unittest.TestCase):
     def test_an_existing_chair_name_is_refused_before_mint(self):
         seat(self.root, "grok", "grok-1-crew-t")
         minted = Recorder()
-        card = crew(self.root, [{"harness": "grok"}], mint_runner=minted)
+        runner = mock.Mock(return_value={"ok": True, "pid": 1})
+        card = crew(self.root, [{"harness": "grok"}], mint_runner=minted, runner=runner)
         self.assertFalse(card["ok"])
         self.assertIn("grok-1-crew-t", card["error"])
         self.assertEqual(minted.calls, [])
+        runner.assert_not_called()
+        self.assertFalse(card["launched"])
+
+    def test_a_spawn_that_fails_or_raises_is_not_launched(self):
+        # The chairs ARE written (join happened) but the window never came up:
+        # launched is read from the runner's result, and the error is on the card
+        # itself, not only buried in windows[i].
+        card = crew(self.root, [{"harness": "grok"}], runner=mock.Mock(return_value={"ok": False, "error": "wt.exe: not found"}))
+        self.assertFalse(card["ok"])
+        self.assertFalse(card["launched"], card)
+        self.assertIn("wt.exe: not found", card["error"])
+        self.assertEqual(len(card["seats"]), 1)
+        card = crew(self.root, [{"harness": "claude"}], runner=mock.Mock(side_effect=OSError("access denied")))
+        self.assertFalse(card["ok"])
+        self.assertFalse(card["launched"], card)
+        self.assertIn("access denied", card["error"])
+        # mint refused (checkout is not a git repo): joined nothing, launched nothing
+        runner = mock.Mock(return_value={"ok": True, "pid": 3})
+        card = crew(self.root, [{"harness": "codex"}], checkout=Path(tempfile.mkdtemp()), runner=runner)
+        self.assertFalse(card["ok"])
+        self.assertIn("mint refused", card["error"])
+        self.assertFalse(card["launched"], card)
+        runner.assert_not_called()
 
     def test_launch_false_writes_the_chairs_and_spawns_nothing(self):
         card = crew(self.root, [{"harness": "grok"}, {"harness": "claude"}])
@@ -393,6 +427,30 @@ class CrewWire(unittest.TestCase):
         self.assertEqual(after["pending"], sids[1:])
         self.assertFalse(after["ok"])
         self.assertNotIn("token", json.dumps(after).lower())
+
+    def test_await_seated_timeout_is_coerced_like_every_other_arg_never_defaulted(self):
+        # review 2026-09-04: a string "0" (what an LLM client sends) fell through
+        # `isinstance(raw, (int, float))` to 120.0 real seconds - the documented
+        # snapshot became a two-minute block. Numeric strings coerce, like
+        # _opt_bool does; out-of-schema values are refused, never replaced.
+        os.environ["CONVOY_MCP_WRITE_TOOLS"] = "1"
+        seen = mock.Mock(return_value={"ok": False, "chairs": [], "pending": [], "connected": [], "stale": []})
+        with mock.patch("convoy.mcp_http.await_seated", seen):
+            self._call("await_seated", seats=["g1"], timeout="0")
+            self.assertEqual(seen.call_args.kwargs["timeout"], 0.0)
+            self._call("await_seated", seats=["g1"], timeout=" 2.5 ")
+            self.assertEqual(seen.call_args.kwargs["timeout"], 2.5)
+            self._call("await_seated", seats=["g1"])
+            self.assertEqual(seen.call_args.kwargs["timeout"], 120.0, "absent means the schema default")
+            self._call("await_seated", seats=["g1"], timeout=10 ** 6)
+            self.assertEqual(seen.call_args.kwargs["timeout"], 600.0, "clamped to AWAIT_SEATED_MAX_S")
+            seen.reset_mock()
+            for bad in ("soon", True, "nan", "inf", [5], {"s": 5}):
+                card = self._call("await_seated", seats=["g1"], timeout=bad)
+                self.assertFalse(card["ok"], bad)
+                self.assertIn("timeout", card["error"], bad)
+                self.assertEqual(card["chairs"], [])
+            seen.assert_not_called()
 
     def test_gated_consent_grants_a_pending_request_over_rpc(self):
         os.environ["CONVOY_MCP_WRITE_TOOLS"] = "1"

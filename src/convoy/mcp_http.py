@@ -703,6 +703,11 @@ def _call_tool(root: Path, name: str, arguments: dict[str, Any] | None) -> dict[
         return {"ok": True, "schema_version": SCHEMA_VERSION, **row}
     if name in ("bring_up", "open"):
         dry = _opt_bool(args, "dry_run", True)
+        # dry_run=false SPAWNS: a live wt.exe on the server host. Same class
+        # as the PR 50 launch hole; the read stays public, the spawn is gated
+        # (found by the item A verifier, 2026-09-04, pre-existing on main).
+        if not dry and not _write_tools_enabled():
+            return {"ok": False, "dry_run": False, "spawned": False, "windows": [], "error": _gate_text(name + " dry_run=false")}
         runner = None if dry else live_runner
         card = bring_up(
             root,
@@ -715,6 +720,9 @@ def _call_tool(root: Path, name: str, arguments: dict[str, Any] | None) -> dict[
     if name in ("hide", "minimize", "background"):
         dry = _opt_bool(args, "dry_run", True)
         mode = _opt_str(args, "mode") or "minimize"
+        # dry_run=false calls ShowWindow on the host's desktop. Gated like a spawn.
+        if not dry and not _write_tools_enabled():
+            return {"ok": False, "dry_run": False, "applied": False, "windows": [], "error": _gate_text(name + " dry_run=false")}
         applier = None if dry else live_applier
         card = hide_windows(
             root,
@@ -731,6 +739,14 @@ def _call_tool(root: Path, name: str, arguments: dict[str, Any] | None) -> dict[
             return {"ok": False, "error": "install requires to", "ran": False}
         dry = _opt_bool(args, "dry_run", True)
         opt_in = _opt_bool(args, "opt_in", False)
+        # A live install runs a vendor installer on the host. The catalog read
+        # (dry) stays public. A live run needs BOTH the user's opt_in and the
+        # write gate; opt_in is checked first so its refusal ("opt_in
+        # required") reads the same on every process, gated or not.
+        if not dry and not opt_in:
+            return install_harness(to, dry_run=False, opt_in=False)
+        if not dry and not _write_tools_enabled():
+            return {"ok": False, "to": to, "dry_run": False, "ran": False, "error": _gate_text("install dry_run=false")}
         return install_harness(to, dry_run=dry, opt_in=opt_in)
     if name == "choices":
         return launch_choices(root)
@@ -832,8 +848,22 @@ def _call_tool(root: Path, name: str, arguments: dict[str, Any] | None) -> dict[
             return {"ok": False, "chairs": [], "error": "await_seated requires seats: a non-empty list of chair ids"}
         if not _write_tools_enabled():
             return {"ok": False, "chairs": [], "error": _gate_text("await_seated")}
+        # Coerce like _opt_bool does, never default past a value the caller
+        # sent: the string "0" (what an LLM client sends for the documented
+        # snapshot) fell through to 120 real seconds (review 2026-09-04).
+        # Out-of-schema values are refused, not replaced.
         raw = args.get("timeout")
-        timeout = float(raw) if isinstance(raw, (int, float)) and not isinstance(raw, bool) else 120.0
+        if raw is None:
+            timeout = 120.0
+        elif isinstance(raw, bool) or not isinstance(raw, (int, float, str)):
+            return {"ok": False, "chairs": [], "error": "await_seated timeout must be a number of seconds, got " + repr(raw)}
+        else:
+            try:
+                timeout = float(str(raw).strip())
+            except ValueError:
+                return {"ok": False, "chairs": [], "error": "await_seated timeout must be a number of seconds, got " + repr(raw)}
+            if timeout != timeout or timeout in (float("inf"), float("-inf")):
+                return {"ok": False, "chairs": [], "error": "await_seated timeout must be finite, got " + repr(raw)}
         try:
             return await_seated(root, [str(s) for s in seats], timeout=min(max(timeout, 0.0), AWAIT_SEATED_MAX_S))
         except ValueError as e:
