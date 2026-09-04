@@ -1,4 +1,4 @@
-"""Black-box install: copy the pack somewhere with no src/ and no repo around
+﻿"""Black-box install: copy the pack somewhere with no src/ and no repo around
 it, then resolve it the way a marketplace installer would: marketplace.json ->
 pluginRoot/source -> manifests -> mcp.json -> skills/*/SKILL.md."""
 import json
@@ -86,9 +86,10 @@ class PluginInstallBlackBox(unittest.TestCase):
     def test_pack_reads_effort_from_the_pack_copy(self):
         pack = self._pack()
         wizard = (pack / "skills" / "convoy-wizard" / "SKILL.md").read_text(encoding="utf-8")
-        self.assertIn("plugin/convoy/harness_effort.json", wizard)
+        self.assertIn("../../harness_effort.json", wizard)
         self.assertNotIn("Read `src/convoy/harness_effort.json`", wizard)
 
 
 if __name__ == "__main__":
     unittest.main()
+

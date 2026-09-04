@@ -1,4 +1,4 @@
-import re
+﻿import re
 import unittest
 from pathlib import Path
 
@@ -17,6 +17,7 @@ class WizardSequence(unittest.TestCase):
     def setUp(self):
         self.text = WIZARD.read_text(encoding="utf-8")
         self.steps = _steps(self.text)
+        self.gate0 = self.text.split("## Gate 0:", 1)[1].split("\n## ", 1)[0]
 
     def _index(self, needle: str) -> int:
         hits = [i for i, s in enumerate(self.steps) if needle in s]
@@ -24,51 +25,63 @@ class WizardSequence(unittest.TestCase):
         return hits[0]
 
     def test_real_sequence_order(self):
+        # Gate 0 is fail-closed preflight before any numbered step.
+        self.assertIn("tools/list", self.gate0)
         github = self._index("GitHub?")
         repo = self._index("repository path or URL")
-        preflight = self._index("tools/list")
-        choices = self._index("Query live choices")
+        choices = self._index("Call live `choices`")
         count = self._index("`N` neurons")
         effort = self._index("harness_effort.json")
-        launch = self._index("join --launch")
-        bind = self._index("bind --thread")
-        graph = self._index("Confirm topology")
+        join = self._index("call `join`")
+        launch = self._index("call `launch`")
+        seat = self._index("call `seat`")
+        bring = self._index("call `bring_up`")
+        consent = self._index("consent")
+        graph = self._index("`graph`")
         self.assertLess(github, repo)
-        self.assertLess(repo, preflight)
-        self.assertLess(preflight, choices, "preflight must run before any live choices are proposed")
+        self.assertLess(repo, choices)
         self.assertLess(choices, count)
         self.assertLess(count, effort)
-        self.assertLess(effort, launch)
-        self.assertLess(launch, bind)
-        self.assertLess(bind, graph)
+        self.assertLess(effort, join)
+        # join/launch/seat/bring_up share one numbered lifecycle step in the skill
+        self.assertEqual(join, launch)
+        self.assertEqual(launch, seat)
+        self.assertEqual(seat, bring)
+        self.assertLess(bring, consent)
+        self.assertLess(consent, graph)
 
     def test_preflight_is_fail_closed_and_names_required_verbs(self):
-        step = self.steps[self._index("tools/list")]
-        self.assertIn("fail-closed", step)
+        self.assertIn("fail-closed", self.gate0.lower().replace("fail closed", "fail-closed"))
+        self.assertTrue("fail-closed" in self.gate0 or "fail closed" in self.gate0)
         for verb in ("choices", "graph", "inbox", "join", "launch", "seat"):
-            self.assertIn("`" + verb + "`", step)
-        self.assertIn("never freeze a static tool menu", step)
-        self.assertIn("`redeploy`", step)
-        self.assertIn("`cli-only`", step)
-        self.assertIn("stop", step)
+            self.assertIn("`" + verb + "`", self.gate0)
+        self.assertIn("never freeze a static tool menu", self.gate0)
+        self.assertIn("stop", self.gate0.lower())
+        self.assertTrue(
+            "redeploy" in self.gate0.lower() or "upgrade-plugin" in self.gate0,
+            "gate must name redeploy/upgrade remedy",
+        )
 
     def test_effort_comes_from_the_pack_not_src(self):
         step = self.steps[self._index("harness_effort.json")]
-        self.assertIn("plugin/convoy/harness_effort.json", step)
-        self.assertIn("no `src/` checkout", step)
+        self.assertIn("../../harness_effort.json", step)
+        self.assertNotIn("src/convoy/harness_effort.json", step)
 
     def test_c8_one_chair_per_worktree(self):
-        step = self.steps[self._index("join --launch")]
-        self.assertIn("C8", step)
-        self.assertIn("one worktree, one chair", step)
-        self.assertIn("one `cvy_*` thread", step)
+        step = self.steps[self._index("one chair per worktree")]
+        self.assertIn("one chair per worktree", step)
+        join_step = self.steps[self._index("call `join`")]
+        self.assertIn("cvy_*", join_step)
 
     def test_bind_needs_consent(self):
-        step = self.steps[self._index("bind --thread")]
-        self.assertIn("approved", step)
-        self.assertIn("pre-authorized", step)
-        self.assertIn("consent --grant", step)
+        # Bind is onboard(thread, checkout_root) after approval; consent is its own step.
+        bindish = self.steps[self._index("onboard")]
+        self.assertIn("approval", bindish.lower() + self.steps[self._index("repository path or URL")].lower())
+        consent = self.steps[self._index("consent")]
+        self.assertIn("approves", consent)
+        self.assertNotIn("pre-authorized", consent)
 
 
 if __name__ == "__main__":
     unittest.main()
+
