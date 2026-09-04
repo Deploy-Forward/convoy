@@ -16,12 +16,17 @@ plugin/convoy/
 ├── skills/
 │   ├── convoy/SKILL.md
 │   └── convoy-wizard/SKILL.md
-└── .cursor-plugin/plugin.json
+├── .cursor-plugin/plugin.json
+└── .grok-plugin/plugin.json   (xAI indexer: skills + mcp.json)
 ```
 
 `plugin.json` is Agent Plugins format (`agent-plugins.org` schema). The
 `.cursor-plugin/plugin.json` wrapper is included for Cursor marketplace
-multi-plugin discovery flows.
+multi-plugin discovery flows. `.grok-plugin/plugin.json` is what
+`xai-org/plugin-marketplace` `extract_plugin` loads (it ignores Agent Plugins
+`plugin.json` and Cursor's wrapper); `mcpServers: "mcp.json"` is how the
+indexer finds the streamable-http server. Catalog entry:
+[`docs/xai-plugin-marketplace.md`](../../docs/xai-plugin-marketplace.md).
 
 ## Local IDE test
 
