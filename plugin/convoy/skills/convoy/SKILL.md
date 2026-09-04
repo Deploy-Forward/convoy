@@ -13,9 +13,11 @@ thread orchestration through Convoy MCP + CLI.
 1. Always fetch the live MCP `tools/list` before presenting capabilities.
 2. Never hardcode tool counts, stale tool names, or a frozen catalog.
 3. If a tool is not returned by live `tools/list`, mark it unavailable instead
-   of guessing. `python -m convoy preflight` scores the live list against the
-   wizard's required verbs and says per gap whether a redeploy fixes it or
-   the verb is CLI-only.
+   of guessing. Operators with a source checkout can run
+   `python -m convoy preflight` to score the live list against the wizard's
+   required verbs; it says per gap whether a redeploy fixes it or the tool is
+   not registered on `main` at all. A marketplace install has no CLI and
+   simply stays RED.
 
 ## Execution rules
 

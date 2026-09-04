@@ -10,15 +10,19 @@ import json
 import urllib.request
 from typing import Any, Callable
 
-from .mcp_http import TOOLS as PACKAGED_TOOLS
+from .mcp_http import _WRITE_TOOLS as WRITE_GATED, TOOLS as PACKAGED_TOOLS
 
 PUBLIC_MCP_URL = "https://convoy.bot/mcp"
 
-# What the wizard sequence needs (FIRE 2026-09-04). Order is the wizard order.
-REQUIRED_WIZARD_VERBS: tuple[str, ...] = ("choices", "graph", "inbox", "join", "launch", "seat")
+# Every verb the wizard skill calls (plugin/convoy/skills/convoy-wizard, Gate 0).
+# A dependency set, not a menu: user-facing capabilities stay live-only.
+REQUIRED_WIZARD_VERBS: tuple[str, ...] = (
+    "choices", "onboard", "join", "launch", "seat", "bring_up", "neurons", "graph", "send", "inbox",
+)
 
-REMEDY_REDEPLOY = "redeploy"      # packaged server has it; the live deploy lags main
-REMEDY_CLI_ONLY = "cli-only"      # no MCP tool exists on main either; use python -m convoy --root <root> <verb>
+REMEDY_REDEPLOY = "redeploy"              # packaged server registers it; the live deploy lags main
+REMEDY_NOT_REGISTERED = "not-registered"  # no MCP tool on main either; needs a server commit, not a redeploy
+REMEDY_WRITE_GATED = "write-gated"        # packaged, but tools/list hides it until CONVOY_MCP_WRITE_TOOLS=1 on the deploy
 
 
 def packaged_tool_names() -> list[str]:
@@ -35,7 +39,11 @@ def preflight(listed: list[str] | None, *, url: str | None = None, error: str | 
     live = None if listed is None else sorted({str(n) for n in listed})
     live_set = set(live or [])
     missing = [v for v in REQUIRED_WIZARD_VERBS if v not in live_set]
-    remedy = {v: (REMEDY_REDEPLOY if v in packaged else REMEDY_CLI_ONLY) for v in missing}
+    def _remedy(v: str) -> str:
+        if v not in packaged:
+            return REMEDY_NOT_REGISTERED
+        return REMEDY_WRITE_GATED if v in WRITE_GATED else REMEDY_REDEPLOY
+    remedy = {v: _remedy(v) for v in missing}
     ok = listed is not None and not missing
     card: dict[str, Any] = {
         "ok": ok,
@@ -46,19 +54,37 @@ def preflight(listed: list[str] | None, *, url: str | None = None, error: str | 
         "missing": missing,
         "remedy": remedy,
         "frozen_menu": False,
+        "mutation_attempted": False,
         "error": error,
     }
     if listed is None:
-        card["ask"] = "tools/list failed; wizard must not propose seats. Retry, or run the verbs via python -m convoy --root <root>."
+        card["reason"] = "tools-list-failed"
+        card["next"] = "reconnect-or-redeploy-mcp"
+        card["ask"] = "tools/list failed; wizard must not ask setup questions or propose seats. Reconnect or redeploy the configured endpoint, then retry."
     elif missing:
         redeploy = [v for v in missing if remedy[v] == REMEDY_REDEPLOY]
-        cli_only = [v for v in missing if remedy[v] == REMEDY_CLI_ONLY]
+        gated = [v for v in missing if remedy[v] == REMEDY_WRITE_GATED]
+        unregistered = [v for v in missing if remedy[v] == REMEDY_NOT_REGISTERED]
+        card["reason"] = "required-tools-missing"
+        if unregistered:
+            card["next"] = "mcp-server-commit"
+        elif gated:
+            card["next"] = "enable-write-tools-on-deploy"
+        else:
+            card["next"] = "reconnect-or-redeploy-mcp"
         parts = []
         if redeploy:
             parts.append("redeploy the public MCP to pick up: " + ", ".join(redeploy))
-        if cli_only:
-            parts.append("no MCP tool exists on main for: " + ", ".join(cli_only) + "; drive them with python -m convoy --root <root> <verb>")
-        card["ask"] = "wizard fail-closed. " + ". ".join(parts) + ". Do not freeze or pad the menu."
+        if gated:
+            parts.append("the deploy hides write tools until CONVOY_MCP_WRITE_TOOLS=1: " + ", ".join(gated) +
+                         "; that is a deploy decision, not a redeploy")
+        if unregistered:
+            parts.append("no MCP tool is registered on main for: " + ", ".join(unregistered) + "; a redeploy cannot fix that, the server needs a commit")
+        card["ask"] = ("wizard fail-closed. " + ". ".join(parts) +
+                       ". Do not freeze or pad the menu, continue partially, or fall back to the CLI: a marketplace install is not a source checkout.")
+    else:
+        card["reason"] = None
+        card["next"] = None
     return card
 
 

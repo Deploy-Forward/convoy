@@ -43,6 +43,8 @@ https://cursor.com/marketplace/publish
 The plugin skills always require live `tools/list` and must never hardcode a
 frozen catalog. Public MCP `tools/list` may lag `main` until the deployed
 server is redeployed, and some wizard verbs (`choices`, `inbox`, `join`,
-`launch`, `seat`) have no MCP tool on `main` at all: they run through the
-CLI. `python -m convoy preflight` prints the fail-closed card that says
-which is which.
+`launch`, `seat`, `neurons`) have no MCP tool on `main` at all, so a
+redeploy alone cannot make the wizard GREEN. The wizard fails closed on
+either gap; it never falls back to the CLI, because a marketplace install is
+not a source checkout. Operators with a checkout can run
+`python -m convoy preflight` for the card that says which gap is which.
