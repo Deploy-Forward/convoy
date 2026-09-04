@@ -197,7 +197,8 @@ class McpWizardVerbs(unittest.TestCase):
             card = self._call("launch", seat="c-wiz")
         self.assertFalse(card.get("ok"))
         self.assertTrue(_gated(card), card)
-        self.assertFalse(card.get("spawned", False))
+        self.assertIn("spawned", card)
+        self.assertFalse(card.get("spawned"))
         spawn.assert_not_called()
 
     def test_launch_behind_the_gate_calls_launch_seat_with_consent(self):

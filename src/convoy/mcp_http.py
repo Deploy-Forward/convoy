@@ -710,6 +710,12 @@ def handle_rpc(root: Path, msg: dict[str, Any]) -> dict[str, Any] | None:
             if name not in {t["name"] for t in TOOLS} and name != "open":
                 payload = {"ok": False, "error": "tool not found: " + name}
                 is_err = True
+            elif name == "launch" and not _write_tools_enabled():
+                sid = str(arguments.get("seat") or "").strip()
+                payload = {"ok": False, "spawned": False, "error": _gate_text("launch")}
+                if sid:
+                    payload["seat"] = sid
+                is_err = True
             elif name in _WRITE_TOOLS and not _write_tools_enabled():
                 payload = {"ok": False, "error": "write tool disabled on this process: " + name + " (set CONVOY_MCP_WRITE_TOOLS=1 on a gated/loopback deploy)"}
                 is_err = True
