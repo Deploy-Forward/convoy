@@ -20,6 +20,7 @@ SCRIPT = REPO / "scripts" / "mcp_redeploy_verify.py"
 REDEPLOY = REPO / "docs" / "redeploy.md"
 E2E = REPO / "docs" / "e2e-harness.md"
 MARKET = REPO / "docs" / "marketplace-submit.md"
+XAI = REPO / "docs" / "xai-plugin-marketplace.md"
 
 
 class DodPack(unittest.TestCase):
@@ -92,6 +93,20 @@ class DodPack(unittest.TestCase):
         self.assertIn("plugin/convoy", text)
         self.assertIn(".cursor-plugin/marketplace.json", text)
         self.assertIn("does **not** record that a submission was sent", text)
+
+    def test_xai_catalog_entry_is_remote_url_sha_and_nested_path(self):
+        text = XAI.read_text(encoding="utf-8")
+        self.assertIn('"source": "url"', text)
+        self.assertIn("https://github.com/Deploy-Forward/convoy.git", text)
+        self.assertIn("d5c711d51827dab214f5372ad5b6124429dee44a", text)
+        self.assertIn('"path": "plugin/convoy"', text)
+        self.assertIn("xai-org/plugin-marketplace", text)
+        self.assertIn("generate-plugin-index.py", text)
+        self.assertIn("validate-catalog.py", text)
+        self.assertIn("does **not** mean a PR was opened", text)
+        grok = REPO / "plugin" / "convoy" / ".grok-plugin" / "plugin.json"
+        data = json.loads(grok.read_text(encoding="utf-8"))
+        self.assertEqual(data["mcpServers"], "mcp.json")
 
 
 if __name__ == "__main__":

@@ -298,6 +298,9 @@ E2E DoD outline (plugin symlink → Gate 0 → GitHub → choices → N seats / 
 Marketplace submit checklist for `plugin/convoy` against
 https://cursor.com/marketplace/publish: [`docs/marketplace-submit.md`](docs/marketplace-submit.md).
 
+xAI / Grok Build catalog entry (remote url + sha + `plugin/convoy`):
+[`docs/xai-plugin-marketplace.md`](docs/xai-plugin-marketplace.md).
+
 Deploy steps (from an authenticated environment):
 
 1. Do **not** treat `wrangler.jsonc`'s `MCP_ORIGIN` (`https://mcp-origin.example`) as live. Confirm the Worker binding and the tunnel ingress (`docs/redeploy.md`).
