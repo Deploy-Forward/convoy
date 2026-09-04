@@ -166,7 +166,7 @@ def seat(
         extra={
             "convoy_id": cid,
             "worktree": wt,
-            "model": model,
+            "model": model_val,
             "to": to,
             "resume": resume_val,
             "title": title_val,

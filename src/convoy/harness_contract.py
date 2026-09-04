@@ -174,8 +174,10 @@ def effort_applied(harness_id: str, effort: Any) -> bool | None:
 def model_catalog(harness_id: str) -> dict[str, Any]:
     """Per-harness model catalog for the wire: {models, evidence}. models is
     the contract's list or None; None means no local --help enumerates a
-    closed list (live 2026-09-04: none does — every CLI takes a free-form
-    --model), so the card offers a field, not a menu. Never a remembered name."""
+    closed list (live 2026-09-04: none does — every CLI present on this box
+    takes a free-form --model; cursor-agent was not on PATH, so nothing was
+    observed for it), so the card offers a field, not a menu. Never a
+    remembered name."""
     wanted = canonical_harness_id(harness_id)
     for row in harness_entries():
         if row["id"] == wanted:

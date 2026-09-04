@@ -53,7 +53,7 @@
         "evidence": "grok --help (demo box, 2026-09-01, grok 1.0.13); enum from live invalid-value reject in lead research (xhigh, high, medium, low)"
       },
       "models": null,
-      "models_evidence": "unverified 2026-09-04: grok --help (demo box, grok 1.0.13) has -m/--model <MODEL> 'Model ID to use' with no enumeration; `grok models` ('List available models and exit') answers through the leader socket, i.e. the vendor, and Convoy does not call it"
+      "models_evidence": "unverified 2026-09-04: grok --help (demo box, grok 1.0.13) has -m/--model <MODEL> 'Model ID to use' with no enumeration; `grok models --help` says 'List available models and exit' and offers --leader-socket <PATH>; where the list comes from is not stated, and Convoy does not call it"
     },
     {
       "id": "claude",
@@ -156,7 +156,7 @@
         "evidence": "agy --help (demo box, 2026-09-01): --effort low|medium|high; resume is --conversation <ID>, there is no --resume flag"
       },
       "models": null,
-      "models_evidence": "unverified 2026-09-04: agy --help (demo box, 1.1.22) --model 'Model for the current CLI session'; `agy models` ('List available models') is a live listing Convoy does not call"
+      "models_evidence": "unverified 2026-09-04: agy --help (demo box, 1.1.22) --model 'Model for the current CLI session'; `agy models` is described only as 'List available models'; where the list comes from is not stated, and Convoy does not call it"
     },
     {
       "id": "hermes",
@@ -202,7 +202,7 @@
         "evidence": "pi --help (demo box, 2026-09-01): --thinking <level> for the driven model; model pattern also accepts :<thinking>. --resume is a session picker; direct-id resume unverified"
       },
       "models": null,
-      "models_evidence": "unverified 2026-09-04: pi --help (demo box, 0.80.6) --model <pattern> 'Model pattern or ID (supports provider/id and optional :<thinking>)'; a pattern is not a closed list; --list-models is a live listing Convoy does not call"
+      "models_evidence": "unverified 2026-09-04: pi --help (demo box, 0.80.6) --model <pattern> 'Model pattern or ID (supports provider/id and optional :<thinking>)'; a pattern is not a closed list; --list-models [search] is described only as 'List available models (with optional fuzzy search)'; where the list comes from is not stated, and Convoy does not call it"
     }
   ]
 }

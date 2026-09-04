@@ -68,16 +68,22 @@ class WizardSequence(unittest.TestCase):
 
     def test_model_and_effort_come_from_choices_not_a_file(self):
         # Until 2026-09-04 this step told the host to read the pack's
-        # ../../harness_effort.json; a remote grok-bot has no filesystem, so the
-        # model/effort constraints ride on the wire (choices.harnesses[].models,
-        # .effort) and the step must say the host does not read the file.
+        # ../../harness_effort.json for model/effort. The constraints ride on
+        # the wire (choices.harnesses[].models, .effort); the pack copy is the
+        # Gate 0 integrity asset, not the wizard's data source. The step must
+        # say so WITHOUT contradicting Gate 0 step 4 (which has the host verify
+        # the asset is present) and without asserting what the host platform
+        # can or cannot do — nothing in this repo verifies that.
         step = self.steps[self._index("harness_effort.json")]
         self.assertIn("`choices`", step)
         self.assertIn("harnesses[].models", step)
         self.assertIn("harnesses[].effort", step)
-        self.assertIn("never reads", step)
+        self.assertIn("Gate 0", step, "step must reconcile itself with the Gate 0 asset check")
+        self.assertNotIn("no filesystem", self.text)
+        self.assertNotIn("never reads", step)
         self.assertNotIn("src/convoy/harness_effort.json", step)
         self.assertNotIn("../../harness_effort.json", step)
+        self.assertIn("../../harness_effort.json", self.gate0)
 
     def test_c8_one_chair_per_worktree(self):
         step = self.steps[self._index("one chair per worktree")]
