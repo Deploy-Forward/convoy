@@ -153,3 +153,23 @@ The expected security verdict is:
 
 An updated version or a newly visible read tool proves that the Python restart
 landed. It does not authorize calling the public wizard GREEN.
+
+## Attempt 2026-09-04T16:05Z (g2) — still blocked
+
+Worktree `neurons/g2` on `b4b186d925bdb24e414cedd8abfa208d342d98b9`. Public
+Gate 0 remains **RED**. Exact blockers this shell had:
+
+| Probe | Result |
+|---|---|
+| `CLOUDFLARE_API_TOKEN` / `CLOUDFLARE_ACCOUNT_ID` / `WRANGLER_*` in env | absent |
+| `npx wrangler@3 whoami` (Node v20.19.2) | `You are not authenticated. Please run wrangler login.` |
+| `npx wrangler@latest whoami` | Wrangler 4.129.0 requires Node `>=22`; VM is v20.19.2 |
+| `~/.config/.wrangler` | logs + `metrics.json` only; no login |
+| SSH / Windows origin checkout / Win32 service name | absent |
+| Live `POST https://convoy.bot/mcp` `initialize` | HTTP 200, `serverInfo.version=0.1.0` |
+| Live `tools/list` | **13** names: `roster`, `glance`, `onboard`, `terminals`, `context`, `send`, `feed`, `bring_up`, `open`, `hide`, `minimize`, `background`, `install` |
+| `python -m convoy preflight` | RED, exit 1; missing `card, repos, clone, crew, consent, await_seated, neurons, graph, inbox` |
+
+Do not deploy the Worker as a substitute. Do not set
+`CONVOY_MCP_WRITE_TOOLS=1` on the internet-facing origin. Full E2E board:
+`docs/e2e-dod.md`. Marketplace pin/PR body: `docs/marketplace-pr.md`.
