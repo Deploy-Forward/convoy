@@ -69,9 +69,10 @@ After Gate 0 is GREEN:
    refused duplicate with another invented chair name.
 5. Take model/effort constraints from live `choices` alone:
    `harnesses[].effort` (keys, and whether a choice is applied to argv) and
-   `harnesses[].models` with `harnesses[].models_evidence`. The host renders
-   what the wire returns; it has no filesystem and never reads
-   `harness_effort.json` itself. A `null` catalog means no local `--help`
+   `harnesses[].models` with `harnesses[].models_evidence`. Render what the
+   wire returns. The pack's `harness_effort.json` is the Gate 0 integrity
+   asset, not the wizard's data source: the endpoint serving `choices` is
+   the only reader of the contract. A `null` catalog means no local `--help`
    enumerates a closed list: offer a free field and pass the model through as
    typed. A list means `seat`/`join` refuse anything outside it. Never recall
    combinations from memory. Missing model, effort, usage, or availability

@@ -18,6 +18,7 @@ from typing import Any
 
 from .cmd import convoy_root_command
 from .convoy import list_seats, read_thread, seat as write_seat, set_lead, update_seat
+from .harness_contract import validate_effort, validate_model
 from .layer import hook
 
 
@@ -85,13 +86,18 @@ def swap(
     """Replace the occupant of an existing chair. Ordered, fail-closed:
     handoff must exist (FRESH file — newest_handoff selects by mtime), the
     swap row stamps BEFORE the re-seat, resume/vendor_session_id null on
-    every swap, boot prompt carries token + handoff path. effort is validated
-    for the INCOMING harness (update_seat); unset, the old declaration
+    every swap, boot prompt carries token + handoff path. model and effort
+    are validated for the INCOMING harness; unset, the old declaration
     survives only if that harness takes it."""
     hp = Path(handoff)
     if not hp.is_file():
         raise ValueError("refuse swap: handoff file missing: " + handoff)
     _require_seat(root, session_id)
+    # Every refusal happens here, before the row stamps: update_seat would
+    # refuse these too, but by then a kind=swap row and a minted token were
+    # already in the feed asserting a swap that never happened (2026-09-04).
+    validate_model(to, model)
+    validate_effort(to, effort)
     token = _mint_token()
     row = hook(
         root, "swap", "swap " + session_id + " -> " + to + ((" (" + model + ")") if model else ""),

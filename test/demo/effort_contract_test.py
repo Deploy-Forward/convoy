@@ -32,6 +32,7 @@ from convoy.bringup import resume_argv
 from convoy.cli import main
 from convoy.convoy import bind, ensure_id, list_seats, seat, update_seat
 from convoy.harness_contract import effort_contract, load_harness_contract, validate_effort
+from convoy.layer import feed_since
 from convoy.lifecycle import join, swap
 from convoy.mcp_http import make_server
 from convoy.targeted_launch import launch_choices
@@ -188,9 +189,13 @@ class EffortValidatedPerHarness(unittest.TestCase):
         row = self._row("chair-1")
         self.assertIsNone(row["effort"])
         self.assertIsNone(row["effort_applied"])
-        # an explicit effort on swap is validated for the new harness
+        # an explicit effort on swap is validated for the new harness, and the
+        # refusal is silent: no kind=swap row lands for a swap that did not happen
+        feed_before = feed_since(self.root, "1970-01-01T00:00:00.000000Z")
         with self.assertRaises(ValueError):
             swap(self.root, "chair-1", "codex", str(hp), author="chair-1", effort="xhigh")
+        self.assertEqual(self._row("chair-1")["to"], "grok")
+        self.assertEqual(feed_since(self.root, "1970-01-01T00:00:00.000000Z"), feed_before)
         swap(self.root, "chair-1", "codex", str(hp), author="chair-1", effort="extra-high")
         row = self._row("chair-1")
         self.assertEqual(row["effort"], "extra-high")

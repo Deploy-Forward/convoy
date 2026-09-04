@@ -32,7 +32,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 
 from convoy.convoy import bind, ensure_id, list_seats, seat, update_seat  # noqa: E402
 from convoy.harness_contract import load_harness_contract, model_catalog, validate_model  # noqa: E402
+from convoy.layer import feed_since  # noqa: E402
 from convoy.lifecycle import join, swap  # noqa: E402
+from convoy.registry import lookup  # noqa: E402
 from convoy.mcp_http import make_server  # noqa: E402
 from convoy.targeted_launch import launch_choices  # noqa: E402
 
@@ -152,6 +154,11 @@ class SeatValidatesModelAgainstTheCatalog(unittest.TestCase):
         self.assertEqual(validate_model("hermes", "any/model"), "any/model")
         self.assertIsNone(validate_model("hermes", None))
         self.assertIsNone(validate_model("hermes", "  "))
+        # the registry row carries the same normalised value as the seat row:
+        # blank is null in both, never "  " in one and null in the other
+        blank = seat(self.root, "claude", "c-blank", model="  ")
+        self.assertIsNone(blank["model"])
+        self.assertIsNone(lookup(self.root, "c-blank")["model"])
 
     def test_seat_refuses_a_model_outside_a_non_null_catalog_naming_it(self):
         with _catalog("grok", ["grok-fixture-a", "grok-fixture-b"], "fixture"):
@@ -176,9 +183,13 @@ class SeatValidatesModelAgainstTheCatalog(unittest.TestCase):
             self.assertEqual(card["seat"]["model"], "codex-fixture")
             hp = self.root / "h.md"
             hp.write_text("h", encoding="utf-8")
+            feed_before = feed_since(self.root, "1970-01-01T00:00:00.000000Z")
             with self.assertRaises(ValueError):
                 swap(self.root, "x1", "codex", str(hp), author="x1", model="nope")
             self.assertEqual(self._row("x1")["model"], "codex-fixture")
+            # a refused swap is silent: no kind=swap row, no minted token in
+            # the feed asserting a swap that never happened
+            self.assertEqual(feed_since(self.root, "1970-01-01T00:00:00.000000Z"), feed_before)
             # a model does not follow the chair onto a harness whose catalog
             # lacks it: dropped, not refused (the effort precedent)
             seat(self.root, "claude", "chair-9", model="claude-thing")
@@ -237,9 +248,10 @@ class ModelOverTheMcpWire(unittest.TestCase):
 
 class WizardSkillTakesModelsFromTheWire(unittest.TestCase):
     def test_wizard_step_names_choices_not_the_pack_file_as_the_model_source(self):
-        # The artifact under test IS the prose: a remote grok-bot has no
-        # filesystem, so the step that told it to read ../../harness_effort.json
-        # for model/effort must point at choices instead.
+        # The artifact under test IS the prose: the step that told the host to
+        # read ../../harness_effort.json for model/effort must point at
+        # choices instead (the wire is the source; the pack copy is Gate 0's
+        # integrity asset).
         text = (REPO / "plugin" / "convoy" / "skills" / "convoy-wizard" / "SKILL.md").read_text(encoding="utf-8")
         text = text[text.index("## Mandatory wizard sequence"):]  # Gate 0 has its own step 5
         step = [ln for ln in text.splitlines() if ln.startswith("5. ")]
