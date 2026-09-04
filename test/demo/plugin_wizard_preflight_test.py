@@ -47,7 +47,8 @@ class WizardPreflight(unittest.TestCase):
         # join and seat write chair rows and stay hidden until the deploy opts in.
         for verb in ("choices", "neurons", "inbox", "graph"):
             self.assertEqual(card["remedy"][verb], REMEDY_REDEPLOY, verb)
-        for verb in ("join", "seat", "launch"):
+        # mint spawns git and repos runs gh as the host's login (2026-09-04).
+        for verb in ("join", "seat", "launch", "mint", "repos"):
             self.assertEqual(card["remedy"][verb], REMEDY_WRITE_GATED, verb)
         self.assertEqual(card["next"], "enable-write-tools-on-deploy")
         self.assertIn("redeploy the public MCP", card["ask"])
@@ -63,10 +64,10 @@ class WizardPreflight(unittest.TestCase):
         self.assertEqual(card["next"], "reconnect-or-redeploy-mcp")
 
     def test_write_gated_verbs_point_at_the_deploy_switch(self):
-        listed = [v for v in REQUIRED_WIZARD_VERBS if v not in ("join", "seat", "launch")]
+        listed = [v for v in REQUIRED_WIZARD_VERBS if v not in ("join", "seat", "launch", "mint")]
         card = preflight(listed)
-        self.assertEqual(card["missing"], ["join", "launch", "seat"])
-        self.assertEqual(card["remedy"], {v: REMEDY_WRITE_GATED for v in ("join", "launch", "seat")})
+        self.assertEqual(card["missing"], ["join", "launch", "seat", "mint"])
+        self.assertEqual(card["remedy"], {v: REMEDY_WRITE_GATED for v in ("join", "launch", "seat", "mint")})
         self.assertEqual(card["next"], "enable-write-tools-on-deploy")
         self.assertNotIn("redeploy the public MCP", card["ask"])
 

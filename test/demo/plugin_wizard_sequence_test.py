@@ -4,6 +4,7 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
+from convoy.mcp_http import TOOLS
 from convoy.wizard_preflight import REQUIRED_WIZARD_VERBS
 
 REPO = Path(__file__).resolve().parents[2]
@@ -65,6 +66,19 @@ class WizardSequence(unittest.TestCase):
             "redeploy" in self.gate0.lower() or "upgrade-plugin" in self.gate0,
             "gate must name redeploy/upgrade remedy",
         )
+
+    def test_every_registered_verb_the_sequence_calls_is_a_gate0_requirement(self):
+        # review 2026-09-04: step 4 said "call `mint` once" while Gate 0 and
+        # REQUIRED_WIZARD_VERBS omitted mint, so a live list without mint passed
+        # GREEN and step 4 then called an unpromised verb - the fail-open Gate 0
+        # forbids. Derived from TOOLS, not a frozen list: any registered verb
+        # the sequence backticks must be required by the preflight module.
+        registered = {str(t["name"]) for t in TOOLS}
+        sequence = self.text.split("## Mandatory wizard sequence", 1)[1]
+        called = sorted({m for m in re.findall(r"`([a-z_]+)`", sequence) if m in registered})
+        self.assertIn("mint", called, "precondition: the sequence still calls mint")
+        unrequired = [v for v in called if v not in REQUIRED_WIZARD_VERBS]
+        self.assertEqual(unrequired, [], "sequence calls verbs Gate 0 does not require: " + repr(unrequired))
 
     def test_model_and_effort_come_from_choices_not_a_file(self):
         # Until 2026-09-04 this step told the host to read the pack's

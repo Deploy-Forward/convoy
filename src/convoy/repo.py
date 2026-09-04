@@ -9,11 +9,16 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 from pathlib import Path
 from typing import Any, Callable
 
 Runner = Callable[..., subprocess.CompletedProcess]
+# A seat name is one path segment (<checkout>-wt-<name>) and one ref segment
+# (convoy/<name>); the cap is per thread, not a resource limit.
+_SEAT_NAME = re.compile(r"[A-Za-z0-9._-]+")
+MAX_SEATS = 64
 
 # live 2026-09-04: gh version 2.83.2 `gh repo list [<owner>] [flags]`,
 # `--json fields  Output JSON with the specified fields`,
@@ -37,14 +42,22 @@ def checkouts_root() -> Path:
     return base / "checkouts"
 
 
+def _option_shaped(text: str) -> bool:
+    """'--upload-pack=calc x://h/o/r' contains '://' and git reads it as an
+    option (review 2026-09-04). Nothing starting with '-' is a url here."""
+    return text.strip().startswith("-")
+
+
 def is_repo_url(text: str | None) -> bool:
     t = (text or "").strip()
-    return "://" in t or t.startswith("git@")
+    return not _option_shaped(t) and ("://" in t or t.startswith("git@"))
 
 
 def checkout_path_for(url: str) -> Path:
     """<checkouts_root>/<owner>/<repo> from an https or scp-style git URL."""
     t = url.strip()
+    if _option_shaped(t):
+        raise ValueError("refuse url starting with '-': " + t)
     tail = t.split("://", 1)[1] if "://" in t else t.split(":", 1)[-1]
     parts = [p for p in tail.replace("\\", "/").split("/") if p]
     if "://" in t:
@@ -102,12 +115,16 @@ def clone(url: str, dest: Path | str, runner: Runner | None = None) -> dict[str,
     run = runner or run_argv
     target = Path(dest)
     card: dict[str, Any] = {"ok": False, "url": url, "dest": str(target), "cloned": False}
+    if _option_shaped(url):
+        card["error"] = "refuse url starting with '-': " + url
+        return card
     if target.exists() and any(target.iterdir()):
         card["error"] = "dest is not empty: " + str(target)
         return card
     target.parent.mkdir(parents=True, exist_ok=True)
     try:
-        r = run(["git", "clone", url, str(target)], None)
+        # `--` ends option parsing: the url is a positional to git, never a flag.
+        r = run(["git", "clone", "--", url, str(target)], None)
     except (OSError, subprocess.SubprocessError) as exc:
         card["error"] = _fail(exc)
         return card
@@ -129,13 +146,19 @@ def mint_worktrees(checkout: Path | str, n: int, names: list[str] | None = None,
     run = runner or run_argv
     base = Path(checkout)
     count = int(n)
-    seat_names = list(names) if names is not None else ["neuron-" + str(i + 1) for i in range(count)]
     card: dict[str, Any] = {"ok": False, "checkout": str(base), "worktrees": []}
-    if count < 1:
-        card["error"] = "n must be at least 1"
+    if not 1 <= count <= MAX_SEATS:
+        card["error"] = "n must be between 1 and " + str(MAX_SEATS)
         return card
+    seat_names = list(names) if names is not None else ["neuron-" + str(i + 1) for i in range(count)]
     if len(seat_names) != count:
         card["error"] = "names has " + str(len(seat_names)) + " entries for n=" + str(count)
+        return card
+    bad = [x for x in seat_names if not _SEAT_NAME.fullmatch(str(x))]
+    if bad:
+        # A name is one path segment and one ref segment; '../x' would leave
+        # the sibling convention, and git refusing it later is not our honesty.
+        card["error"] = "refuse seat name (letters, digits, . _ - only): " + repr(bad)
         return card
     if not (base / ".git").exists():
         card["error"] = "not a git checkout: " + str(base)

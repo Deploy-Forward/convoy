@@ -74,9 +74,10 @@ class WizardProseMatchesWire(unittest.TestCase):
         # the write gate. Whichever doc talks about the public catalog lagging
         # must attribute the hidden verbs to the gate, not to non-existence.
         # onboard joined the gate 2026-09-04 (item D): it binds the thread and
-        # clones a URL.
+        # clones a URL. mint (spawns git) and repos (gh as the host's login)
+        # joined after review the same day.
         gated = sorted(v for v in _registered_wizard_verbs() if v in _WRITE_TOOLS)
-        self.assertEqual(gated, ["join", "launch", "onboard", "seat"])
+        self.assertEqual(gated, ["join", "launch", "mint", "onboard", "repos", "seat"])
         readme = DOCS["plugin/convoy/README.md"].read_text(encoding="utf-8-sig")
         self.assertIn("CONVOY_MCP_WRITE_TOOLS", readme, "README must name the gate that hides seat/join/launch")
         for verb in gated:

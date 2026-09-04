@@ -12,11 +12,13 @@ Three guarantees:
 2. The worktree is DERIVED from the checkout, one per seat, a sibling named
    the way this very checkout is (convoy-wt-fable): the caller does not
    supply it. Proven with real, local, fast git.
-3. On the wire, `repos` is a public read (names and URLs, never a token);
-   `clone`, `mint` and `onboard` spawn git or bind the thread, so they sit
-   behind the write gate and are HIDDEN from a public tools/list, not
-   listed-and-refusing. The cloned repo never gets .convoy/ or thread.md as
-   tracked files: clone writes them into .git/info/exclude.
+3. On the wire, `repos` runs `gh repo list` as whoever is logged in on the
+   MCP HOST - the conductor's inventory, private names included - so it is
+   gated with `clone`, `mint` and `onboard` (review 2026-09-04: a public
+   deploy could only disclose the operator's repos and spend their quota).
+   All four are HIDDEN from a public tools/list, not listed-and-refusing.
+   The cloned repo never gets .convoy/ or thread.md as tracked files: clone
+   writes them into .git/info/exclude.
 """
 import io
 import json
@@ -37,7 +39,7 @@ from convoy.cli import main
 from convoy.convoy import read_github, read_id, read_thread
 from convoy.mcp_http import _WRITE_TOOLS, TOOLS, make_server
 from convoy.onboard import onboard
-from convoy.repo import checkout_path_for, clone, list_repos, mint_worktrees
+from convoy.repo import checkout_path_for, clone, is_repo_url, list_repos, mint_worktrees
 
 ROOT = Path(__file__).resolve().parents[2]
 FAKES = (ROOT / "test" / "fakes").resolve()
@@ -126,11 +128,28 @@ class Clone(unittest.TestCase):
         dest = Path(tempfile.mkdtemp()) / "acme" / "api"
         runner = Recorder(side_effect=lambda argv: (dest / ".git" / "info").mkdir(parents=True))
         card = clone("https://github.com/acme/api.git", dest, runner=runner)
-        self.assertEqual(runner.calls, [(["git", "clone", "https://github.com/acme/api.git", str(dest)], None)])
+        # `--` ends git's option parsing: the url is a positional, never a flag
+        self.assertEqual(runner.calls, [(["git", "clone", "--", "https://github.com/acme/api.git", str(dest)], None)])
         self.assertTrue(card["ok"], card)
         self.assertEqual(card["url"], "https://github.com/acme/api.git")
         self.assertEqual(_norm(card["dest"]), _norm(dest))
         self.assertTrue(card["cloned"])
+
+    def test_an_option_shaped_url_is_refused_before_git_runs(self):
+        # review 2026-09-04: '--upload-pack=calc x://h/o/r' has '://' so it
+        # read as a URL, and without '--' git parsed it as the upload-pack
+        # option. Convoy refuses it as a url at all, and clone refuses it too.
+        evil = "--upload-pack=calc x://h/o/r"
+        self.assertFalse(is_repo_url(evil))
+        self.assertTrue(is_repo_url("https://github.com/acme/api.git"))
+        runner = Recorder()
+        card = clone(evil, Path(tempfile.mkdtemp()) / "x", runner=runner)
+        self.assertFalse(card["ok"])
+        self.assertFalse(card["cloned"])
+        self.assertEqual(runner.calls, [], "a refusal never spawns")
+        self.assertIn("-", card["error"])
+        with self.assertRaises(ValueError):
+            checkout_path_for(evil)
 
     def test_clone_refuses_a_nonempty_dest_without_running_git(self):
         dest = Path(tempfile.mkdtemp())
@@ -227,6 +246,23 @@ class MintWorktrees(unittest.TestCase):
         self.assertFalse(card["ok"])
         self.assertEqual(runner.calls, [])
 
+    def test_a_name_that_leaves_the_sibling_convention_or_an_absurd_n_is_refused_by_convoy_not_git(self):
+        # review 2026-09-04: names=['../../escape'] derived a path outside the
+        # checkout's parent and a ref git happened to refuse. Convoy refuses
+        # first, before any git runs, and caps n.
+        checkout = _git_repo()
+        runner = Recorder()
+        for bad in (["../../escape"], ["a b"], [""], ["x/y"]):
+            card = mint_worktrees(checkout, len(bad), names=bad, runner=runner)
+            self.assertFalse(card["ok"], bad)
+            self.assertIn("name", card["error"], bad)
+        card = mint_worktrees(checkout, 10 ** 6, runner=runner)
+        self.assertFalse(card["ok"])
+        self.assertIn("n", card["error"])
+        self.assertEqual(runner.calls, [], "a refusal never spawns")
+        ok = mint_worktrees(checkout, 2, names=["grok-1", "claude.v2_x"], runner=Recorder())
+        self.assertTrue(ok["ok"], ok)
+
 
 class OnboardRepository(unittest.TestCase):
     def setUp(self):
@@ -247,8 +283,8 @@ class OnboardRepository(unittest.TestCase):
         card = onboard(self.root, ["grok"], thread="demo", checkout_root=url, clone_runner=runner)
         self.assertTrue(card["ok"], card)
         self.assertEqual(len(runner.calls), 1)
-        self.assertEqual(runner.calls[0][0][:3], ["git", "clone", url])
-        self.assertEqual(_norm(runner.calls[0][0][3]), _norm(expected))
+        self.assertEqual(runner.calls[0][0][:4], ["git", "clone", "--", url])
+        self.assertEqual(_norm(runner.calls[0][0][4]), _norm(expected))
         self.assertEqual(_norm(card["root"]), _norm(expected))
         self.assertEqual(read_thread(expected), "demo")
         self.assertEqual(read_id(expected), card["convoy_id"])
@@ -275,6 +311,29 @@ class OnboardRepository(unittest.TestCase):
         self.assertFalse(card["ok"])
         self.assertIn("repository not found", card["error"])
         self.assertFalse((self.home / "checkouts" / "acme" / "api" / ".convoy").exists())
+
+    def test_a_refused_bind_records_no_github_answer(self):
+        # review 2026-09-04: set_github ran before the bind_status check, so a
+        # REFUSED onboard (checkout bound to another thread) still wrote
+        # .convoy/github onto that other thread's root. A refusal never mutates.
+        local = Path(tempfile.mkdtemp())
+        first = onboard(self.root, ["grok"], thread="other-thread", checkout_root=str(local))
+        self.assertTrue(first["ok"], first)
+        self.assertIsNone(read_github(local))
+        card = onboard(self.root, ["grok"], thread="demo", checkout_root=str(local), github=True)
+        self.assertFalse(card["ok"])
+        self.assertIn("already bound to other-thread", card["error"])
+        self.assertIsNone(read_github(local), "a refused onboard wrote the GitHub answer")
+        self.assertEqual(read_thread(local), "other-thread")
+        # the same refusal through a URL whose checkout already exists and is bound elsewhere
+        url = "https://github.com/acme/api.git"
+        runner = Recorder(side_effect=lambda argv: (Path(argv[-1]) / ".git" / "info").mkdir(parents=True))
+        expected = self.home / "checkouts" / "acme" / "api"
+        self.assertTrue(onboard(self.root, ["grok"], thread="other-thread", checkout_root=url, clone_runner=runner)["ok"])
+        (expected / ".convoy" / "github").unlink()
+        card = onboard(self.root, ["grok"], thread="demo", checkout_root=url, clone_runner=Recorder())
+        self.assertFalse(card["ok"])
+        self.assertIsNone(read_github(expected), "a refused onboard wrote the GitHub answer")
 
     def test_github_no_is_recorded_on_a_local_checkout_and_unknown_stays_null(self):
         local = Path(tempfile.mkdtemp())
@@ -333,11 +392,10 @@ class RepoWire(unittest.TestCase):
     def _names(self):
         return {t["name"] for t in _rpc(self.mcp, "tools/list")["result"]["tools"]}
 
-    def test_public_list_has_repos_and_hides_clone_mint_onboard(self):
+    def test_public_list_hides_repos_clone_mint_onboard(self):
         names = self._names()
-        self.assertIn("repos", names)
-        for hidden in ("clone", "mint", "onboard"):
-            self.assertNotIn(hidden, names, hidden + " spawns git or binds the thread: hidden, not listed-and-refusing")
+        for hidden in ("repos", "clone", "mint", "onboard"):
+            self.assertNotIn(hidden, names, hidden + " runs gh/git as the host or binds the thread: hidden, not listed-and-refusing")
             self.assertIn(hidden, _WRITE_TOOLS)
         os.environ["CONVOY_MCP_WRITE_TOOLS"] = "1"
         gated = self._names()
@@ -345,21 +403,39 @@ class RepoWire(unittest.TestCase):
             self.assertIn(name, gated)
         self.assertEqual({t["name"] for t in TOOLS}, gated)
 
-    def test_repos_answers_public_with_names_and_no_token(self):
+    def test_repos_answers_gated_with_names_and_no_token_and_says_whose_account(self):
+        os.environ["CONVOY_MCP_WRITE_TOOLS"] = "1"
         card = self._call("repos")
         self.assertTrue(card["ok"], card)
         self.assertEqual([r["name"] for r in card["repos"]], ["acme/api", "acme/site"])
         self.assertNotIn("token", json.dumps(card).lower())
+        desc = next(t["description"] for t in TOOLS if t["name"] == "repos")
+        self.assertNotIn("the user's", desc, "on the wire gh is the MCP host's login, not the caller's")
+        self.assertIn("host", desc)
 
-    def test_public_clone_and_mint_refuse_before_git_runs(self):
+    def test_public_repos_clone_and_mint_refuse_before_gh_or_git_runs(self):
         runner = Recorder()
         with mock.patch("convoy.repo.run_argv", runner):
-            for name, args in (("clone", {"url": "https://github.com/acme/api.git"}),
+            for name, args in (("repos", {}),
+                               ("clone", {"url": "https://github.com/acme/api.git"}),
                                ("mint", {"checkout": str(self.root), "n": 2})):
                 card = self._call(name, **args)
                 self.assertFalse(card["ok"], (name, card))
                 self.assertIn("CONVOY_MCP_WRITE_TOOLS", card["error"], name)
+                self.assertNotIn("acme", json.dumps(card), name)
+            refused = self._call("repos")
+            self.assertIsNone(refused.get("repos"), "a refused repos never carries rows, not even []")
+            self.assertIsNone(refused.get("count"), "a refused repos never counts, not even 0")
         self.assertEqual(runner.calls, [], "a refusal never spawns")
+
+    def test_gated_clone_refuses_an_option_shaped_url_without_spawning(self):
+        os.environ["CONVOY_MCP_WRITE_TOOLS"] = "1"
+        runner = Recorder()
+        with mock.patch("convoy.repo.run_argv", runner):
+            card = self._call("clone", url="--upload-pack=calc x://h/o/r")
+        self.assertFalse(card["ok"], card)
+        self.assertFalse(card["cloned"])
+        self.assertEqual(runner.calls, [])
 
     def test_gated_clone_lands_under_the_convoy_home_and_mint_derives_worktrees(self):
         os.environ["CONVOY_MCP_WRITE_TOOLS"] = "1"
