@@ -22,6 +22,19 @@ install. To run from a checkout without installing, put `src` on the path:
 `PYTHONPATH=src python test/run.py` on bash, or
 `$env:PYTHONPATH='src'; python test/run.py` in PowerShell.
 
+### Grok Marketplace plugin
+
+The xAI-compatible plugin root is [`plugin/convoy`](plugin/convoy): it ships
+`.grok-plugin/plugin.json`, `.mcp.json`, and the `convoy` +
+`convoy-wizard` skills. The official source of truth for Grok Marketplace
+discovery is
+[`xai-org/plugin-marketplace`](https://github.com/xai-org/plugin-marketplace);
+its third-party entry must pin a reviewed full commit SHA from this repository
+and set `path` to `plugin/convoy`. After that catalog PR merges, install from
+**Settings → Plugins → Marketplace** in Grok Bot (or `/marketplace` in Grok
+Build). The Agent Plugins/Cursor manifests remain compatibility surfaces, not
+the xAI catalog.
+
 ### Receiving messages needs a command that resolves
 
 Neurons receive through a harness hook, and a hook runs in its own shell that

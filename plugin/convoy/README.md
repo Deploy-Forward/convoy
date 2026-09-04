@@ -1,42 +1,74 @@
-# Convoy Agent Plugin (Marketplace pack)
+# Convoy plugin (Grok Build marketplace pack)
 
-This folder is the installable Agent Plugin pack for Convoy so plugin search
-can find **Convoy** and install both:
+This folder is the installable Convoy plugin root. The official xAI Grok
+Marketplace can clone this repository at a pinned commit with
+`path: "plugin/convoy"` and discover:
 
-- `mcp.json` (public Convoy MCP server)
+- `.mcp.json` (the Convoy hosted MCP endpoint)
 - `skills/` (`convoy` + `convoy-wizard`)
+- `.grok-plugin/plugin.json` (display metadata)
 
 ## Layout
 
 ```text
 plugin/convoy/
-├── plugin.json
-├── mcp.json
+├── .grok-plugin/plugin.json
+├── .mcp.json
 ├── harness_effort.json   (byte-identical copy of src/convoy/harness_effort.json)
 ├── skills/
 │   ├── convoy/SKILL.md
 │   └── convoy-wizard/SKILL.md
+├── plugin.json            (Agent Plugins compatibility)
+├── mcp.json               (Agent Plugins compatibility)
 └── .cursor-plugin/plugin.json
 ```
 
-`plugin.json` is Agent Plugins format (`agent-plugins.org` schema). The
-`.cursor-plugin/plugin.json` wrapper is included for Cursor marketplace
-multi-plugin discovery flows.
+The unprefixed manifests and `.cursor-plugin` wrapper remain compatibility
+surfaces; the xAI catalog and Grok Build discover `.mcp.json`,
+`.grok-plugin/plugin.json`, and `skills/`.
 
-## Local IDE test
+## Install from Grok Marketplace
 
-Clone/copy this folder to:
+After the catalog entry is accepted in
+[`xai-org/plugin-marketplace`](https://github.com/xai-org/plugin-marketplace),
+open **Settings → Plugins → Marketplace** in Grok Bot, search for **Convoy**,
+and install it. In Grok Build, `/marketplace` is the equivalent browser.
 
-`~/.cursor/plugins/local/convoy`
+The official catalog entry is a third-party remote source:
 
-Then reload Cursor and check Plugins search for **Convoy**. Installing should
-add the Convoy MCP endpoint and both skills.
+```json
+{
+  "source": "url",
+  "url": "https://github.com/Deploy-Forward/convoy.git",
+  "sha": "<full reviewed 40-character commit>",
+  "path": "plugin/convoy"
+}
+```
 
-## Publish path
+The SHA must be the commit containing this pack. After adding or updating the
+entry, regenerate `.grok-plugin/plugin-index.json` with the official
+marketplace's `python3 scripts/generate-plugin-index.py`; never hand-edit the
+generated index.
 
-Submit the repository to:
+## Network and permission disclosure
 
-https://cursor.com/marketplace/publish
+- The installed MCP config connects only to `https://convoy.bot/mcp`.
+- The plugin reads no API key, environment variable, SSH key, or GitHub token.
+- `repos` runs `gh repo list` as the account logged in on the **MCP host**.
+  A per-user/local endpoint therefore sees that user's login; the shared public
+  endpoint must keep `repos` hidden.
+- Repository choices, thread identifiers, and routed task text are sent to the
+  configured MCP endpoint when the user invokes those tools.
+- Public Convoy is read-only for lifecycle operations. Completing the wizard
+  requires an authenticated or gated user-controlled endpoint; the plugin does
+  not silently enable its write gate or install vendor harnesses.
+
+## Cursor compatibility test
+
+Clone/copy this folder to `~/.cursor/plugins/local/convoy`, reload Cursor, and
+check Plugins search for **Convoy**. Installing should add the same endpoint
+and both skills. Cursor's marketplace wrapper is compatibility metadata, not
+the Grok Marketplace source of truth.
 
 ## Host rendering
 
