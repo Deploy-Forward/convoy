@@ -83,11 +83,21 @@ class PluginInstallBlackBox(unittest.TestCase):
                          "plugin/convoy/harness_effort.json diverged from src/convoy/harness_effort.json; copy it over")
         self.assertTrue(load_harness_contract().get("harnesses"))
 
-    def test_pack_reads_effort_from_the_pack_copy(self):
+    def test_installed_wizard_reads_no_file_at_all_for_model_or_effort(self):
+        # This test used to require the wizard to read the PACK copy of
+        # harness_effort.json rather than the src copy - correct while the
+        # wizard read a file at all. Item F (2026-09-04) removed the read: a
+        # marketplace install talks to a REMOTE endpoint and has no filesystem
+        # to read, so model/effort/usage now arrive on the `card` row. The
+        # stronger claim replaces the weaker one; the pack copy still ships
+        # (asserted above) because it is the endpoint's own contract.
         pack = self._pack()
         wizard = (pack / "skills" / "convoy-wizard" / "SKILL.md").read_text(encoding="utf-8")
-        self.assertIn("../../harness_effort.json", wizard)
-        self.assertNotIn("Read `src/convoy/harness_effort.json`", wizard)
+        flat = " ".join(wizard.split())
+        self.assertNotIn("Read `src/convoy/harness_effort.json`", flat)
+        self.assertNotIn("Read `../../harness_effort.json`", flat)
+        self.assertIn("never the wizard's data source", flat)
+        self.assertTrue((pack / "harness_effort.json").is_file(), "the pack still ships the contract copy")
 
 
 if __name__ == "__main__":
