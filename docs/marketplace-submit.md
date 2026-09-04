@@ -61,3 +61,4 @@ Then Developer: Reload Window → Customize → Convoy. Details: `docs/e2e-harne
 
 - `cursor.directory` self-serve listing (separate system).
 - Team marketplace import (Dashboard → Plugins) — uses the same `marketplace.json` but is not `/marketplace/publish`.
+- **xAI / Grok Build catalog** — different repo (`xai-org/plugin-marketplace`), remote url + SHA + `path: plugin/convoy`. Draft entry and CONTRIBUTING checklist: [`docs/xai-plugin-marketplace.md`](xai-plugin-marketplace.md).
