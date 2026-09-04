@@ -65,6 +65,8 @@ class PluginMarketplacePackContract(unittest.TestCase):
         self.assertTrue(skill.is_file(), "plugin convoy-wizard skill missing")
         text = skill.read_text(encoding="utf-8")
         self.assertIn("GitHub?", text)
+        self.assertIn("tools/list", text)
+        self.assertIn("never freeze a static tool menu", text)
         self.assertIn("choices", text)
         self.assertIn("join --launch", text)
         self.assertIn("bring_up", text)
