@@ -82,7 +82,7 @@ class WizardProseMatchesWire(unittest.TestCase):
         # crew mints, joins and launches in ONE call, so join/launch/seat/mint
         # stay gated tools but are no longer verbs Gate 0 requires (item F).
         gated = sorted(v for v in _registered_wizard_verbs() if v in _WRITE_TOOLS)
-        self.assertEqual(gated, ["await_seated", "consent", "crew", "onboard", "repos"])
+        self.assertEqual(gated, ["await_seated", "clone", "consent", "crew", "onboard", "repos"])
         readme = DOCS["plugin/convoy/README.md"].read_text(encoding="utf-8-sig")
         self.assertIn("CONVOY_MCP_WRITE_TOOLS", readme, "README must name the gate that hides seat/join/launch")
         for verb in gated:

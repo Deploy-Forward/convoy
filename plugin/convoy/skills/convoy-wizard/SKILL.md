@@ -29,7 +29,7 @@ state.
    cached response, repository source, documentation, or a historical count;
    never freeze a static tool menu.
 3. Extract the live-returned names and require every verb the wizard calls:
-   `card`, `repos`, `onboard`, `crew`, `consent`, `await_seated`, `neurons`,
+   `card`, `repos`, `clone`, `onboard`, `crew`, `consent`, `await_seated`, `neurons`,
    `graph`, `send`, and `inbox`. This dependency set is a gate, not a menu;
    user-facing capabilities must still contain only live-returned tools.
 4. Immediately before the first state-changing lifecycle call, repeat
@@ -53,7 +53,7 @@ For an absent endpoint, direct the user to install or re-enable the Convoy
 plugin and reconnect MCP. For a failed `tools/list`, preserve the error and
 direct them to reconnect or redeploy the configured endpoint. For missing
 tools, name exactly what is missing: a read verb absent from the live list
-needs an MCP redeploy; a write-gated verb (`repos`, `onboard`, `crew`,
+needs an MCP redeploy; a write-gated verb (`repos`, `clone`, `onboard`, `crew`,
 `consent`, `await_seated`) is hidden on purpose until the deploy sets
 `CONVOY_MCP_WRITE_TOOLS=1`, which is a deploy decision, not a redeploy. Do not
 pad the menu, continue partially, or fall back to `python -m convoy`; a
@@ -80,9 +80,14 @@ list changed: stop with the RED card above.
    then get explicit user approval before binding or launching anything.
 3. Call `onboard` with the harnesses the user selects from `card.rows` where
    `installed` is true, the approved thread, the repository as
-   `checkout_root` (a URL is cloned once into the Convoy-owned checkout root
-   and reused after) and the yes/no answer as `github`: that call is the bind,
-   and it is made only after the approval in step 2. A row with `installed`
+   `checkout_root` and the yes/no answer as `github`: that call is the bind,
+   and it is made only after the approval in step 2. This endpoint is bound to
+   ONE root for its lifetime, so `onboard` binds only a checkout that IS that
+   root and refuses any other, naming it: the thread would live where this
+   endpoint could never answer for it. When the user picks a repository the
+   endpoint does not serve, clone it with `clone` if it is a URL, then tell
+   them to attach a Convoy endpoint whose root is that checkout and rerun the
+   wizard there; do not bind something else instead. A row with `installed`
    false cannot seat a neuron from this host; the onboard card carries the
    vendor install hint, and the wizard never runs an installer.
 4. Ask for `N` neurons. For each seat, offer only what its `card.rows[]` row

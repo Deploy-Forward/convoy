@@ -25,7 +25,7 @@ PUBLIC_MCP_URL = "https://convoy.bot/mcp"
 # card superseded choices and the per-chair join/launch/seat/mint/bring_up walk
 # (2026-09-04, item F): the wizard reads card once and crew does the rest.
 REQUIRED_WIZARD_VERBS: tuple[str, ...] = (
-    "card", "repos", "onboard", "crew", "consent", "await_seated",
+    "card", "repos", "clone", "onboard", "crew", "consent", "await_seated",
     "neurons", "graph", "send", "inbox",
 )
 
