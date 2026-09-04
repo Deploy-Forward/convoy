@@ -19,10 +19,13 @@ from .mcp_http import _WRITE_TOOLS as WRITE_GATED, TOOLS as PACKAGED_TOOLS
 
 PUBLIC_MCP_URL = "https://convoy.bot/mcp"
 
-# Every verb the wizard skill calls (plugin/convoy/skills/convoy-wizard, Gate 0).
+# Every verb the wizard skill calls (plugin/convoy/skills/convoy-wizard, Gate 0),
+# and only those: plugin_wizard_sequence_test holds Gate 0's list equal to this.
 # A dependency set, not a menu: user-facing capabilities stay live-only.
+# card superseded choices and the per-chair join/launch/seat/mint/bring_up walk
+# (2026-09-04, item F): the wizard reads card once and crew does the rest.
 REQUIRED_WIZARD_VERBS: tuple[str, ...] = (
-    "choices", "repos", "onboard", "join", "launch", "seat", "mint", "crew", "bring_up", "consent", "await_seated",
+    "card", "repos", "onboard", "crew", "consent", "await_seated",
     "neurons", "graph", "send", "inbox",
 )
 

@@ -1,0 +1,9 @@
+{
+  "_": "How the Grok Bot host surfaces the convoy plugin. Nothing in this repo can verify it; every value stays null until Marco records what he saw live (date + verbatim evidence). host_rendering_contract_test.py skips while verified is null and asserts the recorded contract once it is not.",
+  "verified": null,
+  "verified_on": null,
+  "host": "grok-bot",
+  "invocation": null,
+  "renders_structured_content_as_card": null,
+  "evidence": null
+}

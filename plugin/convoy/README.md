@@ -38,6 +38,18 @@ Submit the repository to:
 
 https://cursor.com/marketplace/publish
 
+## Host rendering
+
+Host rendering: unverified. Whether Grok Bot surfaces the wizard skill as
+`@convoy` or `/convoy`, and whether it renders the `card` tool's
+`structuredContent` as one card with a drill-down (the way `@treg` renders its
+providers) or only shows the text copy, is a fact about the host that nothing
+in this repository observes. The server declares `card` with an MCP
+`outputSchema` and answers through `structuredContent` so a host that renders
+cards can; the claim that it does stays unverified until Marco records a live
+run in `test/demo/fixtures/host_rendering.json` (date + verbatim evidence),
+which flips `host_rendering_contract_test` from skipped to asserting.
+
 ## Notes on live MCP catalog
 
 The plugin skills always require live `tools/list` and must never hardcode a
@@ -47,16 +59,23 @@ them for two different reasons, and the wizard's Gate 0 tells them apart:
 
 - **redeploy** - the public deploy lags `main`, so a registered verb is not
   served yet. A redeploy fixes it.
-- **write-gated** - `seat`, `join`, `onboard`, `crew`, and `launch` mutate the
-  thread or spawn a process (onboard binds the thread and clones a URL;
-  `clone` and `mint` spawn git; crew mints, joins and may spawn the window;
-  `repos` runs `gh repo list` as the MCP host's own login; `seated` stamps a
-  chair's proof of life and `consent` mints a grant; `await_seated` holds the
-  request thread up to its timeout),
+- **write-gated** - of the verbs the wizard needs, `repos`, `onboard`, `crew`,
+  `consent`, and `await_seated` are hidden on an ungated process (onboard
+  binds the thread and clones a URL; crew mints worktrees, joins N chairs and
+  may spawn the window; `repos` runs `gh repo list` as the MCP host's own
+  login, the conductor's account; `consent` mints a one-time grant;
+  `await_seated` holds the request thread up to its timeout). The same gate
+  covers `seat`, `join`, `launch`, `mint`, `clone`, `seated`, `stamp` and
+  `note`, which the wizard no longer calls per chair now that `crew` does that
+  work in one call,
   so an ungated public process hides them from `tools/list` on purpose and
   Gate 0 is RED there by design. They appear only on a deploy
   with `CONVOY_MCP_WRITE_TOOLS=1` (a gated loopback process). A redeploy alone
   does not change this; the gate does.
+
+The read-only `card` tool carries the same verdict as `card.preflight`, scored
+on the serving process's own `tools/list`, so a host sees RED or GREEN on the
+card itself before the wizard asks anything.
 
 The wizard fails closed on either gap; it never falls back to the CLI, because
 a marketplace install is not a source checkout. Operators with a checkout can

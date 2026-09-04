@@ -18,42 +18,55 @@ def _steps(text: str) -> list[str]:
     return [p.strip() for p in parts[1:]]
 
 
+def _flat(text: str) -> str:
+    """One line, single-spaced. These tests assert what the prose CLAIMS, and
+    a claim that wrapped across a line ('one chair per\\n   worktree') is still
+    the claim - matching layout instead of content made a green test go red on
+    a reflow (live 2026-09-04)."""
+    return " ".join(text.split())
+
+
+def _backticked_tools(text: str) -> set[str]:
+    registered = {str(t["name"]) for t in TOOLS}
+    return {m for m in re.findall(r"`([a-z_]+)`", text) if m in registered}
+
+
 class WizardSequence(unittest.TestCase):
     def setUp(self):
         self.text = WIZARD.read_text(encoding="utf-8")
         self.steps = _steps(self.text)
         self.gate0 = self.text.split("## Gate 0:", 1)[1].split("\n## ", 1)[0]
+        self.sequence = self.text.split("## Mandatory wizard sequence", 1)[1]
 
     def _index(self, needle: str) -> int:
-        hits = [i for i, s in enumerate(self.steps) if needle in s]
+        flat = _flat(needle)
+        hits = [i for i, s in enumerate(self.steps) if flat in _flat(s)]
         self.assertTrue(hits, "no wizard step mentions " + repr(needle))
         return hits[0]
 
     def test_real_sequence_order(self):
-        # Gate 0 is fail-closed preflight before any numbered step.
+        # Gate 0 is fail-closed preflight before any numbered step; card is
+        # read ONCE before step 1 and every step reads from it (item F).
         self.assertIn("tools/list", self.gate0)
+        preamble = self.sequence.split("\n1. ", 1)[0]
+        self.assertIn("call `card` ONCE", preamble)
         github = self._index("GitHub?")
         repo = self._index("repository path or URL")
-        choices = self._index("Call live `choices`")
+        onboard = self._index("Call `onboard`")
         count = self._index("`N` neurons")
-        effort = self._index("harness_effort.json")
-        join = self._index("call `join`")
-        launch = self._index("call `launch`")
-        seat = self._index("call `seat`")
-        bring = self._index("call `bring_up`")
-        consent = self._index("consent")
+        crew = self._index("call `crew`")
+        consent = self._index("call `consent`")
+        seated = self._index("Call `await_seated`")
         graph = self._index("`graph`")
         self.assertLess(github, repo)
-        self.assertLess(repo, choices)
-        self.assertLess(choices, count)
-        self.assertLess(count, effort)
-        self.assertLess(effort, join)
-        # join/launch/seat/bring_up share one numbered lifecycle step in the skill
-        self.assertEqual(join, launch)
-        self.assertEqual(launch, seat)
-        self.assertEqual(seat, bring)
-        self.assertLess(bring, consent)
-        self.assertLess(consent, graph)
+        self.assertLess(repo, onboard)
+        self.assertLess(onboard, count)
+        self.assertLess(count, crew)
+        self.assertLess(crew, consent)
+        self.assertLess(consent, seated)
+        # verification (neurons + graph) shares the await_seated step; send is last
+        self.assertEqual(seated, graph)
+        self.assertLess(graph, self._index("Route work with `send`"))
 
     def test_preflight_is_fail_closed_and_names_required_verbs(self):
         self.assertIn("fail-closed", self.gate0.lower().replace("fail closed", "fail-closed"))
@@ -67,43 +80,48 @@ class WizardSequence(unittest.TestCase):
             "gate must name redeploy/upgrade remedy",
         )
 
+    def test_gate0_list_equals_the_preflight_constant(self):
+        # The verb-count drift (item F review, 2026-09-04): Gate 0's prose list
+        # and REQUIRED_WIZARD_VERBS were checked one way only (constant subset
+        # of prose), so prose could require a verb the module never scored, or
+        # keep one the wizard stopped calling. Equal sets, both directions.
+        self.assertEqual(_backticked_tools(self.gate0), set(REQUIRED_WIZARD_VERBS))
+        self.assertIn("card", REQUIRED_WIZARD_VERBS)
+
     def test_every_registered_verb_the_sequence_calls_is_a_gate0_requirement(self):
         # review 2026-09-04: step 4 said "call `mint` once" while Gate 0 and
         # REQUIRED_WIZARD_VERBS omitted mint, so a live list without mint passed
         # GREEN and step 4 then called an unpromised verb - the fail-open Gate 0
         # forbids. Derived from TOOLS, not a frozen list: any registered verb
         # the sequence backticks must be required by the preflight module.
-        registered = {str(t["name"]) for t in TOOLS}
-        sequence = self.text.split("## Mandatory wizard sequence", 1)[1]
-        called = sorted({m for m in re.findall(r"`([a-z_]+)`", sequence) if m in registered})
-        self.assertIn("mint", called, "precondition: the sequence still calls mint")
-        unrequired = [v for v in called if v not in REQUIRED_WIZARD_VERBS]
+        called = _backticked_tools(self.sequence)
+        self.assertIn("crew", called, "precondition: the sequence still calls crew")
+        self.assertIn("card", called, "precondition: the sequence reads card")
+        unrequired = sorted(v for v in called if v not in REQUIRED_WIZARD_VERBS)
         self.assertEqual(unrequired, [], "sequence calls verbs Gate 0 does not require: " + repr(unrequired))
 
-    def test_model_and_effort_come_from_choices_not_a_file(self):
-        # Until 2026-09-04 this step told the host to read the pack's
-        # ../../harness_effort.json for model/effort. The constraints ride on
-        # the wire (choices.harnesses[].models, .effort); the pack copy is the
-        # Gate 0 integrity asset, not the wizard's data source. The step must
-        # say so WITHOUT contradicting Gate 0 step 4 (which has the host verify
-        # the asset is present) and without asserting what the host platform
-        # can or cannot do — nothing in this repo verifies that.
-        step = self.steps[self._index("harness_effort.json")]
-        self.assertIn("`choices`", step)
-        self.assertIn("harnesses[].models", step)
-        self.assertIn("harnesses[].effort", step)
-        self.assertIn("Gate 0", step, "step must reconcile itself with the Gate 0 asset check")
-        self.assertNotIn("no filesystem", self.text)
-        self.assertNotIn("never reads", step)
-        self.assertNotIn("src/convoy/harness_effort.json", step)
-        self.assertNotIn("../../harness_effort.json", step)
-        self.assertIn("../../harness_effort.json", self.gate0)
+    def test_model_effort_and_usage_come_from_card_never_a_file(self):
+        # Until 2026-09-04 (item F) Gate 0 had the host verify the pack's
+        # ../../harness_effort.json and a step read model/effort from it. A
+        # remote host has no filesystem: every constraint now rides on card
+        # (rows[].models, rows[].effort, rows[].usage_remaining) and the skill
+        # names no path at all. The pack copy still ships (other tests hold it
+        # byte-identical) as the endpoint's contract, not the wizard's input.
+        step = self.steps[self._index("rows[].models")]
+        self.assertIn("`card", step)
+        self.assertIn("rows[].effort", step)
+        self.assertIn("rows[].usage_remaining", step)
+        self.assertIn("never as 0", step)
+        for path_like in ("../../", "src/convoy/", "relative to this `SKILL.md`", "present and readable"):
+            self.assertNotIn(path_like, self.text, "the wizard must not read from a filesystem: " + path_like)
+        self.assertNotIn("pack-asset-missing", self.gate0)
 
     def test_c8_one_chair_per_worktree(self):
         step = self.steps[self._index("one chair per worktree")]
-        self.assertIn("one chair per worktree", step)
-        join_step = self.steps[self._index("call `join`")]
-        self.assertIn("cvy_*", join_step)
+        self.assertIn("one chair per worktree", _flat(step))
+        crew_step = self.steps[self._index("call `crew`")]
+        self.assertIn("cvy_*", crew_step)
+        self.assertEqual(step, crew_step, "crew mints the worktrees, so the rule lives on its step")
 
     def test_bind_needs_consent(self):
         # Bind is onboard(thread, checkout_root) after approval; consent is its own step.
@@ -116,4 +134,3 @@ class WizardSequence(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

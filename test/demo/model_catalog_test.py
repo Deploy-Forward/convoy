@@ -247,19 +247,23 @@ class ModelOverTheMcpWire(unittest.TestCase):
 
 
 class WizardSkillTakesModelsFromTheWire(unittest.TestCase):
-    def test_wizard_step_names_choices_not_the_pack_file_as_the_model_source(self):
-        # The artifact under test IS the prose: the step that told the host to
-        # read ../../harness_effort.json for model/effort must point at
-        # choices instead (the wire is the source; the pack copy is Gate 0's
-        # integrity asset).
+    def test_wizard_takes_models_from_the_wire_not_the_pack_file(self):
+        # The artifact under test IS the prose. Intent is unchanged since this
+        # test was written: the model source must be the WIRE, never a file on
+        # disk. Only the wire verb moved - `choices` became `card`, whose rows
+        # carry models/effort/usage per harness (item F, 2026-09-04) - so the
+        # test names the source generically instead of one tool.
         text = (REPO / "plugin" / "convoy" / "skills" / "convoy-wizard" / "SKILL.md").read_text(encoding="utf-8")
-        text = text[text.index("## Mandatory wizard sequence"):]  # Gate 0 has its own step 5
-        step = [ln for ln in text.splitlines() if ln.startswith("5. ")]
-        self.assertEqual(len(step), 1, step)
-        body = text[text.index(step[0]):text.index("6. ")]
-        self.assertIn("choices", body)
-        self.assertIn("harnesses[].models", body)
+        seq = text[text.index("## Mandatory wizard sequence"):]
+        body = " ".join(seq.split())          # the prose wraps; match on claims, not layout
+        self.assertIn("rows[].models", body, "the sequence must name the wire row as the model source")
+        self.assertIn("card", body)
         self.assertNotIn("Read model/effort constraints from the bundled", body)
+        # And no step may send the host to a file: a remote grok-bot has no
+        # filesystem, so a read instruction there is unrunnable, not merely wrong.
+        for path in ("../../harness_effort.json", "src/convoy/harness_effort.json"):
+            self.assertNotIn("Read `" + path + "`", body)
+            self.assertNotIn("read " + path, body.lower())
 
 
 if __name__ == "__main__":

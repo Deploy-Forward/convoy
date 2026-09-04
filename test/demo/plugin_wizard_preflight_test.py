@@ -44,11 +44,14 @@ class WizardPreflight(unittest.TestCase):
         for verb in card["missing"]:
             self.assertIn(verb, packaged, verb + " must be a packaged tool on this branch")
         # Every required verb is packaged now. Read verbs are a redeploy away;
-        # join and seat write chair rows and stay hidden until the deploy opts in.
-        for verb in ("choices", "neurons", "inbox", "graph"):
+        # the write verbs stay hidden until the deploy opts in. (Until item F
+        # this named join/seat/launch/mint and choices; the wizard no longer
+        # calls those - card and crew replaced them - so they left the set.)
+        for verb in ("card", "neurons", "inbox", "graph"):
             self.assertEqual(card["remedy"][verb], REMEDY_REDEPLOY, verb)
-        # mint spawns git and repos runs gh as the host's login (2026-09-04).
-        for verb in ("join", "seat", "launch", "mint", "repos"):
+        # crew mints git worktrees and spawns, repos runs gh as the host's
+        # login, consent mints a grant, await_seated holds the request.
+        for verb in ("crew", "repos", "consent", "await_seated"):
             self.assertEqual(card["remedy"][verb], REMEDY_WRITE_GATED, verb)
         self.assertEqual(card["next"], "enable-write-tools-on-deploy")
         self.assertIn("redeploy the public MCP", card["ask"])
@@ -64,10 +67,11 @@ class WizardPreflight(unittest.TestCase):
         self.assertEqual(card["next"], "reconnect-or-redeploy-mcp")
 
     def test_write_gated_verbs_point_at_the_deploy_switch(self):
-        listed = [v for v in REQUIRED_WIZARD_VERBS if v not in ("join", "seat", "launch", "mint")]
+        gated = ("repos", "onboard", "crew", "consent", "await_seated")
+        listed = [v for v in REQUIRED_WIZARD_VERBS if v not in gated]
         card = preflight(listed)
-        self.assertEqual(card["missing"], ["join", "launch", "seat", "mint"])
-        self.assertEqual(card["remedy"], {v: REMEDY_WRITE_GATED for v in ("join", "launch", "seat", "mint")})
+        self.assertEqual(card["missing"], list(gated), "missing keeps the constant's order")
+        self.assertEqual(card["remedy"], {v: REMEDY_WRITE_GATED for v in gated})
         self.assertEqual(card["next"], "enable-write-tools-on-deploy")
         self.assertNotIn("redeploy the public MCP", card["ask"])
 
@@ -77,7 +81,7 @@ class WizardPreflight(unittest.TestCase):
         with mock.patch("convoy.wizard_preflight.PACKAGED_TOOLS", [{"name": "graph"}]):
             card = preflight(["roster"])
         self.assertEqual(card["remedy"]["graph"], REMEDY_REDEPLOY)
-        self.assertEqual(card["remedy"]["choices"], REMEDY_NOT_REGISTERED)
+        self.assertEqual(card["remedy"]["card"], REMEDY_NOT_REGISTERED)
         self.assertEqual(card["next"], "mcp-server-commit")
         self.assertIn("server needs a commit", card["ask"])
 
@@ -121,7 +125,7 @@ class WizardPreflight(unittest.TestCase):
         self.assertEqual(rc, 1)
         card = json.loads(out.getvalue())
         self.assertEqual(card["status"], "RED")
-        self.assertEqual(card["remedy"]["seat"], REMEDY_WRITE_GATED)
+        self.assertEqual(card["remedy"]["crew"], REMEDY_WRITE_GATED)
 
 
 if __name__ == "__main__":

@@ -20,6 +20,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 from .bringup import bring_up, ensure_interactive_path, hide_windows, live_applier, live_runner, terminals
+from .card import CARD_OUTPUT_SCHEMA, build_card
 from .harness_contract import (
     canonical_harness_id,
     contract_path,
@@ -111,6 +112,12 @@ AWAIT_SEATED_MAX_S = 600.0
 
 def _write_tools_enabled() -> bool:
     return os.environ.get("CONVOY_MCP_WRITE_TOOLS", "").strip() == "1"
+
+
+def _listed_tools() -> list[dict[str, Any]]:
+    """What tools/list answers on THIS process: everything behind the gate,
+    the read-only verbs otherwise. card scores its preflight on the same list."""
+    return TOOLS if _write_tools_enabled() else [t for t in TOOLS if t["name"] not in _WRITE_TOOLS]
 
 
 # No enum here on purpose: the vocabulary is per harness (grok xhigh, codex
@@ -372,6 +379,17 @@ TOOLS: list[dict[str, Any]] = [
         "name": "choices",
         "description": "Read-only: installed harnesses, known git worktrees, current seats, and whether this host can split an active pane. The wizard renders ONLY what this returns; never a remembered menu. Never a token.",
         "inputSchema": _schema({}),
+    },
+    # ONE card (2026-09-04, item F): the @convoy wizard's single read. Rows are
+    # choices rows plus the usage probe glance runs and a crew attach template;
+    # preflight is this server's own tools/list scored by wizard_preflight, so
+    # the card carries its Gate 0 verdict. outputSchema is declared so a host
+    # can render structuredContent as a card without parsing the text copy.
+    {
+        "name": "card",
+        "description": "Read-only: the one card a host renders for @convoy - header, tagline, summary (installed harnesses, seats, thread, GitHub? answer), this server's own wizard preflight verdict, repo (checkout, worktrees), and one row per harness in contract order: where offered, installed, USAGE REMAINING (number|object|null from the live probe, never an invented 0), models catalog or null, effort keys, connect_mode, and attach (a crew call for that harness). Never a token, never a resume id, never a boot prompt.",
+        "inputSchema": _schema({}),
+        "outputSchema": CARD_OUTPUT_SCHEMA,
     },
     {
         "name": "neurons",
@@ -750,6 +768,8 @@ def _call_tool(root: Path, name: str, arguments: dict[str, Any] | None) -> dict[
         return install_harness(to, dry_run=dry, opt_in=opt_in)
     if name == "choices":
         return launch_choices(root)
+    if name == "card":
+        return build_card(root, listed=[t["name"] for t in _listed_tools()])
     if name == "neurons":
         return neuron_activity(root, since=_opt_str(args, "since"))
     if name == "inbox":
@@ -966,8 +986,7 @@ def handle_rpc(root: Path, msg: dict[str, Any]) -> dict[str, Any] | None:
         if method == "tools/list":
             if is_notification:
                 return None
-            listed = TOOLS if _write_tools_enabled() else [t for t in TOOLS if t["name"] not in _WRITE_TOOLS]
-            return {"jsonrpc": "2.0", "id": rpc_id, "result": {"tools": listed}}
+            return {"jsonrpc": "2.0", "id": rpc_id, "result": {"tools": _listed_tools()}}
         if method == "tools/call":
             if is_notification:
                 return None

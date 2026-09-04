@@ -47,7 +47,7 @@ def _badge(present: bool, limited: bool) -> str:
     return "Live"
 
 
-def _probe_view(harness: str, probe_fn: ProbeFn) -> dict[str, Any]:
+def probe_view(harness: str, probe_fn: ProbeFn) -> dict[str, Any]:
     probed = probe_fn(usage_probe_key(harness))
     compact = surface(harness, probed)
     usage_remaining = normalize_usage_remaining(compact.get("usage_remaining"))
@@ -120,7 +120,7 @@ def build_overall(root: Path, probe_fn: ProbeFn | None = None, which_fn: WhichFn
         present = wf(harness_exec(harness)) is not None
         probe_row = {"limited": False, "usage_remaining": None}
         if present:
-            probe_row = _probe_view(harness, fn)
+            probe_row = probe_view(harness, fn)
         row: dict[str, Any] = {
             "harness": harness,
             "present": present,
@@ -193,7 +193,7 @@ def build_by_thread(
             continue
         present = wf(harness_exec(harness)) is not None
         if present and harness not in probe_cache:
-            probe_cache[harness] = _probe_view(harness, fn)
+            probe_cache[harness] = probe_view(harness, fn)
         probe_row = probe_cache.get(harness, {"limited": False, "usage_remaining": None})
         worktree = seat.get("worktree")
         branch, pr = _seat_branch_pr(worktree)
