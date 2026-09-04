@@ -25,7 +25,7 @@ contract implemented to fail closed on public MCP deploys.
 
 ### Write-gated verbs
 
-`_WRITE_TOOLS = {"stamp", "note", "seat", "join", "launch", "onboard", "clone", "mint", "repos"}`
+`_WRITE_TOOLS = {"stamp", "note", "seat", "join", "launch", "onboard", "clone", "mint", "repos", "crew", "seated", "consent", "await_seated"}`
 
 - Public process (gate closed): these verbs are hidden from `tools/list`.
 - Gated/loopback process (`CONVOY_MCP_WRITE_TOOLS=1`): verbs are listed and
@@ -38,11 +38,16 @@ contract implemented to fail closed on public MCP deploys.
   logged in on the MCP host, so a public `repos` could only disclose the
   operator's inventory (private names included) and spend their API quota.
   It reads, but what it reads is the conductor's.
+- `crew`, `seated`, `consent`, `await_seated` joined 2026-09-04 (item E): crew
+  mints worktrees, joins N chairs and with `launch=true` spawns the window;
+  seated stamps a chair's proof of life; consent mints a one-time grant.
+  await_seated only reads, but it holds the request thread up to its timeout
+  (capped at 600 s), which a public endpoint must not offer.
 
 ### Public list behavior (truthful Gate 0 signal)
 
 - Public `tools/list` **must hide**: `seat`, `join`, `launch`, `onboard`,
-  `clone`, `mint`, `repos`.
+  `clone`, `mint`, `repos`, `crew`, `seated`, `consent`, `await_seated`.
 - Public `tools/list` **must keep** read-only verbs listed (including `inbox`
   read mode), so the wire truthfully reflects what is usable without
   mutation. `repos` lists names and URLs from `gh repo list`; a missing gh is
@@ -59,6 +64,9 @@ When the write gate is closed:
 - `clone` refuses a URL starting with `-` and passes `--` before the URL, so
   `--upload-pack=...` can never reach git as an option.
 - `inbox` with `drain=true` refuses before drain.
+- `crew` refuses before validation, mint or join (`seats: []`, `launched: false`);
+  `seated` refuses before stamping; `consent` before granting; `await_seated`
+  before reading (`chairs: []`).
 - Refusal text names `CONVOY_MCP_WRITE_TOOLS` and does not claim action.
 
 ### Inbox safety contract
@@ -76,5 +84,8 @@ When the write gate is closed:
   `resume` as `{available, for}`, never the vendor id; `bring_up` / `open` windows and
   the `resume` dry read carry `argv` in the same shape (the id and the boot-prompt
   token ride in it). Behind the gate the cards are whole (`mcp_http._redact_public`).
+- `await_seated` compares each `seated` row's token to the join/swap mint on disk
+  and answers `connected | pending | stale`; the card never carries a token. The
+  gated `seated` card answers with the row's timestamp, not the token it echoed.
 - Tokens remain local to chair state/disk and trusted local flows.
 

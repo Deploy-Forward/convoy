@@ -28,6 +28,7 @@ from .bringup import (
 from .consent import consume_consent, request_consent
 from .convoy import list_seats, update_seat
 from .harness_contract import effort_contract, harness_entries, harness_exec, model_catalog, where_options
+from .inbox import connect_mode
 
 Which = Callable[[str], str | None]
 Runner = Callable[[list[str]], dict[str, Any]]
@@ -414,6 +415,11 @@ def launch_choices(
                 # an interactive attach, else {offered: false, mode, evidence}
                 # so the card can say why before a join is refused.
                 "where": where_options(str(entry.get("id") or "")),
+                # How a launched neuron receives (inbox.HARNESS_INBOX): hook,
+                # native-queue-or-cli-drain, or cli-drain. A label the card
+                # shows so a hookless harness is never sold as auto-connecting;
+                # the seated row, not this word, is the connection.
+                "connect_mode": connect_mode(str(entry.get("id") or "")),
             }
         )
 

@@ -12,6 +12,7 @@ from .install import install as install_harness
 from .onboard import onboard as run_onboard
 from .context import pack
 from .convoy import attach, bind, ensure_id, list_seats, read_id, read_lead, seat, set_lead, CONDUCTOR
+from .crew import await_seated, crew
 from .glance import build_glance, run_tray
 from .graph import build_graph, neighborhood
 from .graph_html import render_html, resume_neuron
@@ -25,6 +26,22 @@ from .pane_host import close_managed_pane
 from .synapse import fake_runner, native_runner, send_many, send_one
 from .targeted_launch import active_pane_runner, launch_choices, launch_seat
 from .usage import probe
+
+_SEAT_KEYS = ("model", "effort", "where", "title")
+
+
+def _seat_spec(text: str) -> dict:
+    """`grok,model=grok-4,effort=high` -> {harness, model, effort}. The first
+    token is the harness; the rest are key=value from _SEAT_KEYS."""
+    parts = [p.strip() for p in str(text or "").split(",")]
+    spec = {"harness": parts[0]}
+    for kv in parts[1:]:
+        key, sep, val = kv.partition("=")
+        if not sep or key not in _SEAT_KEYS:
+            raise ValueError("crew --seat takes <harness>[,model=M][,effort=E][,where=W][,title=T]; got " + repr(kv))
+        spec[key] = val
+    return spec
+
 
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="convoy")
@@ -96,6 +113,17 @@ def main(argv: list[str] | None = None) -> int:
     jn.add_argument("--as", dest="author", help="authoring seat (neuron-authored)")
     jn.add_argument("--launch", action="store_true", help="split exactly one fresh chair into the active supported pane host")
     jn.add_argument("--consent", help="one-time scoped consent returned by `convoy consent --grant`")
+
+    cw = sub.add_parser("crew", help="N neurons at once: mint one worktree per seat, join every chair with a boot prompt, bring them up in ONE window")
+    cw.add_argument("--seat", action="append", required=True, metavar="SPEC",
+                    help="one per neuron: <harness>[,model=M][,effort=E][,where=local|cloud][,title=T]")
+    cw.add_argument("--checkout", help="git checkout to mint worktrees from (default: the root)")
+    cw.add_argument("--thread", help="must match the bound thread")
+    cw.add_argument("--launch", action="store_true", help="spawn the window once; default writes chairs and shows the argv")
+
+    aw = sub.add_parser("await-seated", help="observe the chairs' seated acks (connected | pending | stale) with the seconds waited")
+    aw.add_argument("--seat", action="append", required=True, help="chair session_id (repeat)")
+    aw.add_argument("--timeout", type=float, default=120.0, help="seconds; 0 is one snapshot")
 
     ch = sub.add_parser("choices", help="list installed harnesses, known worktrees, seats, and active-pane support")
 
@@ -332,6 +360,24 @@ def main(argv: list[str] | None = None) -> int:
                             author=args.author, model=args.model, effort=args.effort)
             else:
                 card = seated_ack(root, args.seat, token=args.token)
+        except ValueError as e:
+            print(json.dumps({"ok": False, "error": str(e)}))
+            return 1
+        print(json.dumps(card))
+        return 0 if card.get("ok") else 1
+    if args.cmd == "crew":
+        try:
+            seats = [_seat_spec(s) for s in args.seat]
+        except ValueError as e:
+            print(json.dumps({"ok": False, "error": str(e)}))
+            return 1
+        card = crew(root, seats, thread=args.thread, checkout=args.checkout,
+                    runner=live_runner if args.launch else None)
+        print(json.dumps(card))
+        return 0 if card.get("ok") else 1
+    if args.cmd == "await-seated":
+        try:
+            card = await_seated(root, args.seat, timeout=args.timeout)
         except ValueError as e:
             print(json.dumps({"ok": False, "error": str(e)}))
             return 1

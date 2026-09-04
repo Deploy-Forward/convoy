@@ -42,7 +42,9 @@ from .convoy import seat as seat_chair
 from .glance import build_glance
 from .graph import build_graph, neighborhood
 from .inbox import drain as drain_inbox, pending as pending_inbox
-from .lifecycle import join as join_chair
+from .lifecycle import join as join_chair, seated_ack
+from .consent import grant_consent
+from .crew import await_seated, crew as crew_chairs
 from .targeted_launch import active_pane_runner, launch_choices, launch_seat
 from .graph_html import resume_neuron
 from .index import index_path, list_threads
@@ -98,7 +100,13 @@ HARNESSES = tuple((row["id"], str(row.get("name") or row["id"])) for row in harn
 # logged in on the MCP HOST, so on a public deploy it could only hand the
 # operator's inventory (private names included) to strangers and spend
 # their API quota. It is the conductor's account; the gate says so.
-_WRITE_TOOLS = frozenset({"stamp", "note", "seat", "join", "launch", "onboard", "clone", "mint", "repos"})
+# crew / seated / consent joined 2026-09-04 (item E): crew mints worktrees,
+# joins N chairs and may spawn the window; seated stamps a chair's proof of
+# life; consent mints a one-time grant. await_seated only reads, but it holds
+# the request thread up to its timeout, which a public endpoint must not offer.
+_WRITE_TOOLS = frozenset({"stamp", "note", "seat", "join", "launch", "onboard", "clone", "mint", "repos",
+                          "crew", "seated", "consent", "await_seated"})
+AWAIT_SEATED_MAX_S = 600.0
 
 
 def _write_tools_enabled() -> bool:
@@ -408,6 +416,41 @@ TOOLS: list[dict[str, Any]] = [
              "consent": {"type": "string"}},
             required=["seat"],
         ),
+    },
+    # N neurons -> N chairs -> ONE window -> observed connects (2026-09-04, item E).
+    # crew replaces the join/launch/seat/bring_up walk that left chairs 2..N
+    # without a boot prompt: every chair it mints carries one. seated is the
+    # proof-of-life stamp a neuron makes from its pane by CLI; on the wire it
+    # is how a neuron that attached by MCP (a cloud chair) proves the same.
+    {
+        "name": "crew",
+        "description": "Validate N seats (where/model/effort, refused in the harness's own words before any write), mint one worktree per local seat from the checkout, join every chair with a boot prompt + token, and bring the crew up ONCE: one new terminal window with N panes (write gate: this writes chairs, runs git and, with launch=true, SPAWNS). launched is not connected: the card's `seated` snapshot says pending until await_seated observes each chair's ack. connect_mode per seat says how that harness receives (hook | native-queue-or-cli-drain | cli-drain); a cli-drain harness is never auto-connecting.",
+        "inputSchema": _schema(
+            {"seats": {"type": "array", "description": "one entry per neuron",
+                       "items": _schema({"harness": {"type": "string"}, "model": _MODEL_ARG, "effort": _EFFORT_ARG,
+                                         "where": _WHERE_ARG, "title": {"type": "string", "description": "seat name; default <harness>-<n>"}},
+                                        required=["harness"])},
+             "checkout": {"type": "string", "description": "git checkout to mint worktrees from; default the bound root"},
+             "thread": {"type": "string", "description": "must match the bound thread when given"},
+             "launch": {"type": "boolean", "default": False, "description": "false writes chairs + worktrees and shows the argv; true spawns the window once"}},
+            required=["seats"],
+        ),
+    },
+    {
+        "name": "seated",
+        "description": "Proof-of-life: the chair's new occupant echoes the token from its boot prompt (write gate: stamps kind=seated and clears the one-shot boot prompt). From a pane this is `convoy seated`; over the wire it is how a neuron attached by MCP proves it sat down. Never returns the token.",
+        "inputSchema": _schema({"seat": {"type": "string"}, "token": {"type": "string"}}, required=["seat", "token"]),
+    },
+    {
+        "name": "consent",
+        "description": "Grant a prior consent request after the user explicitly approved it (write gate: mints a one-time, action-scoped grant). Pass the returned consent only to the exact pending command (launch).",
+        "inputSchema": _schema({"grant": {"type": "string", "description": "request_id from the awaiting-user-consent card"}}, required=["grant"]),
+    },
+    {
+        "name": "await_seated",
+        "description": "Observe, do not trust: polls kind=seated rows for the named chairs until each has acked with the token its join/swap minted, or timeout (seconds, max 600; 0 is one snapshot). Per chair connected | pending | stale (an ack citing a token this mint never issued) and the seconds waited. Write gate: it holds the request up to timeout. Never a token.",
+        "inputSchema": _schema({"seats": {"type": "array", "items": {"type": "string"}},
+                                "timeout": {"type": "number", "default": 120}}, required=["seats"]),
     },
 ]
 
@@ -749,6 +792,52 @@ def _call_tool(root: Path, name: str, arguments: dict[str, Any] | None) -> dict[
             return launch_seat(root, sid, runner=active_pane_runner, consent=_opt_str(args, "consent"))
         except ValueError as e:
             return {"ok": False, "seat": sid, "spawned": False, "error": str(e)}
+    if name == "crew":
+        seats = args.get("seats")
+        if not isinstance(seats, list) or not seats:
+            return {"ok": False, "seats": [], "launched": False, "error": "crew requires seats: a non-empty list"}
+        if not _write_tools_enabled():
+            # Refused BEFORE validation, mint or join: no chair, no git, no window.
+            return {"ok": False, "seats": [], "launched": False, "error": _gate_text("crew")}
+        launch = _opt_bool(args, "launch", False)
+        return crew_chairs(root, seats, thread=_opt_str(args, "thread"), checkout=_opt_str(args, "checkout"),
+                           runner=live_runner if launch else None)
+    if name == "seated":
+        sid = (_opt_str(args, "seat") or "").strip()
+        token = _opt_str(args, "token") or ""
+        if not sid or not token.strip():
+            return {"ok": False, "error": "seated requires seat and token"}
+        if not _write_tools_enabled():
+            return {"ok": False, "seat": sid, "error": _gate_text("seated")}
+        try:
+            row = seated_ack(root, sid, token)["row"]
+        except ValueError as e:
+            return {"ok": False, "seat": sid, "error": str(e)}
+        # the ack row carries the token it echoed; the caller supplied it, so
+        # the card answers with the fact of the row, not the token again
+        return {"ok": True, "seat": sid, "seated_at": row.get("ts"), "kind": row.get("kind")}
+    if name == "consent":
+        rid = (_opt_str(args, "grant") or "").strip()
+        if not rid:
+            return {"ok": False, "error": "consent requires grant: the request_id to approve"}
+        if not _write_tools_enabled():
+            return {"ok": False, "request_id": rid, "error": _gate_text("consent")}
+        try:
+            return grant_consent(root, rid)
+        except ValueError as e:
+            return {"ok": False, "request_id": rid, "error": str(e)}
+    if name == "await_seated":
+        seats = args.get("seats")
+        if not isinstance(seats, list) or not seats:
+            return {"ok": False, "chairs": [], "error": "await_seated requires seats: a non-empty list of chair ids"}
+        if not _write_tools_enabled():
+            return {"ok": False, "chairs": [], "error": _gate_text("await_seated")}
+        raw = args.get("timeout")
+        timeout = float(raw) if isinstance(raw, (int, float)) and not isinstance(raw, bool) else 120.0
+        try:
+            return await_seated(root, [str(s) for s in seats], timeout=min(max(timeout, 0.0), AWAIT_SEATED_MAX_S))
+        except ValueError as e:
+            return {"ok": False, "chairs": [], "error": str(e)}
     return {"ok": False, "error": "tool not found: " + name}
 
 

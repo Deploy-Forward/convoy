@@ -33,9 +33,13 @@ thread orchestration through Convoy MCP + CLI.
 
 1. Discover live harness/worktree state with `choices`.
 2. Ensure harness registration with `onboard`.
-3. Create/register seats with `join --launch` (single targeted launch) or
-   `seat` (explicit chair registration).
-4. Use `bring_up` (or `open`) to surface active panes for multiple seats.
+3. For N neurons use `crew` once (validates every seat, mints one worktree
+   each, joins every chair with a boot prompt, one window); for one chair,
+   `join --launch` (single targeted launch). `seat` registers a chair without
+   a boot prompt, so it never tells a neuron to connect.
+4. Use `bring_up` (or `open`) to surface active panes for multiple seats, and
+   `await_seated` to observe which chairs actually acked (`connected` |
+   `pending` | `stale`); launched is not connected.
 5. Use `graph` for thread/neuron grounding, then `send`/`inbox` for delivery.
 
 ## Picker rows
