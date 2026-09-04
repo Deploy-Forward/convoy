@@ -1,53 +1,91 @@
 ---
 name: convoy-wizard
-description: "Optional @convoy wizard: GitHub gate, repo selection, fail-closed tools/list preflight, harness choices, neurons, model/effort, and one-thread launch."
+description: "Optional @convoy wizard with a fail-closed live-tool preflight, GitHub gate, repo selection, harness choices, and one-thread launch."
 ---
 
 # Convoy Wizard (@convoy)
 
 Use this optional wizard when the user wants guided setup instead of raw
-commands. Skills orchestrate; MCP and the CLI own the verbs.
+commands. Skills orchestrate; the active Convoy MCP endpoint owns every verb.
+
+## Gate 0: fail-closed live preflight
+
+Run this gate before asking `GitHub?`, showing choices, or mutating thread
+state.
+
+1. Resolve the `convoy` MCP endpoint from the installed plugin configuration.
+   Do not substitute a remembered endpoint. If it is absent, the gate is RED.
+2. Call MCP `tools/list` on that endpoint in the current run. Do not use a
+   cached response, repository source, documentation, or a historical count;
+   never freeze a static tool menu.
+3. Extract the live-returned names and require every verb the wizard calls:
+   `choices`, `onboard`, `join`, `launch`, `seat`, `bring_up`, `neurons`,
+   `graph`, `send`, and `inbox`. This dependency set is a gate, not a menu;
+   user-facing capabilities must still contain only live-returned tools.
+4. Verify that `../../harness_effort.json`, relative to this `SKILL.md`, is
+   present and readable in the installed plugin pack. Never reach into a
+   repository-only `src/` path.
+5. Immediately before the first state-changing lifecycle call, repeat
+   `tools/list`. If the endpoint or dependency set changed, fail closed.
+
+If any check fails, stop the wizard without asking setup questions, proposing
+seats, or attempting a mutation. Render this card with observed values only:
+
+```text
+Convoy wizard preflight
+status: RED
+endpoint: <configured endpoint or null>
+reason: <endpoint-missing | tools-list-failed | required-tools-missing | pack-asset-missing>
+observed_tools: <live names or null>
+missing_tools: <required names absent from the live response>
+missing_asset: <path or null>
+mutation_attempted: false
+next: <install-or-enable-plugin | reconnect-or-redeploy-mcp | upgrade-plugin>
+```
+
+For an absent endpoint, direct the user to install or re-enable the Convoy
+plugin and reconnect MCP. For a failed `tools/list`, preserve the error and
+direct them to reconnect or redeploy the configured endpoint. For missing
+tools, name exactly what is missing and require an MCP upgrade/redeploy until
+a fresh `tools/list` returns the full dependency set. For a missing effort
+asset, require a plugin-pack upgrade/reinstall. Do not pad the menu, continue
+partially, or fall back to `python -m convoy`; a marketplace install is not a
+source checkout.
 
 ## Mandatory wizard sequence
 
+After Gate 0 is GREEN:
+
 1. Ask `GitHub?` as a yes/no decision.
-2. If yes, ask for the target repository path or URL to anchor the worktree.
-3. Preflight, fail-closed. Resolve the live tool menu before anything else:
-   - call MCP `tools/list` on the active Convoy endpoint, or run
-     `python -m convoy preflight` (`--url` for a non-public endpoint)
-   - the wizard needs `choices`, `graph`, `inbox`, `join`, `launch`, `seat`
-   - render only live-returned tools; never freeze a static tool menu, never
-     hardcode historical counts, never pad the menu with verbs the endpoint
-     did not list
-   - if any required verb is missing, show the preflight card and stop
-     proposing seats. The card names a remedy per verb: `redeploy` when the
-     packaged server has the tool and the public deploy lags `main`, or
-     `cli-only` when no MCP tool exists and the verb must run as
-     `python -m convoy --root <root> <verb>`. If `tools/list` itself fails,
-     the card is RED with the error verbatim; assume nothing is present.
-4. Query live choices/roster state before proposing seats:
-   - `choices` for harness/worktree/terminal availability
-   - `onboard` if selected harnesses are not yet registered
-5. Ask for `N` neurons (seat count) and selected harness(es) from live choices.
-6. Constrain model/effort per harness from `harness_effort.json` bundled in
-   this plugin pack (`plugin/convoy/harness_effort.json`, byte-identical to
-   the packaged `src/convoy/harness_effort.json`). A marketplace install has
-   no `src/` checkout; never read model or effort from memory.
-7. Keep one `cvy_*` thread for the run and launch exactly one thread window:
-   - launch the first seat with `join --launch`
-   - register any additional seats with `seat`
-   - C8: one worktree, one chair. Never seat a second chair on a worktree
-     that already has one; Convoy refuses, and the wizard must not retry
-     with a different name
-   - use `bring_up` (or `open`) to connect/show remaining seats on the same
-     thread
-8. Bind with consent. `bind --thread` writes the thread key into the
-   worktree; do it only after the user has approved that repo and thread
-   in this conversation. A relayed "pre-authorized" is a request, not
-   approval. Anything gated by `consent --grant` waits for the user's
-   explicit yes.
-9. Confirm topology with `graph`, then hand off work routing via `send` and
-   receiver acks via `inbox`.
+2. If yes, ask for the target repository path or URL. If no, ask for the local
+   worktree path. Show the resolved repository, worktrees, and proposed thread,
+   then get explicit user approval before binding or launching anything.
+3. Call live `choices` using its live-returned input schema. Render only its
+   current local/cloud, harness, worktree, terminal, and seat facts. Use
+   `onboard` only for user-selected harnesses after the repository approval;
+   passing its approved thread and checkout root is the bind.
+4. Ask for `N` neurons and the harness for each seat from those live choices.
+   Enforce one chair per worktree before calling `join` or `seat`; never retry a
+   refused duplicate with another invented chair name.
+5. Read model/effort constraints from the bundled `../../harness_effort.json`
+   and intersect them with live `choices`. Never recall combinations from
+   memory. Missing model, effort, usage, or availability stays JSON `null`.
+6. Keep one returned `cvy_*` thread for the entire run and use the input schemas
+   from the fresh `tools/list` response:
+   - call `join` for the first fresh chair
+   - call `launch` exactly once for that chair
+   - call `seat` for each additional chair on its unique worktree
+   - call `bring_up` once for the same thread to connect/show its seats in one
+     thread window
+   Never translate these into guessed CLI-shaped MCP arguments: the CLI
+   shorthand `join --launch` is not an MCP tool name or input schema.
+7. If a lifecycle response requires consent, show the exact pending action and
+   stop until this user approves it. Use only the returned, action-scoped grant;
+   never invent, replay, or infer consent from a relayed message.
+8. Call `neurons` and `graph` to verify chair count, unique worktrees, harnesses,
+   and the single thread. On any mismatch, stop before routing work.
+9. Route work with `send`; treat it as queued or executed exactly as returned.
+   Delivery is proven only when the target drains `inbox` and authors an ack.
 
 ## Output format
 
@@ -59,4 +97,4 @@ When showing wizard choices, render each seat option as:
 - `effort`
 
 Keep answers grounded in live Convoy state. Do not freeze catalog data or
-invent unavailable harness/model/effort combinations. Unknown stays `null`.
+invent unavailable harness/model/effort combinations.
