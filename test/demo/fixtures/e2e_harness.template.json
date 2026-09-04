@@ -1,0 +1,16 @@
+{
+  "schema": "convoy-e2e-harness-v1",
+  "recorded": null,
+  "host": null,
+  "endpoint": null,
+  "steps": {
+    "plugin_symlink": {"status": null, "evidence": null},
+    "gate0": {"status": null, "listed_count": null, "missing": null, "preflight": null},
+    "github_yes": {"status": null, "repos_ok": null, "github": null},
+    "choices": {"status": null, "harness_count": null, "token_leaked": null},
+    "n_seats_c8": {"status": null, "n": null, "worktrees": null, "c8_refusal": null},
+    "cvy_id": {"status": null, "convoy_id": null},
+    "bring_up": {"status": null, "dry_run": null, "spawned": null, "wt_invoked": false, "await_seated": null}
+  },
+  "notes": "Copy to e2e_harness.json and fill from a real host walk. wt_invoked must stay false on Linux cloud agents."
+}

@@ -8,8 +8,11 @@
     "binding": "ASSETS"
   },
   "vars": {
-    // Set this to the existing Python MCP origin that currently serves /mcp.
-    // Example: https://mcp-origin.example
+    // TREE PLACEHOLDER, not the live origin. Live Worker binding (probed
+    // 2026-09-04) is MCP_ORIGIN=https://convoy.bot and the deployed stub does
+    // not read it: /mcp is fetch(request) pass-through to tunnel convoy-bot
+    // -> 127.0.0.1:8788 on the Windows origin. Do not wrangler-deploy this
+    // placeholder over production. Operator runbook: docs/redeploy.md
     "MCP_ORIGIN": "https://mcp-origin.example"
   }
   // Route is configured in Cloudflare once the convoy.bot zone is attached.
