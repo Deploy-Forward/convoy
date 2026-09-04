@@ -1,0 +1,194 @@
+{
+  "schema_version": "2026-09-01",
+  "extensible": true,
+  "effort_types": {
+    "low": {
+      "kind": "reasoning-depth"
+    },
+    "medium": {
+      "kind": "reasoning-depth"
+    },
+    "high": {
+      "kind": "reasoning-depth"
+    },
+    "xhigh": {
+      "kind": "reasoning-depth"
+    },
+    "extra-high": {
+      "kind": "product-key",
+      "vendor_equivalent": "xhigh",
+      "scope": "codex"
+    },
+    "max": {
+      "kind": "reasoning-depth"
+    },
+    "more-reasoning": {
+      "kind": "menu-bucket",
+      "scope": "codex"
+    }
+  },
+  "harnesses": [
+    {
+      "id": "grok",
+      "name": "Grok",
+      "aliases": [
+        "grok.exe"
+      ],
+      "exec": "grok",
+      "mcp_supported": true,
+      "usage_probe": "grok",
+      "usage_remaining_null_until_live_probe": true,
+      "effort": {
+        "mode": "harness-scoped",
+        "keys": [
+          "low",
+          "medium",
+          "high",
+          "xhigh"
+        ],
+        "cli_flag": "--reasoning-effort",
+        "cli_flag_aliases": [
+          "--effort"
+        ],
+        "evidence": "grok --help (demo box, 2026-09-01, grok 1.0.13); enum from live invalid-value reject in lead research (xhigh, high, medium, low)"
+      }
+    },
+    {
+      "id": "claude",
+      "name": "Claude Code",
+      "aliases": [
+        "claude-code",
+        "claude.exe"
+      ],
+      "exec": "claude",
+      "mcp_supported": true,
+      "usage_probe": "claude",
+      "usage_remaining_null_until_live_probe": false,
+      "effort": {
+        "mode": "harness-scoped",
+        "keys": [
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max"
+        ],
+        "cli_flag": "--effort",
+        "docs_only_tokens": [
+          "ultracode"
+        ],
+        "evidence": "claude --help (demo box, 2026-09-01) lists low|medium|high|xhigh|max; vendor docs also name ultracode, which is not in --help and is never emitted by Convoy"
+      }
+    },
+    {
+      "id": "codex",
+      "name": "Codex",
+      "aliases": [
+        "codex.exe"
+      ],
+      "exec": "codex",
+      "mcp_supported": true,
+      "usage_probe": "codex",
+      "usage_remaining_null_until_live_probe": false,
+      "effort": {
+        "mode": "harness-scoped",
+        "keys": [
+          "low",
+          "medium",
+          "high",
+          "extra-high",
+          "more-reasoning"
+        ],
+        "vendor_key": "model_reasoning_effort",
+        "vendor_values": [
+          "minimal",
+          "low",
+          "medium",
+          "high",
+          "xhigh"
+        ]
+      }
+    },
+    {
+      "id": "cursor-agent",
+      "name": "Cursor-Agent",
+      "aliases": [
+        "cursor_agent",
+        "cursor-agent.exe"
+      ],
+      "exec": "cursor-agent",
+      "mcp_supported": true,
+      "usage_probe": "cursor-agent",
+      "usage_remaining_null_until_live_probe": true,
+      "effort": {
+        "mode": "unknown",
+        "keys": null
+      }
+    },
+    {
+      "id": "agy",
+      "name": "Antigravity (CLI)",
+      "aliases": [
+        "antigravity",
+        "antigravity-cli",
+        "agy.exe"
+      ],
+      "exec": "agy",
+      "mcp_supported": true,
+      "usage_probe": "agy",
+      "usage_remaining_null_until_live_probe": true,
+      "effort": {
+        "mode": "harness-scoped",
+        "keys": [
+          "low",
+          "medium",
+          "high"
+        ],
+        "cli_flag": "--effort",
+        "evidence": "agy --help (demo box, 2026-09-01): --effort low|medium|high; resume is --conversation <ID>, there is no --resume flag"
+      }
+    },
+    {
+      "id": "hermes",
+      "name": "Hermes",
+      "aliases": [
+        "hermes.exe"
+      ],
+      "exec": "hermes",
+      "mcp_supported": true,
+      "usage_probe": "hermes",
+      "usage_remaining_null_until_live_probe": true,
+      "effort": {
+        "mode": "model-driven",
+        "keys": null,
+        "evidence": "hermes --help (demo box, 2026-09-01): --resume SESSION / -r verified; effort belongs to the driven model"
+      }
+    },
+    {
+      "id": "pi",
+      "name": "Pi",
+      "aliases": [
+        "pi.exe"
+      ],
+      "exec": "pi",
+      "mcp_supported": true,
+      "usage_probe": "pi",
+      "usage_remaining_null_until_live_probe": true,
+      "effort": {
+        "mode": "model-driven",
+        "keys": null,
+        "cli_flag": "--thinking",
+        "cli_values": [
+          "off",
+          "minimal",
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max"
+        ],
+        "evidence": "pi --help (demo box, 2026-09-01): --thinking <level> for the driven model; model pattern also accepts :<thinking>. --resume is a session picker; direct-id resume unverified"
+      }
+    }
+  ]
+}

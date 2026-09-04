@@ -13,7 +13,9 @@ thread orchestration through Convoy MCP + CLI.
 1. Always fetch the live MCP `tools/list` before presenting capabilities.
 2. Never hardcode tool counts, stale tool names, or a frozen catalog.
 3. If a tool is not returned by live `tools/list`, mark it unavailable instead
-   of guessing.
+   of guessing. `python -m convoy preflight` scores the live list against the
+   wizard's required verbs and says per gap whether a redeploy fixes it or
+   the verb is CLI-only.
 
 ## Execution rules
 
@@ -22,6 +24,8 @@ thread orchestration through Convoy MCP + CLI.
   target `--root`.
 - Reuse only documented Convoy verbs and cards. Do not wrap vendor CLIs.
 - Keep unknown values as `null`; do not invent session IDs, tokens, or usage.
+- Model/effort per harness comes from the pack's `harness_effort.json`, not
+  from memory.
 
 ## Preferred operator flow
 
