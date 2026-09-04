@@ -189,6 +189,60 @@ def model_catalog(harness_id: str) -> dict[str, Any]:
     return {"models": None, "evidence": None}
 
 
+WHERE = ("local", "cloud")
+
+
+def cloud_contract(harness_id: str) -> dict[str, Any]:
+    """Per-harness cloud block for the wire: {mode, cli, evidence}. mode is one
+    of unsupported | unverified | interactive-session | task, set ONLY from a
+    local --help that was run and quoted (live 2026-09-04: claude --cloud
+    attaches an interactive session; codex cloud exec submits a task; grok
+    names remote sessions only on its resume path; the rest quote nothing).
+    Unknown harness: all null."""
+    wanted = canonical_harness_id(harness_id)
+    for row in harness_entries():
+        if row["id"] == wanted:
+            block = row.get("cloud")
+            block = block if isinstance(block, dict) else {}
+            return {"mode": block.get("mode"), "cli": block.get("cli"), "evidence": block.get("evidence")}
+    return {"mode": None, "cli": None, "evidence": None}
+
+
+def _cloud_offered(block: dict[str, Any]) -> bool:
+    """cloud is offered exactly when the vendor CLI evidences an interactive
+    attach; a task surface (codex cloud exec) is not a seat, and an
+    unverified one is not offered on a guess."""
+    return block.get("mode") == "interactive-session" and isinstance(block.get("evidence"), str) and bool(block["evidence"].strip())
+
+
+def where_options(harness_id: str) -> dict[str, Any]:
+    """What `where` a chair on this harness may take. local always; cloud
+    carries offered plus the mode and evidence so a refusal is legible
+    before it happens."""
+    block = cloud_contract(harness_id)
+    return {"local": {"offered": True}, "cloud": {"offered": _cloud_offered(block), **block}}
+
+
+def validate_where(harness_id: str, where: Any) -> str:
+    """Blank is local (the axis did not exist before 2026-09-04 and every
+    pane then was local). cloud is refused unless offered, naming the mode
+    and quoting the vendor's own --help so the caller reads why."""
+    text = str(where).strip().lower() if isinstance(where, str) else ""
+    if not text:
+        return "local"
+    if text not in WHERE:
+        raise ValueError("refuse where " + repr(text) + ": where is local or cloud")
+    if text == "cloud":
+        block = cloud_contract(harness_id)
+        if not _cloud_offered(block):
+            hid = canonical_harness_id(harness_id)
+            raise ValueError(
+                "refuse where='cloud' for " + hid + ": cloud mode is " + str(block.get("mode")) +
+                ", not interactive-session" + ((" (" + block["cli"] + ")") if isinstance(block.get("cli"), str) else "") +
+                "; " + str(block.get("evidence") or "no evidence recorded"))
+    return text
+
+
 def validate_model(harness_id: str, model: Any) -> str | None:
     """Blank is None. A model outside a NON-null catalog is refused naming the
     list; a null catalog accepts anything as declared — unknown is not a

@@ -917,7 +917,19 @@ def _resolve(root: Path, convoy_id: str | None, thread: str | None) -> dict[str,
 
 def _hop_seats(root: Path, cid: str) -> list[dict[str, Any]]:
     seats = list_seats(root, convoy_id=cid, require_session=False)
-    return [s for s in seats if not is_conductor(s.get("to"))]
+    return [s for s in seats if not is_conductor(s.get("to")) and s.get("where") != "cloud"]
+
+
+def _cloud_seats(root: Path, cid: str) -> list[dict[str, Any]]:
+    """Chairs bring_up must NOT make a pane: a cloud neuron is not a local
+    process. No cloud launcher exists (2026-09-04); its connected proof will
+    be an MCP attach, and the card says so instead of spawning."""
+    return [
+        {"session_id": s.get("session_id"), "to": s.get("to"), "where": "cloud", "pane": False,
+         "reason": "no cloud launcher exists; a cloud neuron proves it is connected by MCP attach, not a pane"}
+        for s in list_seats(root, convoy_id=cid, require_session=False)
+        if s.get("where") == "cloud" and not is_conductor(s.get("to"))
+    ]
 
 
 def _seat_with_agent(root: Path, seat: dict[str, Any], first_run: dict[str, Any]) -> dict[str, Any]:
@@ -1055,6 +1067,7 @@ def bring_up(root: Path, convoy_id: str | None = None, thread: str | None = None
         "conductor": CONDUCTOR,
         "lead": read_lead(root),
         "windows": windows,
+        "cloud": _cloud_seats(root, cid),
     }
 
 

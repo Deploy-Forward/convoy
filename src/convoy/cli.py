@@ -83,6 +83,7 @@ def main(argv: list[str] | None = None) -> int:
     se.add_argument("--title", help="optional pane title to restore on bring-up")
     se.add_argument("--agent", help="optional agent file path used for native resume")
     se.add_argument("--effort", help="declared effort for this seat, validated against the harness's own keys (convoy choices shows them); applied to argv only where harness_effort.json evidences a flag")
+    se.add_argument("--where", choices=["local", "cloud"], help="local (default) or cloud; cloud is refused unless convoy choices offers it for the harness, and takes no --worktree")
 
     jn = sub.add_parser("join")
     jn.add_argument("--to", required=True, help="harness for the new chair")
@@ -91,6 +92,7 @@ def main(argv: list[str] | None = None) -> int:
     jn.add_argument("--model")
     jn.add_argument("--title")
     jn.add_argument("--effort")
+    jn.add_argument("--where", choices=["local", "cloud"], help="local (default) or cloud; cloud is refused unless convoy choices offers it for the harness")
     jn.add_argument("--as", dest="author", help="authoring seat (neuron-authored)")
     jn.add_argument("--launch", action="store_true", help="split exactly one fresh chair into the active supported pane host")
     jn.add_argument("--consent", help="one-time scoped consent returned by `convoy consent --grant`")
@@ -299,6 +301,7 @@ def main(argv: list[str] | None = None) -> int:
             title=args.title,
             agent=args.agent,
             effort=args.effort,
+            where=args.where,
         )
         print(json.dumps(row))
         return 0
@@ -306,7 +309,8 @@ def main(argv: list[str] | None = None) -> int:
         try:
             if args.cmd == "join":
                 card = join(root, args.to, session_id=args.session_id, worktree=args.worktree,
-                            model=args.model, title=args.title, effort=args.effort, author=args.author)
+                            model=args.model, title=args.title, effort=args.effort, author=args.author,
+                            where=args.where)
                 if args.launch:
                     launched = launch_seat(
                         root,

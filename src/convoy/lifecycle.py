@@ -18,7 +18,7 @@ from typing import Any
 
 from .cmd import convoy_root_command
 from .convoy import list_seats, read_thread, seat as write_seat, set_lead, update_seat
-from .harness_contract import validate_effort, validate_model
+from .harness_contract import validate_effort, validate_model, validate_where
 from .layer import hook
 
 
@@ -58,13 +58,16 @@ def join(
     title: str | None = None,
     effort: str | None = None,
     author: str | None = None,
+    where: str | None = None,
 ) -> dict[str, Any]:
-    """Add a new chair: seat + boot prompt + kind=join row (token minted)."""
+    """Add a new chair: seat + boot prompt + kind=join row (token minted).
+    where is local (default) or cloud; write_seat refuses a cloud chair the
+    harness cannot attach, before any token is minted."""
     sid = (session_id or "").strip() or ((title or to) + "-" + (read_thread(root) or "thread"))
     if any(row.get("session_id") == sid for row in list_seats(root)):
         raise ValueError("refuse join: chair already exists: " + sid)
     token = _mint_token()
-    write_seat(root, to, sid, worktree=worktree, model=model, title=title, effort=effort)
+    write_seat(root, to, sid, worktree=worktree, model=model, title=title, effort=effort, where=where)
     seat_row = update_seat(root, sid, boot_prompt=_boot_prompt(root, sid, token, "thread.md"))
     hook(
         root, "join", "join " + sid + " (" + to + ")",
@@ -92,12 +95,13 @@ def swap(
     hp = Path(handoff)
     if not hp.is_file():
         raise ValueError("refuse swap: handoff file missing: " + handoff)
-    _require_seat(root, session_id)
+    chair = _require_seat(root, session_id)
     # Every refusal happens here, before the row stamps: update_seat would
     # refuse these too, but by then a kind=swap row and a minted token were
     # already in the feed asserting a swap that never happened (2026-09-04).
     validate_model(to, model)
     validate_effort(to, effort)
+    validate_where(to, chair.get("where"))
     token = _mint_token()
     row = hook(
         root, "swap", "swap " + session_id + " -> " + to + ((" (" + model + ")") if model else ""),
