@@ -29,6 +29,48 @@ class PluginMarketplacePackContract(unittest.TestCase):
         self.assertIn("fails closed", note)
         self.assertIn("hide write", note)
 
+    def test_grok_catalog_discovers_like_exa(self):
+        """xai-org/plugin-marketplace plugin_catalog.py load_manifest reads
+        .grok-plugin/plugin.json (not .cursor-plugin). scan_mcp_servers
+        defaults to .mcp.json unless the grok manifest sets mcpServers to a
+        path string. Exa's pack has no mcpServers key; ours must match or the
+        catalog indexes mcp.json and Grok Build never attaches the endpoint.
+        """
+        grok = json.loads((PLUGIN_ROOT / ".grok-plugin" / "plugin.json").read_text(encoding="utf-8"))
+        self.assertNotIn("mcpServers", grok, "a path here would hide .mcp.json from the xAI indexer")
+        self.assertNotIn("$schema", grok)
+        # Brand-scoped CTA terms only (CONTRIBUTING.md rejects generic mcp/cli/deploy).
+        for kw in grok.get("keywords") or []:
+            self.assertNotIn(kw.lower(), {"mcp", "cli", "deploy", "api", "skills", "database"})
+        self.assertIn("convoy wizard", grok.get("keywords") or [])
+
+        compat = json.loads((PLUGIN_ROOT / "mcp.json").read_text(encoding="utf-8"))
+        grok_mcp = json.loads((PLUGIN_ROOT / ".mcp.json").read_text(encoding="utf-8"))
+        self.assertEqual(
+            grok_mcp["mcpServers"]["convoy"]["url"],
+            compat["mcpServers"]["convoy"]["url"],
+        )
+
+        skills = []
+        for child in sorted((PLUGIN_ROOT / "skills").iterdir()):
+            skill_md = child / "SKILL.md"
+            if not skill_md.is_file():
+                continue
+            text = skill_md.read_text(encoding="utf-8")
+            self.assertTrue(text.startswith("---\n"), child.name)
+            name_line = next(line for line in text.splitlines()[1:] if line.startswith("name:"))
+            skills.append(name_line.split(":", 1)[1].strip())
+        self.assertEqual(skills, ["convoy", "convoy-wizard"])
+
+    def test_pack_readme_names_official_marketplace_not_cursor_publish(self):
+        readme = (PLUGIN_ROOT / "README.md").read_text(encoding="utf-8")
+        self.assertIn("https://github.com/xai-org/plugin-marketplace", readme)
+        self.assertIn(".mcp.json", readme)
+        self.assertIn('path": "plugin/convoy"', readme)
+        self.assertNotIn("cursor.com/marketplace/publish", readme)
+        self.assertIn("/marketplace", readme)
+        self.assertIn("unverified", readme.lower())
+
     def test_agent_plugin_manifest_contract(self):
         manifest = PLUGIN_ROOT / "plugin.json"
         self.assertTrue(manifest.is_file(), "plugin/convoy/plugin.json missing")
