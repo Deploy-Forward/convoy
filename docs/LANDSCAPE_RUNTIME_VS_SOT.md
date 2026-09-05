@@ -193,7 +193,7 @@ Claims in this document must point at code or stay RED. Paths are relative to re
 | SoT under `.convoy/` | `src/convoy/convoy.py` (`read_id` L37, `ensure_id` L44, `seats.jsonl` L22, `seat` L111, `list_seats` L208, `attach` L437); `src/convoy/layer.py` (`FEED_NAME` L17, `hook` L49, `feed_since` L137) | `test/demo/temporal_hooks_test.py`, `phase7_attach_test.py`, `feed_v2_contract_test.py`, `feed_note_provenance_test.py` |
 | Bring-up does not own PTYs; WT/tmux does | `src/convoy/bringup.py` module docstring L1; `bring_up` L998 | `test/demo/phase7_bringup_test.py`, `consent_pane_host_test.py`, `panes_test.py` |
 | Synapse = native send; no-steal | `src/convoy/synapse.py` (`native_runner` L121, `fake_runner` L75, `allow_interactive_resume` L319) | `test/demo/phase_mcp_http_test.py`, `limited_send_ask_test.py` |
-| MCP orchestration, write gate | `src/convoy/mcp_http.py` (`_WRITE_TOOLS` / `CONVOY_MCP_WRITE_TOOLS` ~L90–92, `call_tool` L590, `McpHandler` L1075) | `test/demo/phase_mcp_http_test.py`, `mcp_wizard_verbs_test.py`, `wizard_e2e_gated_test.py` |
+| MCP orchestration, write gate | `src/convoy/mcp_http.py` (`_WRITE_TOOLS` L108 / `CONVOY_MCP_WRITE_TOOLS` (comment ~L90, gate L114), `call_tool` L590, `McpHandler` L1075) | `test/demo/phase_mcp_http_test.py`, `mcp_wizard_verbs_test.py`, `wizard_e2e_gated_test.py` |
 | Glance / usage honesty | `src/convoy/glance.py`, `src/convoy/usage.py` (`probe` L151, `surface` L194) | `test/demo/glance_test.py`, `glance_public_redaction_test.py`, `phase5_usage_test.py` |
 | Tokens never leave seats on wire | `src/convoy/graph.py` L16; public redaction tests | `test/demo/public_wire_redaction_test.py`, `graph_test.py` |
 | Marketplace pack ≠ SoT | `plugin/convoy/` (skills + `.mcp.json`); SoT remains `.convoy/` on `--root` | `plugin/convoy/README.md`; prefer “Exa-style pack layout” over “xAI SoT” in `docs/e2e-dod.md` |
@@ -239,18 +239,24 @@ fn convoy_context(root):
 ### 13.3 Seat + bring_up (mux owns PTY)
 
 ```text
+fn seat(root, session_id, worktree, ...):
+  # convoy.py:111 — C8 lives HERE, not in bring_up
+  holder = chair_holding_worktree(root, worktree, except_session=session_id)  # convoy.py:148 / :247
+  if holder: refuse("C8: one worktree, one chair")
+  append_or_update seats.jsonl
+
 fn bring_up_thread(root, convoy_id, thread):
   # bringup.py:998
   seats = list_seats(root, convoy_id)
-  assert one_chair_per_worktree(seats)          # C8 lock
+  panes = _pane_seats(seats)                    # bringup.py:185 — dedup panes only; not C8
   window = host.open_isolated_window()          # WT `--window new` / mux equivalent
-  for seat in seats:
-    argv = vendor_resume_argv(seat)             # vendor UUID from seat — never Convoy seat id
+  for seat in panes:
+    argv = resume_argv(seat)                    # bringup.py:289 — vendor UUID, never Convoy seat id
     host.split_pane(window, argv)               # PTY owned by host
   return card(panes=..., convoy_id=..., nulls_ok=true)
 ```
 
-**DoD:** `phase7_bringup_test.py` unit-GREEN. Live GREEN only on a machine with WT/tmux proof — cloud box without WT ≠ live bring-up GREEN.
+**DoD:** C8 enforced at `seat` / `chair_holding_worktree` (`convoy.py`); `bring_up` only tiles. `phase7_bringup_test.py` unit-GREEN. Live GREEN only on a machine with WT/tmux proof — cloud box without WT ≠ live bring-up GREEN.
 
 ### 13.4 Synapse send (orchestration, not attach-PTY)
 
@@ -363,7 +369,7 @@ See `CANON.md` and the terminology lock in `SPEC.md`.
 |---|---|---|---|
 | Acceptance | Acceptance Testing (`a5236dab-…`) | **RED** | Softened §10; pack≠SoT GREEN; §16 GREEN; clear = live Gate 0 + host-render |
 | Unit | Unit Test | pending | |
-| Integration | Integration Test | pending | |
+| Integration | Integration Test (`62eaa2dc-…`) | **GREEN** (+ citation fix) | C8 at `seat`/`chair_holding_worktree` not `bring_up`; `resume_argv`; `_WRITE_TOOLS` L108 |
 | System | System Testing (`f5936e5a-…`) | **GREEN** (SPEC) / live wire **RED** ops | Persistence §4/§6/§14 honest; WT owns PTY; Worker≠origin; POST /mcp 405 this probe — tool count null |
 
 ## 19. Related artifacts
