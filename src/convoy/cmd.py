@@ -44,11 +44,20 @@ def _source_dir() -> str:
 def hook_shell() -> list[str] | None:
     """How a harness runs a `type: command` hook. Claude Code and Grok CLI
     hand the string to a POSIX shell (Git Bash on Windows) when one exists;
-    `None` means `shell=True` (cmd.exe / /bin/sh) is the best we can do."""
+    `None` means `shell=True` (cmd.exe / /bin/sh) is the best we can do.
+
+    Prefer Git Bash's native Windows process bridge over a generic `bash` on
+    PATH. On Windows 11, `C:\\Windows\\System32\\bash.exe` can be WSL bash;
+    it cannot execute the Windows interpreter path carried by a hook command.
+    """
     if os.name != "nt":
         return None
-    for cand in (os.environ.get("CONVOY_HOOK_SHELL"), shutil.which("bash"),
-                 r"C:\Program Files\Git\bin\bash.exe", r"C:\Program Files\Git\usr\bin\bash.exe"):
+    for cand in (
+        os.environ.get("CONVOY_HOOK_SHELL"),
+        r"C:\Program Files\Git\bin\bash.exe",
+        r"C:\Program Files\Git\usr\bin\bash.exe",
+        shutil.which("bash"),
+    ):
         if cand and Path(cand).is_file():
             return [cand, "-c"]
     return None

@@ -114,8 +114,9 @@ class Phase7Hide(unittest.TestCase):
     def test_mcp_tools_list_includes_hide_aliases(self):
         listed = handle_rpc(self.root, {"jsonrpc": "2.0", "id": 1, "method": "tools/list"})
         names = [t["name"] for t in listed["result"]["tools"]]
-        for want in ("hide", "minimize", "background", "bring_up", "send"):
+        for want in ("hide", "minimize", "background", "bring_up"):
             self.assertIn(want, names)
+        self.assertNotIn("send", names)
         send = next(t for t in TOOLS if t["name"] == "send")
         desc = send["description"]
         self.assertIn("Headless synapse; does not pop a TUI", desc)

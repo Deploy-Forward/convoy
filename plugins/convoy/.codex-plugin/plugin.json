@@ -1,0 +1,41 @@
+{
+  "name": "convoy",
+  "version": "0.1.0+codex.20260905015247",
+  "description": "Orchestrate multiple AI coding harnesses as neurons on one durable Convoy thread.",
+  "author": {
+    "name": "Deploy Forward",
+    "url": "https://github.com/Deploy-Forward"
+  },
+  "homepage": "https://convoy.bot",
+  "repository": "https://github.com/Deploy-Forward/convoy",
+  "license": "MIT",
+  "keywords": [
+    "multi-agent",
+    "orchestration",
+    "coding-agents",
+    "convoy"
+  ],
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "Convoy",
+    "shortDescription": "Coordinate your AI coding agents on one inspectable thread.",
+    "longDescription": "Convoy connects Codex to a shared, durable thread for discovering available harnesses, forming multi-agent crews, routing work, and verifying acknowledgements. Its bundled skill fails closed when the configured MCP endpoint does not expose the capabilities a requested workflow needs.",
+    "developerName": "Deploy Forward",
+    "category": "Developer Tools",
+    "capabilities": [
+      "Interactive",
+      "Read"
+    ],
+    "websiteURL": "https://convoy.bot",
+    "brandColor": "#1D4ED8",
+    "composerIcon": "./assets/logo.svg",
+    "logo": "./assets/logo.svg",
+    "screenshots": [],
+    "defaultPrompt": [
+      "Inspect the current Convoy thread.",
+      "Show Convoy's live capabilities.",
+      "Check whether this endpoint can create a crew."
+    ]
+  }
+}
