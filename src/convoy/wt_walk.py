@@ -1,4 +1,7 @@
-"""WtWalkAdapter: the Windows Terminal pane walk, reconciled from two live runs.
+"""wt_walk: the Windows Terminal pane walk, reconciled from two live runs.
+
+(Named wt_walk, not pane_host: src/convoy/pane_host.py is the unrelated
+lifecycle host.)
 
 g2 (06:03-06:17Z) proved that a WT window title names the chair only when it
 carries the worktree folder name or an exact/prefix seat title; a generic idle
@@ -92,7 +95,15 @@ class WtWalkAdapter:
         crew_hwnd: int | None = None,
         idle_chairs: Iterable[str] | None = None,
         settle_s: float = 0.7,
+        type_text: bool = True,
+        expect_title: str | None = None,
     ) -> dict[str, Any]:
+        """Walk to the one pane that is provably this chair.
+
+        type_text=False is the focus-only probe (pseudocode WtAdapter.focus):
+        same walk, stop at the match, type nothing; its result names the pane
+        the consent card must name. expect_title, when set, refuses to type
+        into a pane whose re-read title is not the consented one."""
         card: dict[str, Any] = {
             "ok": False,
             "hwnd": None,
@@ -102,6 +113,7 @@ class WtWalkAdapter:
             "error": None,
             "steps": [],
             "crew_hwnd": crew_hwnd,
+            "typed": False,
         }
         host = self._host()
         if host is None:
@@ -152,10 +164,14 @@ class WtWalkAdapter:
                 rule = pane_belongs_to(seat, title, hwnd=hwnd, crew_hwnd=crew_hwnd, idle_chairs=idle)
                 if rule is None:
                     step["skip"] = "idle, but no rule proves the pane belongs to this chair"
+                elif expect_title is not None and title != expect_title:
+                    step["skip"] = "pane title " + repr(title) + " is not the consented pane " + repr(expect_title)
                 else:
-                    # one send: the text and its Enter; a second send is a second chance to misfire
-                    host.send_keys(hwnd, text if text.endswith("\n") else text + "\n")
-                    step["typed"] = True
+                    if type_text:
+                        # one send: the text and its Enter; a second send is a second chance to misfire
+                        host.send_keys(hwnd, text if text.endswith("\n") else text + "\n")
+                        card["typed"] = True
+                    step["typed"] = bool(type_text)
                     card["steps"].append(step)
                     card["ok"] = True
                     card["rule"] = rule
@@ -165,6 +181,42 @@ class WtWalkAdapter:
         card["pane_title_after"] = previous
         card["error"] = "no pane matched: idle title, not busy, and belongs to the chair; nothing typed"
         return card
+
+
+def record_crew_window(
+    root: Path,
+    *,
+    hwnd: int | None = None,
+    foreground: bool = False,
+    os_: Any | None = None,
+) -> dict[str, Any]:
+    """The ONLY writer of a kind=crew-window feed row (via layer.hook).
+
+    Run from inside the crew's Windows Terminal window: --foreground records
+    the window that currently has the foreground, --hwnd a given one. Either
+    way the hwnd must be a visible WT window per enum_windows, or refuse.
+    Nothing is focused, nothing is typed."""
+    from .layer import hook
+
+    card: dict[str, Any] = {"ok": False, "hwnd": None, "title": None, "error": None, "recorded": False}
+    host = os_ if os_ is not None else (_User32() if os.name == "nt" else None)
+    if host is None:
+        card["error"] = "crew-window needs Windows (user32); nothing recorded"
+        return card
+    if hwnd is None and foreground:
+        hwnd = host.foreground()
+    if hwnd is None:
+        card["error"] = "give --hwnd <n> or --foreground; nothing recorded"
+        return card
+    wt = {int(w.get("hwnd") or 0): w for w in host.enum_windows()}
+    if int(hwnd) not in wt:
+        card["error"] = "HWND " + str(hwnd) + " is not a visible Windows Terminal window; nothing recorded"
+        return card
+    title = str(wt[int(hwnd)].get("title") or "")
+    hook(root, "crew-window", "wt window for this crew: HWND " + str(int(hwnd)) + " title=" + title,
+         None, extra={"hwnd": int(hwnd), "title": title})
+    card.update({"ok": True, "hwnd": int(hwnd), "title": title, "recorded": True})
+    return card
 
 
 class _User32:
@@ -198,6 +250,10 @@ class _User32:
 
         user32.EnumWindows(_cb, 0)
         return found
+
+    def foreground(self) -> int | None:
+        h = int(self.user32.GetForegroundWindow() or 0)
+        return h or None
 
     def title(self, hwnd: int) -> str:
         buf = self.ctypes.create_unicode_buffer(512)
