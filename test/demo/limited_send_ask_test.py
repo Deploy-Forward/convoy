@@ -34,7 +34,7 @@ class LimitedSendAsk(unittest.TestCase):
         ask = card.get("ask")
         self.assertIsInstance(ask, dict)
         self.assertEqual(ask["action"], "bring_up")
-        self.assertEqual(ask["handoff"], ".ola/*handoff*")
+        self.assertEqual(ask["handoff"], ".convoy/handoff/<chair>-<ts>.md")
         low = ask["text"].lower()
         self.assertIn("ask the user", low)
         self.assertIn("bring_up", low)

@@ -2,7 +2,7 @@ import json, sys, tempfile, unittest
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 from convoy.cli import main
-from convoy.context import pack, stdin_for
+from convoy.context import newest_handoff, pack, stdin_for
 from convoy.registry import lookup, parse_agents_jsonl, parse_session_id
 from convoy.synapse import send_one
 
@@ -64,6 +64,22 @@ class Phase1ThreadedContext(unittest.TestCase):
         )
         self.assertEqual(parse_agents_jsonl(self.root, "grok", label="phase1-autoreg"), "grok-session-phase1autoreg")
         self.assertIsNone(parse_agents_jsonl(self.root, "claude", label="phase1-autoreg"))
+
+    def test_newest_handoff_prefers_convoy_folder_over_legacy_ola(self):
+        legacy = self.root / ".ola" / "old-handoff.md"
+        legacy.write_text("old", encoding="utf-8")
+        self.assertTrue(str(newest_handoff(self.root)).endswith("old-handoff.md"))
+        dest = self.root / ".convoy" / "handoff"
+        dest.mkdir(parents=True)
+        fresh = dest / "chair-1-20260905T010000Z.md"
+        fresh.write_text("new", encoding="utf-8")
+        self.assertEqual(newest_handoff(self.root), str(fresh))
+        brief = self.root / ".convoy" / "brief.md"
+        brief.parent.mkdir(parents=True, exist_ok=True)
+        brief.write_text("NEW_BRIEF", encoding="utf-8")
+        p = pack(self.root)
+        self.assertEqual(p["brief"], str(brief))
+        self.assertEqual(p["handoff"], str(fresh))
 
     def test_unknown_instance_refuses(self):
         card = send_one(self.root, "grok", "nope", instance_id="not-registered")

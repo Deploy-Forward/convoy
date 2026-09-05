@@ -89,7 +89,7 @@ Write (thread state):
 - `join --to <harness> [--worktree <path>] [--title T] [--as <chair>] [--launch] [--consent <id>]` — register one fresh chair.
 - `crew --seat <harness>[,model=M][,effort=E][,where=local|cloud][,title=T] [--seat ...] [--checkout <path>] [--launch]` — N neurons at once: validates every seat first, mints one worktree per local seat, joins every chair with a boot prompt, and (with `--launch`) brings them up in ONE window. Launched is not connected: the card's `seated` snapshot says `pending`.
 - `await-seated --seat <chair> [--seat ...] [--timeout <s>]` — observe the acks: per chair `connected` (its own `seated` row cites the minted token) | `pending` | `stale`, with the seconds waited.
-- `swap --seat <chair> --to <harness> --handoff <.ola/*handoff*> --as <chair>` — replace the occupant, keep the chair.
+- `swap --seat <chair> --to <harness> --handoff <.convoy/handoff/<chair>-<ts>.md> --as <chair>` — replace the occupant, keep the chair.
 - `seated --seat <chair> --token <token>` — proof-of-life echo from the new occupant.
 - `lead --to <chair> --as <you>` — pass lead to a chair.
 - `hook note "<text>" [--as-me] --to <chair>` — leave a note for a chair (or `grok-bot`).
@@ -201,7 +201,7 @@ Notes tied to code/tests:
 
 - `seat.session_id` and `seat.resume` are distinct: session key vs vendor resume token.
 - First-run seats can omit vendor resume; then no resume token is passed.
-- Live `send` is headless and never steals an active interactive neuron; refusal cards ask users to `bring_up` / open a pane or write `.ola/*handoff*`.
+- Live `send` is headless and never steals an active interactive neuron; refusal cards ask users to `bring_up` / open a pane or write `.convoy/handoff/<chair>-<ts>.md`.
 - `context.pack` overlays home-layer `convoy_id` + `thread_key` onto seat-worktree pointers when present.
 - `bring_up` / `open` are the bulk show commands; targeted `join --launch` is
   the explicit one-chair exception described below.
