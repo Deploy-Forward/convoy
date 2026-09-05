@@ -360,6 +360,46 @@ def build_widget_model(
     return {"ok": True, "threads": threads, "now": now, "idle_s_flag": threshold}
 
 
+NUDGE_AWAIT_S = 60.0
+
+
+def nudge_delivered(root: Path | str, session_id: str, since_ts: str) -> str | None:
+    """The target's OWN feed row newer than the nudge, or None.
+
+    'delivered' flips only on that row (nudge.py never claims it). Pure read of
+    the feed; the widget polls this for NUDGE_AWAIT_S after a confirmed nudge.
+    """
+    authored, _ = _tape_index(Path(root))
+    ts = authored.get(session_id)
+    if isinstance(ts, str) and ts > since_ts:
+        return ts
+    return None
+
+
+def nudge_await_status(root: Path | str, session_id: str, since_ts: str, waited_s: float) -> dict[str, Any]:
+    """{delivered: bool, ts, done: bool, text} for one poll tick; done after NUDGE_AWAIT_S."""
+    ts = nudge_delivered(root, session_id, since_ts)
+    if ts:
+        return {"delivered": True, "ts": ts, "done": True, "text": "delivered: own row at " + ts}
+    if waited_s >= NUDGE_AWAIT_S:
+        return {"delivered": False, "ts": None, "done": True,
+                "text": "nudged; no own row in " + str(int(NUDGE_AWAIT_S)) + " s (not delivered)"}
+    return {"delivered": False, "ts": None, "done": False,
+            "text": "nudged; awaiting own row (" + str(int(waited_s)) + "/" + str(int(NUDGE_AWAIT_S)) + " s)"}
+
+
+def close_action(find_spec: Callable[[str], Any] | None = None) -> str:
+    """'tray' only where pystray AND PIL are importable (pystray needs a PIL image); else 'minimize'."""
+    import importlib.util
+    find = find_spec or importlib.util.find_spec
+    try:
+        if find("pystray") is not None and find("PIL") is not None:
+            return "tray"
+    except (ImportError, ValueError):
+        pass
+    return "minimize"
+
+
 def run_widget(
     roots: list[Path | str] | None = None,
     *,
@@ -478,7 +518,17 @@ def run_widget(
             status.config(text=str(card.get("delivery") or card.get("reason") or card.get("error") or "nudge"))
             if card.get("delivery") == "nudged":
                 pending_nudge.clear()
+                _await_nudge(sid, utc_now(), 0.0)
         _paint_confirm()
+
+    def _await_nudge(sid: str, since_ts: str, waited_s: float) -> None:
+        """Poll the feed for the target's own row for NUDGE_AWAIT_S; repaint the chip on each tick."""
+        st = nudge_await_status(_root(), sid, since_ts, waited_s)
+        status.config(text=st["text"])
+        state["model"] = build_widget_model(roots, probe_fn=probe_fn)
+        _paint()
+        if not st["done"] and loop:
+            win.after(interval_ms, lambda: _await_nudge(sid, since_ts, waited_s + interval_ms / 1000.0))
 
     def _nudge_cancel() -> None:
         pending_nudge.clear()
@@ -488,6 +538,45 @@ def run_widget(
         pinned["v"] = not pinned["v"]
         win.attributes("-topmost", pinned["v"])
         _paint()
+
+    tray = {"icon": None}
+
+    def _tray_show(icon: Any = None, item: Any = None) -> None:
+        if tray["icon"] is not None:
+            try:
+                tray["icon"].stop()
+            except Exception:
+                pass
+            tray["icon"] = None
+        win.after(0, win.deiconify)
+
+    def _tray_quit(icon: Any = None, item: Any = None) -> None:
+        if tray["icon"] is not None:
+            try:
+                tray["icon"].stop()
+            except Exception:
+                pass
+        win.after(0, win.destroy)
+
+    def _on_close() -> None:
+        """x never kills the service: hide to the tray where pystray+PIL import, else minimize."""
+        if close_action() == "tray":
+            try:
+                import pystray
+                from PIL import Image, ImageDraw
+                img = Image.new("RGB", (16, 16), BG)
+                ImageDraw.Draw(img).ellipse((3, 3, 12, 12), fill=BLUE)
+                menu = pystray.Menu(pystray.MenuItem("show", _tray_show, default=True),
+                                    pystray.MenuItem("quit", _tray_quit))
+                tray["icon"] = pystray.Icon("convoy", img, "convoy", menu)
+                tray["icon"].run_detached()
+                win.withdraw()
+                return
+            except Exception:
+                tray["icon"] = None
+        win.iconify()
+
+    win.protocol("WM_DELETE_WINDOW", _on_close)
 
     def _run_cmd() -> None:
         text = pending_cmd.get("text") or ""

@@ -18,6 +18,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 from convoy import cli
 from convoy.convoy import bind, ensure_id, set_github
 from convoy.inbox import enqueue
+from convoy.layer import hook, utc_now
 from convoy.lifecycle import join, seated_ack
 from convoy.widget import build_widget_model
 from convoy.widget_service import (
@@ -25,8 +26,11 @@ from convoy.widget_service import (
     auto_widget_service,
     convoy_home,
     ensure_widget_service,
+    looks_like_widget,
+    process_image,
     service_argv,
 )
+from convoy.widget import close_action, nudge_await_status, nudge_delivered
 
 NULL_PROBE = {"usage_remaining": None, "limited": False, "raw": None}
 
@@ -70,6 +74,33 @@ class NudgeAffordance(unittest.TestCase):
         self.assertEqual(row["chip"], "stale")
         self.assertIs(row["nudge_available"], True)
         self.assertEqual(row["nudge"], "nudge --seat g-one --dry-run")
+
+    def test_nudge_delivered_flips_only_on_targets_own_row(self):
+        since = utc_now()
+        self.assertIsNone(nudge_delivered(self.root, "g-one", since))
+        hook(self.root, "note", "someone else", instance_id="other-seat")
+        self.assertIsNone(nudge_delivered(self.root, "g-one", since), "another chair's row is not delivery")
+        st = nudge_await_status(self.root, "g-one", since, 61.0)
+        self.assertFalse(st["delivered"])
+        self.assertTrue(st["done"])
+        self.assertIn("not delivered", st["text"])
+        hook(self.root, "note", "awake", instance_id="g-one")
+        ts = nudge_delivered(self.root, "g-one", since)
+        self.assertIsInstance(ts, str)
+        st = nudge_await_status(self.root, "g-one", since, 3.0)
+        self.assertTrue(st["delivered"])
+        self.assertTrue(st["done"])
+        self.assertEqual(st["ts"], ts)
+
+    def test_nudge_await_keeps_polling_before_60s(self):
+        st = nudge_await_status(self.root, "g-one", utc_now(), 3.0)
+        self.assertFalse(st["done"])
+        self.assertIn("awaiting", st["text"])
+
+    def test_close_action_tray_only_with_pystray_and_pil(self):
+        self.assertEqual(close_action(lambda name: None), "minimize")
+        self.assertEqual(close_action(lambda name: object() if name == "pystray" else None), "minimize")
+        self.assertEqual(close_action(lambda name: object()), "tray")
 
     def test_working_and_gone_rows_do_not(self):
         m = self._model(live=False, now="2099-01-01T00:00:00.000000Z")
@@ -125,6 +156,47 @@ class Service(unittest.TestCase):
         self.assertTrue(card["already"])
         self.assertEqual(card["pid"], 4321)
         self.assertEqual(self.spawned, [])
+
+    def test_alive_pid_with_foreign_image_is_pid_reuse_and_respawns(self):
+        self.home.mkdir(exist_ok=True)
+        (self.home / PIDFILE).write_text("4321\n", encoding="utf-8")
+        card = ensure_widget_service(self.home, spawner=self._spawner(8), alive_fn=lambda p: p == 4321,
+                                     image_fn=lambda _p: "C:\\Windows\\notepad.exe")
+        self.assertFalse(card["already"])
+        self.assertTrue(card["started"])
+        self.assertTrue(card["pid_reused"])
+        self.assertIs(card["image_verified"], False)
+        self.assertEqual(card["stale_pid"], 4321)
+        self.assertEqual(card["pid"], 8)
+
+    def test_alive_pid_with_our_interpreter_is_already_verified(self):
+        self.home.mkdir(exist_ok=True)
+        (self.home / PIDFILE).write_text("4321\n", encoding="utf-8")
+        card = ensure_widget_service(self.home, spawner=self._spawner(1), alive_fn=lambda p: p == 4321,
+                                     image_fn=lambda _p: sys.executable)
+        self.assertTrue(card["already"])
+        self.assertIs(card["image_verified"], True)
+        self.assertEqual(card["image"], sys.executable)
+        self.assertEqual(self.spawned, [])
+
+    def test_alive_pid_unknown_image_is_already_but_unverified(self):
+        self.home.mkdir(exist_ok=True)
+        (self.home / PIDFILE).write_text("4321\n", encoding="utf-8")
+        card = ensure_widget_service(self.home, spawner=self._spawner(1), alive_fn=lambda p: p == 4321,
+                                     image_fn=lambda _p: None)
+        self.assertTrue(card["already"])
+        self.assertIsNone(card["image_verified"])
+        self.assertEqual(self.spawned, [])
+
+    def test_looks_like_widget_is_null_unknown_never_guessed(self):
+        self.assertIsNone(looks_like_widget(None))
+        self.assertIs(looks_like_widget(sys.executable), True)
+        self.assertIs(looks_like_widget("/usr/bin/notepad"), False)
+
+    def test_process_image_of_this_process_is_our_interpreter(self):
+        img = process_image(os.getpid())
+        self.assertIsNotNone(img)
+        self.assertIs(looks_like_widget(img), True)
 
     def test_dead_pid_in_pidfile_respawns(self):
         self.home.mkdir(exist_ok=True)

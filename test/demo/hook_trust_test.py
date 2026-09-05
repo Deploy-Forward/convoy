@@ -161,14 +161,55 @@ class HookTrust(unittest.TestCase):
         self.assertEqual(card["trust"], [])
         self.assertFalse((self.home / ".grok").exists())
 
-    def test_first_run_carries_hook_trust_per_seat(self):
+    def test_claude_slash_spelling_already_trusted_is_not_rewritten(self):
+        import json
+        state = self.home / ".claude.json"
+        slash = str(self.wt.resolve()).replace("\\", "/")
+        state.write_text(json.dumps({"projects": {slash: {"hasTrustDialogAccepted": True}}}), encoding="utf-8")
+        before = state.read_bytes()
+        card = ensure_hook_trust(self._seat("claude"), home=self.home)
+        row = _by(card, "claude")
+        self.assertFalse(row["written"])
+        self.assertEqual(row["reason"], "already trusted")
+        self.assertEqual(state.read_bytes(), before)
+
+    def test_claude_first_run_writes_home_state_once(self):
+        """hook trust and the prepare step share ONE writer: a claude first run rewrites ~/.claude.json once."""
+        import convoy.bringup as b
+        real = b._write_json_dict
+        writes = []
+
+        def counting(path, data):
+            writes.append(Path(path))
+            real(path, data)
+
+        hook_card = {"ok": True, "written": True, "command": None, "kinds": None}
+        with mock.patch("convoy.bringup.Path.home", return_value=self.home), \
+                mock.patch("convoy.bringup.ensure_inbox_hooks", return_value=hook_card), \
+                mock.patch("convoy.bringup._write_json_dict", counting):
+            out = ensure_first_run(self._seat("claude"), root=None, live=True)
+        self.assertTrue(out["trust_written"])
+        self.assertTrue(_by({"trust": out["hook_trust"]}, "claude")["written"])
+        self.assertEqual([p for p in writes if p.name == ".claude.json"], [self.home / ".claude.json"])
+        self.assertFalse(out["trust_rewritten"], "prepare step read the key hook trust already wrote")
+
+    def test_dry_first_run_writes_no_vendor_store(self):
+        """relaunch --dry-run / crew without --launch: machine-wide stores are never touched."""
         with mock.patch("convoy.bringup.Path.home", return_value=self.home):
             out = ensure_first_run(self._seat("grok"), root=None, live=False)
+        self.assertEqual(out["hook_trust"], [])
+        self.assertEqual(out["hook_trust_skipped"], "dry-run")
+        self.assertFalse((self.home / ".grok").exists())
+
+    def test_live_first_run_carries_hook_trust_per_seat(self):
+        hook_card = {"ok": True, "written": True, "command": None, "kinds": None}
+        with mock.patch("convoy.bringup.Path.home", return_value=self.home), \
+                mock.patch("convoy.bringup.ensure_inbox_hooks", return_value=hook_card):
+            out = ensure_first_run(self._seat("grok"), root=None, live=True)
         rows = out["hook_trust"]
         self.assertEqual([r["vendor"] for r in rows], ["grok"])
         self.assertTrue(rows[0]["written"])
         self.assertTrue((self.home / ".grok" / "trusted_folders.toml").is_file())
-
 
 if __name__ == "__main__":
     unittest.main()
