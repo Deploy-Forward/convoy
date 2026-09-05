@@ -17,6 +17,7 @@ from .index import is_temp_root
 PIDFILE = "widget.pid"
 Spawner = Callable[[list[str]], int]
 AliveFn = Callable[[int], bool]
+ImageFn = Callable[[int], str | None]
 
 
 def convoy_home(home: Path | str | None = None) -> Path:
@@ -61,6 +62,39 @@ def pid_alive(pid: int) -> bool:
     return True
 
 
+def process_image(pid: int) -> str | None:
+    """Executable path of pid (nt: QueryFullProcessImageNameW; else /proc). None when unknown."""
+    if pid <= 0:
+        return None
+    if os.name == "nt":
+        import ctypes
+        from ctypes import wintypes
+
+        kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
+        handle = kernel32.OpenProcess(0x1000, False, int(pid))
+        if not handle:
+            return None
+        try:
+            size = wintypes.DWORD(32768)
+            buf = ctypes.create_unicode_buffer(size.value)
+            if not kernel32.QueryFullProcessImageNameW(handle, 0, buf, ctypes.byref(size)):
+                return None
+            return buf.value or None
+        finally:
+            kernel32.CloseHandle(handle)
+    try:
+        return os.readlink("/proc/" + str(int(pid)) + "/exe") or None
+    except OSError:
+        return None
+
+
+def looks_like_widget(image: str | None) -> bool | None:
+    """True when the recorded pid runs our interpreter; False when another image; None when unknown."""
+    if not image:
+        return None
+    return os.path.normcase(os.path.normpath(image)) == os.path.normcase(os.path.normpath(sys.executable))
+
+
 def detached_spawn(argv: list[str]) -> int:
     """Spawn with no console tie: the strip outlives the terminal that started it."""
     kwargs: dict[str, Any] = {
@@ -90,8 +124,15 @@ def ensure_widget_service(
     *,
     spawner: Spawner | None = None,
     alive_fn: AliveFn | None = None,
+    image_fn: ImageFn | None = None,
 ) -> dict[str, Any]:
-    """Alive pidfile -> already:true, no spawn. Else spawn detached and record the pid."""
+    """Alive pidfile -> already:true, no spawn. Else spawn detached and record the pid.
+
+    A pid can be reused by an unrelated process: `already` is claimed only when
+    the live pid's image is our interpreter (image_verified true) or the image
+    is unreadable (image_verified null, reported as such). Another image means
+    the pid was reused -> stale, respawn.
+    """
     base = convoy_home(home)
     pidfile = base / PIDFILE
     card: dict[str, Any] = {
@@ -102,13 +143,21 @@ def ensure_widget_service(
         "stale_pid": None,
         "pidfile": str(pidfile),
         "argv": service_argv(),
+        "image": None,
+        "image_verified": None,
     }
     known = _read_pid(pidfile)
     alive = alive_fn or pid_alive
     if known is not None and alive(known):
-        card["already"] = True
-        card["pid"] = known
-        return card
+        image = (image_fn or process_image)(known)
+        verdict = looks_like_widget(image)
+        card["image"] = image
+        card["image_verified"] = verdict
+        if verdict is not False:
+            card["already"] = True
+            card["pid"] = known
+            return card
+        card["pid_reused"] = True
     card["stale_pid"] = known
     try:
         pid = int((spawner or detached_spawn)(card["argv"]))
@@ -129,6 +178,7 @@ def auto_widget_service(
     home: Path | str | None = None,
     spawner: Spawner | None = None,
     alive_fn: AliveFn | None = None,
+    image_fn: ImageFn | None = None,
 ) -> dict[str, Any]:
     """The crew/relaunch hook: skip on --no-widget or a throwaway CONVOY_HOME (tests)."""
     base = convoy_home(home)
@@ -136,6 +186,6 @@ def auto_widget_service(
         return {"ok": True, "started": False, "already": False, "skipped": "--no-widget"}
     if is_temp_root(base):
         return {"ok": True, "started": False, "already": False, "skipped": "temp CONVOY_HOME"}
-    card = ensure_widget_service(base, spawner=spawner, alive_fn=alive_fn)
+    card = ensure_widget_service(base, spawner=spawner, alive_fn=alive_fn, image_fn=image_fn)
     card["skipped"] = None
     return card

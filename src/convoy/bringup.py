@@ -442,13 +442,29 @@ def _write_json_dict(path: Path, data: dict[str, Any]) -> None:
     path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
 
 
-def _write_claude_trust_projects(worktree: Path) -> Path:
-    """Persist hasTrustDialogAccepted for both slash spellings of worktree."""
-    state_path = _claude_home_state_path()
+def _claude_trust_accepted(projects: dict[str, Any], worktree: Path) -> bool:
+    """True when ANY spelling of worktree already carries hasTrustDialogAccepted."""
+    for key in _project_path_variants(worktree):
+        node = projects.get(key)
+        if isinstance(node, dict) and node.get("hasTrustDialogAccepted") is True:
+            return True
+    return False
+
+
+def _write_claude_trust_projects(worktree: Path, home: Path | None = None) -> tuple[Path, bool]:
+    """Persist hasTrustDialogAccepted for both slash spellings of worktree.
+
+    The ONE writer of ~/.claude.json projects trust (first-run prepare and the
+    hooks-trust pass both call it). Returns (store, written); an already-accepted
+    store (any spelling) is read, never rewritten.
+    """
+    state_path = _claude_home_state_path() if home is None else home / ".claude.json"
     data = _read_json_dict(state_path)
     projects = data.get("projects")
     if not isinstance(projects, dict):
         projects = {}
+    if _claude_trust_accepted(projects, worktree):
+        return state_path, False
     for key in _project_path_variants(worktree):
         node = projects.get(key)
         if not isinstance(node, dict):
@@ -457,7 +473,7 @@ def _write_claude_trust_projects(worktree: Path) -> Path:
         projects[key] = node
     data["projects"] = projects
     _write_json_dict(state_path, data)
-    return state_path
+    return state_path, True
 
 
 # --- hooks-trust dialog: never shown again ---------------------------------
@@ -544,20 +560,9 @@ def _trust_claude(wt: str, home: Path) -> list[dict[str, Any]]:
             json.loads(store.read_text(encoding="utf-8-sig"))
         except json.JSONDecodeError:
             return [_trust_row("claude", store, written=False, reason="store unparseable; left alone")]
-    data = _read_json_dict(store)
-    projects = data.get("projects") if isinstance(data.get("projects"), dict) else {}
-    node = projects.get(wt)
-    if isinstance(node, dict) and node.get("hasTrustDialogAccepted") is True:
-        return [_trust_row("claude", store, written=False, reason="already trusted")]
-    for key in _project_path_variants(Path(wt)):
-        cur = projects.get(key)
-        if not isinstance(cur, dict):
-            cur = {}
-        cur["hasTrustDialogAccepted"] = True
-        projects[key] = cur
-    data["projects"] = projects
-    _write_json_dict(store, data)
-    return [_trust_row("claude", store, written=True, reason=None)]
+    # reuse the existing writer: one code path for ~/.claude.json projects trust
+    store, written = _write_claude_trust_projects(Path(wt), home=home)
+    return [_trust_row("claude", store, written=written, reason=None if written else "already trusted")]
 
 
 def ensure_hook_trust(
@@ -747,7 +752,13 @@ def ensure_first_run(seat: dict[str, Any], root: Path | str | None = None, live:
             out["inbox_claude_hook"] = claude_hook
             if hook_card.get("error"):
                 out["inbox_hook_error"] = hook_card["error"]
-            out["hook_trust"] = ensure_hook_trust(seat).get("trust") or []
+            # Vendor trust stores are machine-wide: written only on a live
+            # bring-up, never on --dry-run / crew without --launch.
+            if live:
+                out["hook_trust"] = ensure_hook_trust(seat).get("trust") or []
+            else:
+                out["hook_trust"] = []
+                out["hook_trust_skipped"] = "dry-run"
     if not _is_claude(to):
         return out
     if not (isinstance(wt, str) and wt.strip()) and not isinstance(wt, Path):
@@ -787,8 +798,11 @@ def ensure_first_run(seat: dict[str, Any], root: Path | str | None = None, live:
         _write_json_dict(home_path, home_data)
         out["home_written"] = True
         out["settings_home"] = str(home_path)
-        trust_path = _write_claude_trust_projects(wt_path)
+        trust_path, trust_rewritten = _write_claude_trust_projects(wt_path)
+        # trust_written: the key is present after this call (read back);
+        # trust_rewritten: this call actually wrote (False when hook trust or a prior run already did)
         out["trust_written"] = True
+        out["trust_rewritten"] = trust_rewritten
         out["trust_settings_home"] = str(trust_path)
         return out
     except Exception as e:
