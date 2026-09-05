@@ -66,6 +66,7 @@ def main(argv: list[str] | None = None) -> int:
     rlx.add_argument("--thread", help="must match the bound thread")
     rlx.add_argument("--timeout", type=float, default=0.0, help="seconds to wait for fresh seated acks; 0 is one snapshot")
     rlx.add_argument("--dry-run", action="store_true", help="show the windows and the per-chair timeline; spawn and write nothing")
+    rlx.add_argument("--seat", action="append", help="relaunch only this chair (repeat); default every chair. Use it when some panes are still alive")
 
     rl = sub.add_parser("rail", help="the strip under the panes: feed events since, seats connected, usage per harness (null is unknown, never 0), last stamp; reads only the thread, so any neuron sees the same rail")
     rl.add_argument("--since", default="10m", help="feed window (default 10m)")
@@ -280,7 +281,7 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps({"schema_version": SCHEMA_VERSION, "since": args.since, "since_iso": since_iso, "events": rows}))
         return 0
     if args.cmd == "relaunch":
-        card = relaunch(root, thread=args.thread, runner=None if args.dry_run else live_runner, timeout=args.timeout)
+        card = relaunch(root, thread=args.thread, runner=None if args.dry_run else live_runner, timeout=args.timeout, seats=args.seat)
         print(json.dumps(card))
         return 0 if card.get("ok") else 1
     if args.cmd == "rail":

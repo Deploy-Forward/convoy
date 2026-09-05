@@ -372,12 +372,24 @@ def ensure_grok_inbox_hook(worktree: Path | str, root: Path | str | None = None)
     if not res["command"]:
         out.update({"ok": False, "error": res["error"]})
         return out
-    payload = json.dumps(grok_inbox_hook_document(res["command"]), indent=2) + "\n"
+    doc = grok_inbox_hook_document(res["command"])
+    payload = json.dumps(doc, indent=2) + "\n"
+    # A kept command still needs the CURRENT event set: a file written before
+    # the Stop gate existed carries only PreToolUse and leaves the pane deaf
+    # at turn end (live 2026-09-05, four worktrees). Upgrade events, keep cmd.
+    stale_events = False
+    if prev is not None:
+        try:
+            have = set((json.loads(prev).get("hooks") or {}).keys())
+            stale_events = have != set(doc["hooks"].keys())
+        except (json.JSONDecodeError, AttributeError):
+            stale_events = True
     try:
         dest.parent.mkdir(parents=True, exist_ok=True)
-        if res["resolved_via"] != "kept-existing" and prev != payload:
+        if (res["resolved_via"] != "kept-existing" or stale_events) and prev != payload:
             dest.write_text(payload, encoding="utf-8")
             out["written"] = True
+            out["upgraded_events"] = stale_events
         out["hook"] = str(dest)
         if root is not None:
             from .inbox import write_root_pointer
