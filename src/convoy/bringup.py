@@ -42,10 +42,12 @@ import os
 import re
 import shutil
 import subprocess
+import time
 from pathlib import Path
 from typing import Any, Callable
 
 from .identity import ensure_grok_agent, ensure_inbox_hooks, install_neuron_identity
+from .index import is_temp_root
 from .harness_contract import effort_argv
 from .convoy import (
     CONDUCTOR,
@@ -458,6 +460,151 @@ def _write_claude_trust_projects(worktree: Path) -> Path:
     return state_path
 
 
+# --- hooks-trust dialog: never shown again ---------------------------------
+# Marco, 2026-09-05: the answer is always "2. Trust all and continue". Each
+# store below was read on this machine (2026-09-05, read-only) before any
+# write; the format written is the format found, appended, never rewritten.
+#   grok   ~/.grok/trusted_folders.toml   [folders.'<path>'] trusted = true / decided_at = <epoch>
+#          named by ~/.grok/docs/user-guide/10-hooks.md as the unified folder-trust store
+#   codex  ~/.codex/config.toml           [projects.'<path>'] trust_level = "trusted"
+#          [hooks.state.'<file>:<event>:<i>:<j>'] trusted_hash = "sha256:..." exists too, but
+#          the hash input is not derivable from the hook file -> never written ("format unverified");
+#          `codex --help` offers only --dangerously-bypass-hook-trust per invocation.
+#   claude ~/.claude.json                 projects[<path>].hasTrustDialogAccepted = true
+# Anything else: store null, written false; the human answers the dialog.
+
+GROK_TRUST_STORE = (".grok", "trusted_folders.toml")
+CODEX_CONFIG = (".codex", "config.toml")
+CLAUDE_STATE = (".claude.json",)
+
+
+def _toml_key(text: str) -> str:
+    """Quoted TOML key for a filesystem path: literal when it can be, else escaped basic."""
+    if "'" not in text:
+        return "'" + text + "'"
+    return '"' + text.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def _toml_load(path: Path) -> dict[str, Any] | None:
+    """Parsed dict, {} when absent, None when unparseable (then we write nothing)."""
+    if not path.is_file():
+        return {}
+    try:
+        import tomllib
+        return tomllib.loads(path.read_text(encoding="utf-8-sig"))
+    except Exception:
+        return None
+
+
+def _same_path_key(a: str, b: str) -> bool:
+    return os.path.normcase(os.path.normpath(a)) == os.path.normcase(os.path.normpath(b))
+
+
+def _toml_append(path: Path, block: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    existing = path.read_text(encoding="utf-8-sig") if path.is_file() else ""
+    sep = "" if (not existing or existing.endswith("\n\n")) else ("\n" if existing.endswith("\n") else "\n\n")
+    path.write_text(existing + sep + block, encoding="utf-8")
+
+
+def _trust_row(vendor: str | None, store: Path | None, *, written: bool, reason: str | None, **extra: Any) -> dict[str, Any]:
+    return {"vendor": vendor, "store": str(store) if store else None, "written": written, "reason": reason, **extra}
+
+
+def _trust_grok(wt: str, home: Path, now: int) -> list[dict[str, Any]]:
+    store = home.joinpath(*GROK_TRUST_STORE)
+    data = _toml_load(store)
+    if data is None:
+        return [_trust_row("grok", store, written=False, reason="store unparseable; left alone")]
+    folders = data.get("folders") if isinstance(data.get("folders"), dict) else {}
+    if any(_same_path_key(k, wt) and isinstance(v, dict) and v.get("trusted") is True for k, v in folders.items()):
+        return [_trust_row("grok", store, written=False, reason="already trusted")]
+    _toml_append(store, "[folders." + _toml_key(wt) + "]\ntrusted = true\ndecided_at = " + str(int(now)) + "\n")
+    return [_trust_row("grok", store, written=True, reason=None)]
+
+
+def _trust_codex(wt: str, home: Path) -> list[dict[str, Any]]:
+    store = home.joinpath(*CODEX_CONFIG)
+    hooks = _trust_row("codex", store, written=False, reason="format unverified", key="hooks.state",
+                       evidence="trusted_hash = sha256 of an input not derivable from the hook file")
+    data = _toml_load(store)
+    if data is None:
+        return [_trust_row("codex", store, written=False, reason="store unparseable; left alone", key="projects"), hooks]
+    projects = data.get("projects") if isinstance(data.get("projects"), dict) else {}
+    if any(_same_path_key(k, wt) and isinstance(v, dict) and v.get("trust_level") == "trusted" for k, v in projects.items()):
+        return [_trust_row("codex", store, written=False, reason="already trusted", key="projects"), hooks]
+    _toml_append(store, "[projects." + _toml_key(wt) + "]\ntrust_level = \"trusted\"\n")
+    return [_trust_row("codex", store, written=True, reason=None, key="projects"), hooks]
+
+
+def _trust_claude(wt: str, home: Path) -> list[dict[str, Any]]:
+    store = home.joinpath(*CLAUDE_STATE)
+    if store.is_file():
+        try:
+            json.loads(store.read_text(encoding="utf-8-sig"))
+        except json.JSONDecodeError:
+            return [_trust_row("claude", store, written=False, reason="store unparseable; left alone")]
+    data = _read_json_dict(store)
+    projects = data.get("projects") if isinstance(data.get("projects"), dict) else {}
+    node = projects.get(wt)
+    if isinstance(node, dict) and node.get("hasTrustDialogAccepted") is True:
+        return [_trust_row("claude", store, written=False, reason="already trusted")]
+    for key in _project_path_variants(Path(wt)):
+        cur = projects.get(key)
+        if not isinstance(cur, dict):
+            cur = {}
+        cur["hasTrustDialogAccepted"] = True
+        projects[key] = cur
+    data["projects"] = projects
+    _write_json_dict(store, data)
+    return [_trust_row("claude", store, written=True, reason=None)]
+
+
+def ensure_hook_trust(
+    seat: dict[str, Any],
+    *,
+    home: Path | str | None = None,
+    now_fn: Callable[[], int] | None = None,
+) -> dict[str, Any]:
+    """Pre-trust the seat's worktree in its vendor's evidenced trust store.
+
+    Returns {ok, worktree, trust: [{vendor, store, written, reason, ...}]}.
+    Unknown vendor -> store null, nothing written. Temp worktree (test
+    residue) -> never trusted machine-wide. Unparseable store -> left alone.
+    """
+    to = str((seat or {}).get("to") or "").strip()
+    vendor = _harness_bin(to) if to else ""
+    wt_raw = (seat or {}).get("worktree")
+    out: dict[str, Any] = {"ok": True, "worktree": None, "trust": []}
+    if not ((isinstance(wt_raw, str) and wt_raw.strip()) or isinstance(wt_raw, Path)):
+        out["ok"] = False
+        out["error"] = "no worktree"
+        return out
+    try:
+        wt = str(Path(wt_raw).resolve())
+    except OSError:
+        wt = str(wt_raw)
+    out["worktree"] = wt
+    base = Path(home) if home is not None else Path.home()
+    if is_temp_root(wt):
+        out["trust"] = [_trust_row(vendor or to or None, None, written=False, reason="temp worktree; never trusted machine-wide")]
+        return out
+    now = int((now_fn or (lambda: int(time.time())))())
+    try:
+        if vendor == "grok":
+            out["trust"] = _trust_grok(wt, base, now)
+        elif vendor == "codex":
+            out["trust"] = _trust_codex(wt, base)
+        elif _is_claude(to):
+            out["trust"] = _trust_claude(wt, base)
+        else:
+            out["trust"] = [_trust_row(to or None, None, written=False, reason="no evidenced trust store for " + (to or "unknown"))]
+    except OSError as e:
+        out["ok"] = False
+        out["error"] = type(e).__name__ + ": " + str(e)
+    return out
+
+
 CONVOY_PATH_BEGIN = "# >>> convoy harness PATH >>>"
 CONVOY_PATH_END = "# <<< convoy harness PATH <<<"
 CONVOY_PATH_BLOCK = (
@@ -557,6 +704,7 @@ def ensure_first_run(seat: dict[str, Any], root: Path | str | None = None, live:
         "agent_path": None,
         "inbox_hook_written": False,
         "inbox_hook": None,
+        "hook_trust": [],
     }
     path_card = ensure_interactive_path()
     out["path_written"] = bool(path_card.get("path_written"))
@@ -599,6 +747,7 @@ def ensure_first_run(seat: dict[str, Any], root: Path | str | None = None, live:
             out["inbox_claude_hook"] = claude_hook
             if hook_card.get("error"):
                 out["inbox_hook_error"] = hook_card["error"]
+            out["hook_trust"] = ensure_hook_trust(seat).get("trust") or []
     if not _is_claude(to):
         return out
     if not (isinstance(wt, str) and wt.strip()) and not isinstance(wt, Path):
