@@ -194,7 +194,7 @@ WT window whose title did not name the chair (worktree folder name or exact/pref
 seat title) and never Alt+Arrows; Fable (05:57-06:00Z) proved Alt+Arrow plus a
 title re-read DOES reach an idle grok pane and that skipping when the title did
 not change is what prevents the double-fire. They are not in conflict: g2 is the
-identity rule, Fable is the walk. `src/convoy/panehost.py` (`WtWalkAdapter`)
+identity rule, Fable is the walk. `src/convoy/wt_walk.py` (`WtWalkAdapter`)
 holds both, and `nudge --seat <chair> --walk` is the OPT-IN; the default nudge
 keeps g2's refusal byte for byte (tested: `test_default_nudge_still_refuses_without_walk`).
 
@@ -215,11 +215,40 @@ tests):
   `worktree` | `seat-title` | `crew-window+sole-idle` (the recorded crew window
   AND exactly one idle chair of that harness per the widget chip);
 - one send carries text + Enter; card = `{ok, hwnd, pane_title_before,
-  pane_title_after, rule, error, steps[]}`; `delivery: nudged`, never `delivered`.
+  pane_title_after, rule, error, steps[], typed}`; `delivery: nudged`, never `delivered`.
 
-What is NOT evidenced yet, stated plainly: `crew` does not record the WT hwnd it
-spawns (wt detaches; no hwnd comes back), so the `crew-window+sole-idle` rule
-reads a `kind=crew-window` feed row with `hwnd` and is null when none exists;
-`--walk` then refuses with that reason. Writing that row is the next slice, not
-this one. No live keystroke was fired for this reconciliation; the fakes in
-`test/demo/panehost_wt_test.py` replay the 05:57-06:00Z transitions.
+Rows and consent (THREAD_PANE_PSEUDOCODE.md section 1, WIDGET.md "Rule for nudge
+--seat"; closed for EVERY live adapter, not only wt-walk, in `nudge_seat`):
+- a chair whose newest `kind=nudge` row has no later row FROM that chair citing
+  `nudge=<id>` (or a `nudge_id` field) is refused (`has no ack`); `--force` repeats
+  and records `forced_over`;
+- `kind=nudge` is written through `layer.hook` BEFORE anything is typed
+  (`{nudge_id, transport, text, tag_in_text, pane_title_before, hwnd,
+  delivered:false}`, author unknown, instance_id = the chair) and
+  `kind=nudge-result` after (`{nudge_id, ok, error, pane_title_before,
+  pane_title_after, delivered:false}`); a failed keystroke is a `nudge-result`
+  with `ok:false` and `delivery: failed`, never silence;
+- the typed text carries the id (`<keys> nudge=<id>`); a bare key name (Enter)
+  cannot carry text, so the row says `tag_in_text:false` instead of pretending;
+- the wt-walk consent card names the PANE, not the window: a focus-only probe
+  (`walk(type_text=False)`, the pseudocode's `WtAdapter.focus`) runs first and the
+  card reads `wt-walk HWND <n> pane title='grok' rule=crew-window+sole-idle`; the
+  probe runs again at consume time, so a changed pane is a consent scope mismatch
+  or a probe refusal BEFORE consumption, and the typing walk itself refuses any
+  pane whose re-read title is not the consented one (`expect_title`). The probe
+  moves WT focus without typing; that window action is what the card asks about.
+
+Reaching it in production: `convoy crew-window --foreground` (or `--hwnd <n>`),
+run from inside the crew's WT window, is the ONLY writer of the `kind=crew-window`
+row (`wt_walk.record_crew_window` via `layer.hook`; refuses an hwnd that is not a
+visible WT window). `crew --launch` still does not record the hwnd it spawns (wt
+detaches; nothing comes back), so the row is a one-time manual step per crew
+window until bring_up can enumerate its own window.
+
+What is NOT evidenced yet, stated plainly: no live keystroke and no live
+`crew-window` recording were fired for this branch; every OS call in
+`test/demo/wt_walk_test.py` is a fake replaying the 05:57-06:00Z transitions, and
+the `_User32` port (`enum_windows`, `foreground`, `take_foreground`, `send_keys`)
+has not been exercised against a real Windows Terminal from Python. `delivered`
+still flips nowhere: `await_nudge` (ack polling) is not written; the chair's ack
+row is what `last_unacked_nudge` reads, by hand for now.

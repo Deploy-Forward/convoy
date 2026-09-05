@@ -246,7 +246,10 @@ class NudgeSeat(unittest.TestCase):
         self.assertEqual(card["adapter"], "codex-queue")
         self.assertEqual(card["delivery"], "nudged")
         self.assertFalse(card["delivered"])
-        self.assertEqual(queued, [("01codex-thread", "wake")])
+        # the typed text carries the nudge_id (WIDGET.md rule); the feed row is the record
+        self.assertEqual(len(queued), 1)
+        self.assertEqual(queued[0][0], "01codex-thread")
+        self.assertEqual(queued[0][1], "wake nudge=" + card["nudge_id"])
 
     def test_grok_leader_up_refuses_keystroke_rather_than_steal(self):
         with mock.patch("convoy.nudge.os.name", "nt"):

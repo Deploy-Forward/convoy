@@ -29,6 +29,7 @@ from .lifecycle import join, pass_lead, seated_ack, swap
 from .focus import focus_seat
 from .widget import run_widget
 from .nudge import nudge_seat
+from .wt_walk import record_crew_window
 from .pane_host import close_managed_pane
 from .synapse import fake_runner, native_runner, send_many, send_one
 from .targeted_launch import active_pane_runner, launch_choices, launch_seat
@@ -179,6 +180,11 @@ def main(argv: list[str] | None = None) -> int:
     ng.add_argument("--dry-run", action="store_true", help="identify only; never send, never consume consent")
     ng.add_argument("--consent", help="one-time nudge-pane consent returned by `convoy consent --grant`")
     ng.add_argument("--walk", action="store_true", help="opt-in: when the WT title is not unique, Alt+Arrow-walk the recorded crew window, re-reading the title; type only into a pane a rule proves is this chair")
+    ng.add_argument("--force", action="store_true", help="repeat a nudge whose last nudge_id has no ack from the chair yet (refused otherwise)")
+
+    cwr = sub.add_parser("crew-window", help="record THE Windows Terminal window of this crew as a kind=crew-window feed row (hwnd); the only writer nudge --walk reads")
+    cwr.add_argument("--hwnd", type=int, help="window handle of a visible Windows Terminal window")
+    cwr.add_argument("--foreground", action="store_true", help="record the window that has the foreground now (run it from inside the crew window)")
 
     sw = sub.add_parser("swap")
     sw.add_argument("--seat", required=True, help="chair session_id (identity survives the swap)")
@@ -539,7 +545,12 @@ def main(argv: list[str] | None = None) -> int:
             dry_run=args.dry_run,
             target=args.target,
             walk=bool(getattr(args, "walk", False)),
+            force=bool(getattr(args, "force", False)),
         )
+        print(json.dumps(card))
+        return 0 if card.get("ok") else 1
+    if args.cmd == "crew-window":
+        card = record_crew_window(root, hwnd=args.hwnd, foreground=bool(args.foreground))
         print(json.dumps(card))
         return 0 if card.get("ok") else 1
     if args.cmd == "seats":

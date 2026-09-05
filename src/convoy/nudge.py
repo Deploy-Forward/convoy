@@ -13,6 +13,7 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+import uuid
 from pathlib import Path
 from typing import Any, Callable
 
@@ -20,7 +21,7 @@ from .consent import consume_consent, request_consent
 from .convoy import list_seats
 from .harness_contract import canonical_harness_id
 from .panes import bodies as panes_bodies
-from .panehost import BUSY_RE, WtWalkAdapter
+from .wt_walk import BUSY_RE, WtWalkAdapter
 from .synapse import try_codex_queue
 
 Runner = Callable[[list[str]], dict[str, Any]]
@@ -138,7 +139,9 @@ def _pane_label(window: dict[str, Any] | None, tmux_target: str | None) -> str:
     if tmux_target:
         return "tmux:" + tmux_target
     if window and window.get("walk"):
-        return "wt-walk HWND " + str(window.get("hwnd")) + " (crew window; Alt+Arrow walk, title re-read before typing)"
+        # names the PANE the focus-only probe found, not just the window
+        return ("wt-walk HWND " + str(window.get("hwnd")) + " pane title=" + repr(window.get("title"))
+                + " rule=" + str(window.get("rule")) + " (title re-read before typing; refuse if changed)")
     if window:
         return "HWND " + str(window.get("hwnd")) + " title=" + str(window.get("title") or "")
     return "unidentified"
@@ -479,6 +482,56 @@ def _arm_walk(root: Path, session_id: str, card: dict[str, Any], idle_chairs_fn:
     card["reason"] = None
 
 
+_NAMED_KEYS = frozenset({"enter", "return", "c-m"})
+
+
+def _nudge_text(keystroke: str, nudge_id: str) -> tuple[str, bool]:
+    """The typed text carries the nudge_id (WIDGET.md rule) unless the keystroke
+    is a bare key name (Enter): a key carries no text, so the tag cannot ride it;
+    the feed row then says tag_in_text=false rather than pretending."""
+    if keystroke.lower() in _NAMED_KEYS:
+        return keystroke, False
+    return keystroke + " nudge=" + nudge_id, True
+
+
+def last_unacked_nudge(root: Path, session_id: str) -> str | None:
+    """nudge_id of this chair's newest kind=nudge row when no later row FROM the
+    chair cites it (nudge=<id> in the summary or a nudge_id field); else None."""
+    from .layer import feed_since
+    rows = feed_since(root, "1970-01-01T00:00:00Z")
+    last_id, last_i = None, -1
+    for i, row in enumerate(rows):
+        if row.get("kind") == "nudge" and str(row.get("instance_id")) == str(session_id) and row.get("nudge_id"):
+            last_id, last_i = str(row["nudge_id"]), i
+    if last_id is None:
+        return None
+    for row in rows[last_i + 1:]:
+        if str(row.get("from") or "") != str(session_id):
+            continue
+        if str(row.get("nudge_id") or "") == last_id or ("nudge=" + last_id) in str(row.get("summary") or ""):
+            return None
+    return last_id
+
+
+def _record_nudge(root: Path, session_id: str, card: dict[str, Any], nudge_id: str, typed: str, tagged: bool) -> None:
+    """Row FIRST: the record exists even if typing fails (pseudocode section 1)."""
+    from .layer import hook
+    pane = card.get("pane") if isinstance(card.get("pane"), dict) else {}
+    hook(root, "nudge", "nudge " + str(session_id) + " nudge=" + nudge_id, str(session_id), author=None,
+         extra={"nudge_id": nudge_id, "transport": card.get("adapter"), "text": typed, "tag_in_text": tagged,
+                "pane_title_before": pane.get("title"), "hwnd": pane.get("hwnd"), "delivered": False})
+
+
+def _record_nudge_result(root: Path, session_id: str, nudge_id: str, result: dict[str, Any]) -> None:
+    from .layer import hook
+    ok = bool(result.get("ok"))
+    hook(root, "nudge-result", "nudge " + str(session_id) + " nudge=" + nudge_id + (" typed" if ok else " failed"),
+         str(session_id), author=None,
+         extra={"nudge_id": nudge_id, "ok": ok, "error": result.get("error"),
+                "pane_title_before": result.get("pane_title_before"), "pane_title_after": result.get("pane_title_after"),
+                "delivered": False})
+
+
 def nudge_seat(
     root: Path | str,
     session_id: str,
@@ -496,13 +549,17 @@ def nudge_seat(
     walk: bool = False,
     walk_adapter: WtWalkAdapter | None = None,
     idle_chairs_fn: IdleChairsFn | None = None,
+    force: bool = False,
 ) -> dict[str, Any]:
     """Identify, then (unless dry_run) consent, then wake. Never delivered=true.
 
-    `walk=True` (CLI --walk) is the OPT-IN: when the WT title is not unique
-    (g2's refusal), hand the pane hunt to panehost.WtWalkAdapter, which
-    Alt+Arrows with a title re-read and types only into a pane a rule proves
-    is this chair. Default behaviour is unchanged."""
+    Every live wake writes kind=nudge (before typing) and kind=nudge-result
+    (after) through layer.hook, carrying one nudge_id that also rides the typed
+    text; a chair whose last nudge_id has no ack from the chair is refused
+    unless force. `walk=True` (CLI --walk) is the OPT-IN: when the WT title is
+    not unique (g2's refusal), hand the pane hunt to wt_walk.WtWalkAdapter,
+    which Alt+Arrows with a title re-read and types only into a pane a rule
+    proves is this chair. Default behaviour is unchanged."""
     root = Path(root)
     card = identify_target(
         root, session_id,
@@ -531,7 +588,38 @@ def nudge_seat(
         card["error"] = card["reason"]
         return card
 
+    pending = last_unacked_nudge(root, session_id)
+    if pending and not force:
+        card["ok"] = False
+        card["reason"] = "last nudge " + pending + " has no ack from " + str(session_id) + " yet; --force to repeat"
+        card["error"] = card["reason"]
+        card["delivery"] = None
+        card["delivered"] = False
+        card["unacked_nudge_id"] = pending
+        return card
+    card["forced_over"] = pending if (pending and force) else None
+
     seat = _seat_row(root, session_id) or {}
+    adapter = card.get("adapter")
+    walker = walk_adapter or WtWalkAdapter()
+    walk_kw: dict[str, Any] = {}
+    if adapter == "wt-walk":
+        # focus-only probe: the consent card must name the PANE, and only the
+        # walk can find it. Same walk, stop at the match, type nothing.
+        info = card.get("walk") or {}
+        harness = str(card.get("harness") or "")
+        walk_kw = dict(idle_title_re=_idle_title_re(harness), busy_re=BUSY_RE,
+                       crew_hwnd=info.get("crew_hwnd"), idle_chairs=info.get("idle_chairs") or [])
+        probe = walker.walk(seat, "", type_text=False, **walk_kw)
+        card["walk"] = {**info, "probe": probe}
+        if not probe.get("ok"):
+            card["ok"] = False
+            card["reason"] = "wt-walk probe found no pane to name on the consent card: " + str(probe.get("error"))
+            card["delivery"] = None
+            card["delivered"] = False
+            return card
+        card["pane"] = {"hwnd": probe.get("hwnd"), "title": probe.get("pane_title_after"),
+                        "rule": probe.get("rule"), "walk": True}
     pane = _pane_label(card.get("pane") if isinstance(card.get("pane"), dict) else None, target)
     to = str(seat.get("to") or card.get("harness") or "")
     worktree = str(seat.get("worktree") or "")
@@ -555,64 +643,55 @@ def nudge_seat(
         card["reason"] = str(e)
         return card
 
-    adapter = card.get("adapter")
+    nudge_id = uuid.uuid4().hex
+    typed, tagged = _nudge_text(keystroke, nudge_id)
+    card["nudge_id"] = nudge_id
+    card["text"] = typed
+    card["tag_in_text"] = tagged
+    card["delivered"] = False
+    card["next"] = "await a row from " + str(session_id) + " citing nudge=" + nudge_id
     run = runner or _default_runner
-    if adapter == "tmux-send-keys":
-        argv = ["tmux", "send-keys", "-t", str(target), keystroke]
-        result = run(argv)
-        card["argv"] = argv
-        if result.get("ok") or result.get("returncode") == 0:
+
+    def _finish(result: dict[str, Any], fail_prefix: str) -> dict[str, Any]:
+        _record_nudge_result(root, session_id, nudge_id, result)
+        if result.get("ok"):
             card["delivery"] = "nudged"
-            card["delivered"] = False
             return card
         card["ok"] = False
-        card["reason"] = "tmux send-keys failed: " + str(
-            result.get("error") or result.get("stderr") or result.get("returncode")
-        )
+        card["delivery"] = "failed"
+        card["reason"] = fail_prefix + str(result.get("error") or result.get("stderr") or result.get("returncode") or result)
         return card
+
+    if adapter == "tmux-send-keys":
+        _record_nudge(root, session_id, card, nudge_id, typed, tagged)
+        argv = ["tmux", "send-keys", "-t", str(target), typed]
+        result = run(argv)
+        card["argv"] = argv
+        ok = bool(result.get("ok") or result.get("returncode") == 0)
+        return _finish({**result, "ok": ok}, "tmux send-keys failed: ")
 
     if adapter == "codex-queue":
         resume = str(seat.get("resume") or "").strip()
         q = queue_fn or try_codex_queue
-        native = q(resume, keystroke) if resume else None
-        if not native:
-            card["ok"] = False
-            card["reason"] = "codex queue did not accept the proven vendor session id"
-            return card
-        card["delivery"] = "nudged"
-        card["delivered"] = False
+        _record_nudge(root, session_id, card, nudge_id, typed, tagged)
+        native = q(resume, typed) if resume else None
         card["path"] = "codex-queue"
-        return card
+        return _finish({"ok": bool(native), "error": None if native else "codex queue did not accept the proven vendor session id"}, "")
 
     if adapter == "wt-walk":
-        info = card.get("walk") or {}
-        harness = str(card.get("harness") or "")
-        result = (walk_adapter or WtWalkAdapter()).walk(
-            seat, keystroke,
-            idle_title_re=_idle_title_re(harness), busy_re=BUSY_RE,
-            crew_hwnd=info.get("crew_hwnd"), idle_chairs=info.get("idle_chairs") or [],
-        )
-        card["walk"] = {**info, **result}
+        _record_nudge(root, session_id, card, nudge_id, typed, tagged)
+        result = walker.walk(seat, typed, expect_title=card["pane"].get("title"), **walk_kw)
+        card["walk"] = {**card["walk"], **result}
         if result.get("ok"):
-            card["delivery"] = "nudged"
-            card["delivered"] = False
-            card["pane"] = {"hwnd": result.get("hwnd"), "title": result.get("pane_title_after")}
-            return card
-        card["ok"] = False
-        card["reason"] = "wt-walk refused: " + str(result.get("error"))
-        return card
+            card["pane"] = {**card["pane"], "hwnd": result.get("hwnd"), "title": result.get("pane_title_after")}
+        return _finish(result, "wt-walk refused: ")
 
     if adapter == "wt-sendinput":
         sender = send_fn or _wt_send_keys
         pane_info = card.get("pane") if isinstance(card.get("pane"), dict) else {}
-        result = sender(pane_info, keystroke)
-        if result.get("ok"):
-            card["delivery"] = "nudged"
-            card["delivered"] = False
-            return card
-        card["ok"] = False
-        card["reason"] = "wt-sendinput failed: " + str(result.get("error") or result)
-        return card
+        _record_nudge(root, session_id, card, nudge_id, typed, tagged)
+        result = sender(pane_info, typed)
+        return _finish(dict(result), "wt-sendinput failed: ")
 
     card["ok"] = False
     card["reason"] = "no adapter to run"
