@@ -21,6 +21,7 @@ from .crew import _seated_states
 from .inbox import resolve_root, seats_for_worktree
 from .index import list_threads
 from .layer import feed_since, parse_since
+from .provenance import build_provenance
 from .bringup import is_conductor
 from .usage import probe, surface
 
@@ -78,6 +79,8 @@ def build_rail(root: Path | str, *, since: str = "10m", probe_fn: ProbeFn | None
     for harness in sorted({str(s.get("to")) for s in chairs if s.get("to")}):
         usage[harness] = surface(harness, fn(harness))
     card["usage"] = usage
+
+    card["provenance"] = build_provenance(root, since=since)["provenance"]
 
     last = None
     for row in reversed(feed_since(root, "1970-01-01T00:00:00.000000Z")):
