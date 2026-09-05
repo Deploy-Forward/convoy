@@ -10,6 +10,7 @@ from .bringup import bring_up, hide_windows, live_applier, live_runner, terminal
 from .consent import grant_consent
 from .install import install as install_harness
 from .onboard import onboard as run_onboard
+from .start import start as run_start
 from .context import pack
 from .convoy import attach, bind, ensure_id, list_seats, read_id, read_lead, seat, set_lead, CONDUCTOR
 from .crew import await_seated, crew
@@ -229,6 +230,12 @@ def main(argv: list[str] | None = None) -> int:
     gl.add_argument("--json", action="store_true", default=True)
     gl.add_argument("--tray", action="store_true", help="render glance in tray/app-indicator")
     gl.add_argument("--refresh-seconds", type=int, default=60)
+
+    go = sub.add_parser("start", help="thin alias: git URL -> clone once + onboard --github yes; local path -> onboard --github no; no repo -> picker from recent(); already-live -> attach, never bring_up")
+    go.add_argument("repo", nargs="?", help="git URL or local checkout path")
+    go.add_argument("--to", action="append", help="harness you already have (repeat); default: those on PATH")
+    go.add_argument("--thread")
+    go.add_argument("--cancel", action="store_true", help="do not bind; leave unbound")
 
     ob = sub.add_parser("onboard")
     ob.add_argument("--to", action="append", required=True, help="named harness id(s) you already have")
@@ -575,6 +582,16 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(card))
         return 0 if card.get("ok") else 1
 
+    if args.cmd == "start":
+        card = run_start(
+            root,
+            args.repo,
+            harnesses=args.to,
+            thread=args.thread,
+            cancel=bool(args.cancel),
+        )
+        print(json.dumps(card))
+        return 0 if card.get("ok") else 1
     if args.cmd == "onboard":
         card = run_onboard(root, args.to, thread=args.thread, checkout_root=args.checkout_root,
                            github=None if args.github is None else args.github == "yes")
