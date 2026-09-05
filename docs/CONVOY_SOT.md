@@ -24,11 +24,17 @@ this page names it so every agent reads the same thing.
 ```
 
 - `ts` always; event time, never a vendor resume time.
-- `kind` is an open set: `conductor`, `synapse`, `note`, `refuse`, `join`, `swap`, `seated`, `attach`, … Readers skip kinds they do not know.
+- `kind` is an open set: `conductor`, `synapse`, `note`, `refuse`, `join`, `swap`, `seated`, `attach`, `commit`, … Readers skip kinds they do not know.
 - `instance_id` is the row's SUBJECT (usually the chair).
 - `from` is AUTHORSHIP, present only when claimed (notes, stamps). A synapse whose sender is unknown has no `from`; it is never invented. `grok-bot` authors stamps only, never notes.
 - `to` is the addressee on notes and stamps, the target chair on a synapse.
 - `schema_version: 2` rides the CLI/MCP envelope (`feed`, `attach`), not the file.
+
+## Commit row (kind=commit)
+
+```json
+{"ts":"<ISO-Z>","kind":"commit","instance_id":"<chair>","summary":"commit <sha7> on <branch>: <subject>","from":"<chair>","branch":"<branch>","sha":"<full-sha>","parent":null,"files":["<path>"],"worktree":"<absolute-path>"}
+```
 
 ## Conductor stamp (`kind=conductor`)
 
@@ -64,6 +70,7 @@ none), `convoy_id`. Tokens never leave `seats.jsonl` on the public wire.
 ## Last note, any agent launches
 
 ```text
+0) rebase check   -> rebase --check (reports only)
 1) resolve root   -> threads index | --root | MCP bound root
 2) last note      -> feed --since …, kind in {note, conductor, refuse}, newest ts
 3) pass-off file  -> .convoy/handoff/<id> when the row points there

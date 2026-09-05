@@ -155,6 +155,16 @@ class ProvenanceReads(unittest.TestCase):
         self.assertNotIn("token", json.dumps(card))
         self.assertNotIn("resume", json.dumps(card))
 
+    def test_sot_commit_example_matches_written_row(self):
+        sot = (Path(__file__).resolve().parents[2] / "docs" / "CONVOY_SOT.md").read_text(encoding="utf-8")
+        section = sot.split("## Commit row (kind=commit)", 1)[1]
+        example = json.loads(section.split("```json", 1)[1].split("```", 1)[0].strip())
+
+        worktree = repo()
+        root = thread(worktree)
+        actual = commit_row(root, "luna1-happy-path")["row"]
+        self.assertEqual(set(example), set(actual))
+
 
 if __name__ == "__main__":
     unittest.main()
