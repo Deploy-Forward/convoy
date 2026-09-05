@@ -49,7 +49,6 @@ CLAUDE_SETTINGS_RELATIVE = Path(".claude") / "settings.json"
 CLAUDE_END_COMMAND_RELATIVE = Path(".claude") / "commands" / "end.md"
 CODEX_HOOKS_RELATIVE = Path(".codex") / "hooks.json"
 CODEX_PROMPT_NAME = "convoy.md"
-CODEX_END_PROMPT_NAME = "end.md"
 
 _GROK_AGENT_TEXT = """\
 ---
@@ -126,32 +125,6 @@ def install_codex_prompt() -> dict[str, Any]:
         src = codex_prompt_source_path().read_text(encoding="utf-8")
         codex_home = Path(os.environ.get("CODEX_HOME") or (Path.home() / ".codex"))
         dest = codex_home / "prompts" / CODEX_PROMPT_NAME
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        prev = dest.read_text(encoding="utf-8") if dest.is_file() else None
-        if prev != src:
-            dest.write_text(src, encoding="utf-8")
-            out["written"] = True
-        out["path"] = str(dest)
-        return out
-    except OSError as e:
-        out["ok"] = False
-        out["error"] = type(e).__name__ + ": " + str(e)
-        return out
-
-
-def install_codex_end_prompt() -> dict[str, Any]:
-    """Install the deprecated-but-supported ``/prompts:end`` bridge.
-
-    Codex does not expose arbitrary project slash commands.  The preferred
-    surface is the explicit ``$convoy-end`` skill; this bridge keeps a concise
-    command-like spelling for clients that still load custom prompts.
-    """
-    import os
-    out: dict[str, Any] = {"ok": True, "written": False, "path": None}
-    try:
-        src = (Path(__file__).resolve().parent / "harness_skills" / CODEX_END_PROMPT_NAME).read_text(encoding="utf-8")
-        codex_home = Path(os.environ.get("CODEX_HOME") or (Path.home() / ".codex"))
-        dest = codex_home / "prompts" / CODEX_END_PROMPT_NAME
         dest.parent.mkdir(parents=True, exist_ok=True)
         prev = dest.read_text(encoding="utf-8") if dest.is_file() else None
         if prev != src:
@@ -255,16 +228,10 @@ def install_neuron_identity(worktree: Path | str) -> dict[str, Any]:
             out["written"] = True
         if not prompt.get("ok"):
             out["ok"] = False
-        end_prompt = install_codex_end_prompt()
-        out["codex_end_prompt"] = end_prompt
-        if end_prompt.get("written"):
-            out["written"] = True
-        if not end_prompt.get("ok"):
-            out["ok"] = False
         claude_command = wt / CLAUDE_END_COMMAND_RELATIVE
         claude_command.parent.mkdir(parents=True, exist_ok=True)
         before_command = claude_command.read_text(encoding="utf-8") if claude_command.is_file() else None
-        command_text = (Path(__file__).resolve().parent / "harness_skills" / CODEX_END_PROMPT_NAME).read_text(encoding="utf-8")
+        command_text = (Path(__file__).resolve().parent / "harness_skills" / "end.md").read_text(encoding="utf-8")
         if before_command != command_text:
             claude_command.write_text(command_text, encoding="utf-8")
             out["written"] = True
@@ -346,55 +313,19 @@ def claude_inbox_hook_document(command: str | None = None) -> dict[str, Any]:
     }
 
 
-def _commands_in(node: Any) -> list[str]:
-    """Every Convoy inbox `command` string inside a hook object."""
+def _commands_in(node: Any, marker: str = INBOX_HOOK_ARGS) -> list[str]:
+    """Every Convoy command containing ``marker`` inside a hook object."""
     found: list[str] = []
     if isinstance(node, dict):
         c = node.get("command")
-        if isinstance(c, str) and INBOX_HOOK_ARGS in c:
+        if isinstance(c, str) and marker in c:
             found.append(c)
         for v in node.values():
-            found.extend(_commands_in(v))
+            found.extend(_commands_in(v, marker))
     elif isinstance(node, list):
         for v in node:
-            found.extend(_commands_in(v))
+            found.extend(_commands_in(v, marker))
     return found
-
-
-def _end_commands_in(node: Any) -> list[str]:
-    found: list[str] = []
-    if isinstance(node, dict):
-        c = node.get("command")
-        if isinstance(c, str) and END_HOOK_ARGS in c:
-            found.append(c)
-        for v in node.values():
-            found.extend(_end_commands_in(v))
-    elif isinstance(node, list):
-        for v in node:
-            found.extend(_end_commands_in(v))
-    return found
-
-
-def _hooks_already_have_command(events: Any, command: str) -> bool:
-    # Compare extracted strings, never a JSON blob: our command contains
-    # double quotes, which json.dumps escapes, so a substring test never
-    # matched and every run appended ANOTHER copy (live 2026-09-03: this
-    # worktree ended up with two identical entries per event).
-    return any(c == command for c in _commands_in(events))
-
-
-def _is_stale_convoy_entry(entry: Any, command: str) -> bool:
-    """A Convoy-owned inbox hook entry that is NOT the command we resolved.
-
-    The merge used to only append, so a hook Convoy wrote earlier and that no
-    longer resolves stayed in the file and ran (and failed) on every tool call
-    beside the working one (live 2026-09-03: convoy-wt-fable carried a dead
-    `-m convoy` entry next to a good one). Only entries carrying our own
-    INBOX_HOOK_ARGS are touched; a user's own hooks are never removed."""
-    for c in _existing_hook_commands(json.dumps(entry)):
-        if c != command:
-            return True
-    return False
 
 
 def _merge_claude_inbox_hooks(data: dict[str, Any], command: str) -> tuple[dict[str, Any], bool]:
@@ -418,29 +349,15 @@ def _merge_claude_inbox_hooks(data: dict[str, Any], command: str) -> tuple[dict[
     return data, changed
 
 
-def _existing_hook_commands(text: str | None) -> list[str]:
-    """Every `command` string inside an existing hook document, or []."""
+def _existing_hook_commands(text: str | None, marker: str = INBOX_HOOK_ARGS) -> list[str]:
+    """Every matching command inside an existing hook document, or []."""
     if not text:
         return []
     try:
         data = json.loads(text)
     except json.JSONDecodeError:
         return []
-    found: list[str] = []
-
-    def walk(node: Any) -> None:
-        if isinstance(node, dict):
-            c = node.get("command")
-            if isinstance(c, str) and INBOX_HOOK_ARGS in c:
-                found.append(c)
-            for v in node.values():
-                walk(v)
-        elif isinstance(node, list):
-            for v in node:
-                walk(v)
-
-    walk(data)
-    return found
+    return _commands_in(data, marker)
 
 
 def _resolved_or_kept(prev_text: str | None) -> dict[str, Any]:
@@ -456,15 +373,10 @@ def _resolved_or_kept(prev_text: str | None) -> dict[str, Any]:
 
 
 def _resolved_end_or_kept(prev_text: str | None) -> dict[str, Any]:
-    if prev_text:
-        try:
-            data = json.loads(prev_text)
-        except json.JSONDecodeError:
-            data = {}
-        for command in _end_commands_in(data):
-            if _cmd.probe_existing_end_hook_command(command):
-                return {"command": command, "resolved_via": "kept-existing", "error": None,
-                        "kept_existing": command}
+    for command in _existing_hook_commands(prev_text, END_HOOK_ARGS):
+        if _cmd.probe_existing_end_hook_command(command):
+            return {"command": command, "resolved_via": "kept-existing", "error": None,
+                    "kept_existing": command}
     result = _cmd.resolve_end_hook_command()
     result["kept_existing"] = None
     return result
@@ -477,7 +389,7 @@ def _merge_end_hook(data: dict[str, Any], command: str) -> tuple[dict[str, Any],
     events = hooks.get("Stop")
     if not isinstance(events, list):
         events = []
-    rebuilt = [entry for entry in events if not _end_commands_in(entry)] + [_end_hook_entry(command)]
+    rebuilt = [entry for entry in events if not _commands_in(entry, END_HOOK_ARGS)] + [_end_hook_entry(command)]
     changed = rebuilt != events
     hooks["Stop"] = rebuilt
     data["hooks"] = hooks

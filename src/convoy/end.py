@@ -36,9 +36,27 @@ def _event_key(root: Path, chair: str, payload: dict[str, Any]) -> str | None:
     session = payload.get("session_id") or payload.get("sessionId")
     turn = payload.get("turn_id") or payload.get("turnId")
     event = payload.get("hook_event_name") or payload.get("hookEventName") or "Stop"
-    if not session or not turn:
+    if not session:
         return None
-    raw = "\0".join((str(read_id(root) or ""), chair, str(event), str(session), str(turn)))
+    if turn:
+        discriminator = "turn\0" + str(turn)
+    else:
+        # Claude Stop does not expose a turn id. Use private hook inputs only
+        # as hash material so project + plugin hooks for the same Stop collapse
+        # without persisting a transcript path or assistant message.
+        message = payload.get("last_assistant_message") or payload.get("lastAssistantMessage")
+        transcript = payload.get("transcript_path") or payload.get("transcriptPath")
+        transcript_state = ""
+        if transcript:
+            try:
+                stat = Path(str(transcript)).stat()
+                transcript_state = str(transcript) + "\0" + str(stat.st_size) + "\0" + str(stat.st_mtime_ns)
+            except OSError:
+                transcript_state = str(transcript)
+        if not message and not transcript_state:
+            return None
+        discriminator = "fallback\0" + str(message or "") + "\0" + transcript_state
+    raw = "\0".join((str(read_id(root) or ""), chair, str(event), str(session), discriminator))
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
