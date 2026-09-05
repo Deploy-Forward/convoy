@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from .bringup import is_conductor
-from .cmd import convoy_root_command
+from .cmd import convoy_root_command, quiet_spawn_kwargs
 from .convoy import list_seats, read_github, read_id, read_lead, read_thread
 from .crew import _seated_states
 from .gitstate import git_remote, git_state
@@ -418,6 +418,9 @@ def run_widget(
     import subprocess
     from .focus import focus_seat
     from .nudge import nudge_seat
+    from .usage import CachedProbe
+    # Paint first, probe in the background: the strip never waits on a vendor.
+    probe_fn = CachedProbe(probe_fn)
     from .start import start
 
     interval_ms = max(1, int(float(refresh) * 1000))
@@ -584,7 +587,7 @@ def run_widget(
             return
         try:
             r = subprocess.run(text, shell=True, capture_output=True, text=True,
-                               encoding="utf-8", errors="replace", timeout=20)
+                               encoding="utf-8", errors="replace", timeout=20, **quiet_spawn_kwargs())
             out = (r.stdout or r.stderr or "").strip().splitlines()
             status.config(text=(out[-1] if out else ("exit " + str(r.returncode))))
         except (OSError, subprocess.SubprocessError) as e:
