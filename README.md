@@ -120,6 +120,7 @@ Write (thread state):
 - `stamp "<summary>" [--agent A] [--model M] [--effort E] [--transcript <pointer>]` — conductor stamp.
 - `send --to <harness> "<body>" [--live] [--dry-run] [--instance-id <chair>]` — synapse; default runner records a feed row (`delivery: recorded`); `--live` runs a fresh headless vendor session (`executed`); a named live seat queues (`delivery: queued`, `delivered: false`).
 - `inbox [--seat <chair>] [--drain | --hook-pretooluse]` — list or drain the live-seat inbox. The hook command is always `convoy inbox --hook-pretooluse` (never a baked interpreter path).
+- `end [--summary <text>] [--push | --hook]` — explicit task completion, or the Codex/Claude Stop heartbeat. `--push` authorizes exactly one plain `git push` and refuses dirty, detached, or no-upstream state; `--hook` never pushes.
 - `install --to <harness> --opt-in [--live]` — cataloged installer; dry-run by default.
 
 Launch / panes:
@@ -214,8 +215,8 @@ and their direct-id resume is unverified.
 | Harness | `onboard` / `roster` id | `resume_argv` shape | `ensure_first_run` behavior | `send --live` behavior |
 | --- | --- | --- | --- | --- |
 | `grok` | `grok` | `grok -m <model?> --agent <path?> --resume <vendor-id?>` | Writes PATH ungate block; installs `neuron-identity`; writes Convoy-owned `--agent` file; writes project PreToolUse hook (`convoy inbox --hook-pretooluse`). | Native CLI on PATH. Named live seats queue (`delivery: queued`); never steals `--resume`. |
-| `claude` | `claude` | `claude --resume <vendor-id?>` | Writes PATH ungate block; installs `neuron-identity`; writes project `.claude/settings.json` (ungate + PreToolUse/UserPromptSubmit inbox hooks), merges user `~/.claude/settings.json` skip key, and writes `~/.claude.json` trust project keys. | Native CLI on PATH. Named live seats queue (`delivery: queued`); never steals `--resume`. |
-| `codex` | `codex` | `codex resume <vendor-id?>` (**not** `--resume`) | Writes PATH ungate block; installs `neuron-identity`. No Claude permission-ungate writes. | Native CLI on PATH. Named live seats queue; may `codex queue` (`delivery: native-queued`). |
+| `claude` | `claude` | `claude --resume <vendor-id?>` | Writes PATH ungate block; installs neuron skills plus `.claude/commands/end.md`; writes project `.claude/settings.json` (inbox hooks + Stop heartbeat), merges user `~/.claude/settings.json` skip key, and writes `~/.claude.json` trust project keys. | Native CLI on PATH. Named live seats queue (`delivery: queued`); never steals `--resume`. |
+| `codex` | `codex` | `codex resume <vendor-id?>` (**not** `--resume`) | Writes PATH ungate block; installs neuron skills, `.agents/skills/convoy-end`, `/prompts:end`, and project `.codex/hooks.json` Stop heartbeat. No Claude permission-ungate writes. | Native CLI on PATH. Named live seats queue; may `codex queue` (`delivery: native-queued`). |
 | `cursor-agent` | `cursor-agent` | `cursor-agent --resume <vendor-id?>` | Writes PATH ungate block; installs `neuron-identity`; writes Grok/Claude inbox hook files (swap-safe). Drain via `convoy inbox --drain` (no vendor hook proven). | Native CLI on PATH. Named live seats queue (`delivery: queued`); never steals `--resume`. |
 | `agy` | `agy` | `agy --conversation <vendor-id?>` (live `--help` 2026-09-01: no `--resume`) | Writes PATH ungate block; installs `neuron-identity`; inbox hook files as above. | Native CLI on PATH. Named live seats queue (`delivery: queued`); never steals `--resume`. |
 | `hermes` | `hermes` | `hermes --resume <vendor-id?>` (live `--help` 2026-09-01) | Writes PATH ungate block; installs `neuron-identity`; inbox hook files as above. | Native CLI on PATH. Named live seats queue (`delivery: queued`); never steals `--resume`. |
