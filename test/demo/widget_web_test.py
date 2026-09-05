@@ -129,6 +129,26 @@ class Server(unittest.TestCase):
         self.assertFalse(self.post("/api/send", {"root": str(self.root), "seat": "grok-1", "body": "   "})["ok"])
         self.assertFalse(self.post("/api/send", {"root": str(self.root), "seat": "nobody", "body": "hi"})["ok"])
 
+    def test_focus_raises_the_identified_window_and_never_a_guess(self):
+        from convoy.convoy import seat as write_seat
+        write_seat(self.root, "grok", "grok-1", worktree=str(self.root / "wt-grok-1"))
+        raised = []
+        self.api.raise_fn = lambda hwnd: (raised.append(hwnd) or {"ok": True, "hwnd": hwnd})
+        # not identified: a generic title names nothing -> nothing raised, reason on the card
+        self.api.identify_kwargs = {"panes_fn": lambda root: {"chairs": [{"session_id": "grok-1", "live": True, "bodies": [{"pid": 4242}]}]},
+                                    "windows_fn": lambda: [{"hwnd": 11, "title": "grok", "pid": 99}]}
+        with mock.patch("convoy.widget_web.os.name", "nt"):
+            r = self.post("/api/focus", {"root": str(self.root), "seat": "grok-1"})
+        self.assertFalse(r["focused"]); self.assertEqual(raised, []); self.assertTrue(r.get("reason") or r["identify"]["reason"])
+        # identified: the title names the worktree -> that hwnd is raised
+        self.api.identify_kwargs["windows_fn"] = lambda: [{"hwnd": 12, "title": "wt-grok-1 - grok", "pid": 99}]
+        with mock.patch("convoy.widget_web.os.name", "nt"):
+            r = self.post("/api/focus", {"root": str(self.root), "seat": "grok-1"})
+        if r["identify"]["identified"]:
+            self.assertTrue(r["focused"]); self.assertEqual(raised, [12]); self.assertEqual(r["method"], "raise-window")
+        else:
+            self.assertEqual(raised, [], "an unidentified pane is never raised")
+
     def test_pin_and_unknown_paths(self):
         self.assertEqual(self.post("/api/pin", {"on": False})["on"], False)
         req = urllib.request.Request(self.url + "/api/nothing", data=b"{}", method="POST", headers={"Content-Type": "application/json"})
