@@ -258,6 +258,8 @@ def _chair_row(
         "last_row": last_rows.get(sid),
         "unread": unread,
         "focus": "focus --seat " + sid,
+        "nudge_available": chip == "stale",
+        "nudge": "nudge --seat " + sid + " --dry-run",
     }
 
 
@@ -375,12 +377,16 @@ def run_widget(
 
     import subprocess
     from .focus import focus_seat
+    from .nudge import nudge_seat
     from .start import start
 
     interval_ms = max(1, int(float(refresh) * 1000))
     selected = {"n": 1}
     usage_mode = {"v": "session"}
     pending_cmd = {"text": ""}
+    pinned = {"v": bool(topmost)}
+    # the nudge the human is confirming: dry card shown first, keys typed only on confirm
+    pending_nudge: dict[str, Any] = {}
     state: dict[str, Any] = {"model": build_widget_model(roots, probe_fn=probe_fn)}
 
     BLUE = "#2f4fd8"
@@ -443,6 +449,46 @@ def run_widget(
         _paint_confirm()
         status.config(text=text)
 
+    def _root() -> Path:
+        t = _thread()
+        return Path(str((t or {}).get("root") or "."))
+
+    def _nudge(sid: str) -> None:
+        """Stage 1: identify only (dry_run). Nothing is typed. The human confirms next."""
+        card = nudge_seat(_root(), sid, dry_run=True)
+        pending_nudge.clear()
+        pending_nudge.update(sid=sid, card=card, consent="", keys="")
+        pending_cmd["text"] = ""
+        _paint_confirm()
+        status.config(text=str(card.get("reason") or card.get("next") or card.get("error") or "nudge"))
+
+    def _nudge_confirm() -> None:
+        """Stage 2: the one keystroke, with the consent the human pasted. Never on a timer."""
+        sid = str(pending_nudge.get("sid") or "")
+        if not sid:
+            return
+        keys = str(pending_nudge.get("keys") or "").strip() or None
+        consent = str(pending_nudge.get("consent") or "").strip() or None
+        card = nudge_seat(_root(), sid, keys=keys, consent=consent)
+        pending_nudge["card"] = card
+        if card.get("request_id"):
+            # consent asked, not granted: show the grant command; the human runs it, pastes the token
+            status.config(text="grant: " + convoy_root_command(_root()) + " consent --grant " + str(card["request_id"]))
+        else:
+            status.config(text=str(card.get("delivery") or card.get("reason") or card.get("error") or "nudge"))
+            if card.get("delivery") == "nudged":
+                pending_nudge.clear()
+        _paint_confirm()
+
+    def _nudge_cancel() -> None:
+        pending_nudge.clear()
+        _paint_confirm()
+
+    def _toggle_pin() -> None:
+        pinned["v"] = not pinned["v"]
+        win.attributes("-topmost", pinned["v"])
+        _paint()
+
     def _run_cmd() -> None:
         text = pending_cmd.get("text") or ""
         if not text.strip():
@@ -460,6 +506,34 @@ def run_widget(
     def _paint_confirm() -> None:
         for child in list(confirm.winfo_children()):
             child.destroy()
+        if pending_nudge.get("sid"):
+            card = pending_nudge.get("card") or {}
+            head = "nudge " + str(pending_nudge["sid"]) + " · " + str(card.get("adapter") or "no adapter")
+            tk.Label(confirm, text=head, anchor="w", bg=BG, fg=RED, font=small).pack(fill="x")
+            detail = str(card.get("reason") or card.get("next") or card.get("error") or "")
+            if detail:
+                tk.Label(confirm, text=detail, anchor="w", bg=BG, fg=GREY, font=small, wraplength=520).pack(fill="x")
+            fields = tk.Frame(confirm, bg=BG)
+            fields.pack(fill="x")
+            keys_var = tk.StringVar(value=str(pending_nudge.get("keys") or ""))
+            consent_var = tk.StringVar(value=str(pending_nudge.get("consent") or ""))
+            tk.Label(fields, text="keys", bg=BG, fg=GREY, font=small).pack(side="left")
+            tk.Entry(fields, textvariable=keys_var, width=18, font=small).pack(side="left", padx=(2, 8))
+            tk.Label(fields, text="consent", bg=BG, fg=GREY, font=small).pack(side="left")
+            tk.Entry(fields, textvariable=consent_var, width=18, font=small).pack(side="left", padx=(2, 0))
+            row = tk.Frame(confirm, bg=BG)
+            row.pack(fill="x", pady=(2, 6))
+            can_send = bool(card.get("identified")) and card.get("adapter") != "grok-acp-unshipped"
+
+            def _confirm() -> None:
+                pending_nudge["keys"] = keys_var.get()
+                pending_nudge["consent"] = consent_var.get()
+                _nudge_confirm()
+
+            tk.Button(row, text="confirm nudge", command=_confirm, font=small,
+                      state="normal" if can_send else "disabled").pack(side="left")
+            tk.Button(row, text="cancel", command=_nudge_cancel, font=small).pack(side="left", padx=6)
+            return
         text = pending_cmd.get("text") or ""
         if not text:
             return
@@ -526,6 +600,9 @@ def run_widget(
                 ).pack()
         tk.Button(dots, text="+", relief="solid", fg=GREY, bg=BG, font=small,
                   command=_plus).pack(side="left", padx=(8, 0))
+        tk.Button(dots, text="pin" if pinned["v"] else "unpinned", relief="flat",
+                  fg=BLUE if pinned["v"] else GREY, bg=BG, font=small,
+                  command=_toggle_pin).pack(side="left", padx=(6, 0))
 
         t = _thread()
         if t is None:
@@ -638,6 +715,10 @@ def run_widget(
                 ent_e.pack(side="left")
                 ent_e.bind("<Return>", preview)
             tk.Label(row, text=str(c.get("chip") or ""), width=10, anchor="w", bg=BG, fg=GREY, font=small).pack(side="left")
+            if c.get("nudge_available") is True:
+                # the red ring is the invitation; the human clicks; never a timer
+                tk.Button(row, text="nudge", relief="solid", fg=RED, bg=BG, font=small,
+                          command=lambda s=sid: _nudge(s)).pack(side="left", padx=(4, 0))
         tk.Label(table, text=str(t.get("footer") or ""), anchor="w", bg=BG, fg=GREY, font=small).pack(fill="x", pady=(6, 0))
 
     def _select(n: int) -> None:
