@@ -73,6 +73,15 @@ class HookCommandResolution(unittest.TestCase):
         self.assertIsNotNone(live["command"], "some candidate must resolve on the machine running the suite")
         self.assertIn(live["resolved_via"], ("console-script", "interpreter", "interpreter+src"))
 
+    @unittest.skipUnless(sys.platform == "win32", "Windows shell selection")
+    def test_windows_hook_shell_prefers_git_bash_over_wsl_bash_on_path(self):
+        git_bash = Path(r"C:\Program Files\Git\bin\bash.exe")
+        if not git_bash.is_file():
+            self.skipTest("Git Bash is not installed in the standard location")
+        with mock.patch.object(cmd.shutil, "which", return_value=r"C:\Windows\System32\bash.exe"):
+            shell = cmd.hook_shell()
+        self.assertEqual(shell, [str(git_bash), "-c"])
+
 
 class HookWritersUseResolvedCommand(unittest.TestCase):
     def setUp(self):
