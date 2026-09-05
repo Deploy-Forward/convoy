@@ -64,6 +64,7 @@ When the write gate is closed:
 - `clone` refuses a URL starting with `-` and passes `--` before the URL, so
   `--upload-pack=...` can never reach git as an option.
 - `inbox` with `drain=true` refuses before drain.
+- `threads` with `prune=true` refuses before rewriting the machine index (`dropped: []`, counts JSON null). Dry `threads` list stays public.
 - `crew` refuses before validation, mint or join (`seats: []`, `launched: false`);
   `seated` refuses before stamping; `consent` before granting; `await_seated`
   before reading (`chairs: []`).

@@ -66,7 +66,7 @@ One line per verb; flags shown are the ones you will reach for (see
 
 Read (no writes to thread state):
 
-- `threads` — every Convoy thread this machine knows.
+- `threads [--prune]` — every Convoy thread this machine knows. `--prune` drops rows whose root is under the OS temp dir or is absent and reports every dropped row (never silent).
 - `panes` — every body of every neuron on this thread, from the OS process table; never a token.
 - `whoami` — which chair is this process? Walks process ancestry to the harness.
 - `graph [--neuron <chair>] [--html [--out <file>]]` — read-only ontology of the thread.
