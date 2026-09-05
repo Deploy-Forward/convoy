@@ -88,7 +88,9 @@ HARNESSES = tuple((row["id"], str(row.get("name") or row["id"])) for row in harn
 # N-5 gate: SoT write tools are never exposed on an ungated public process.
 # RPC-layer only — CLI and in-process call_tool stay usable; a gated/loopback
 # deploy opts in via CONVOY_MCP_WRITE_TOOLS=1.
-# seat/join/launch joined this set with the wizard verbs (2026-09-04). They
+# send is also hidden: even its non-live form appends a synapse/feed row, so it
+# is not read-only. seat/join/launch joined this set with the wizard verbs
+# (2026-09-04). They
 # are HIDDEN from a public tools/list, not listed-and-refusing, on purpose:
 # the @convoy wizard's Gate 0 reads tools/list to decide whether it can seat
 # and launch, and a public endpoint that cannot do those must not say it can.
@@ -105,8 +107,22 @@ HARNESSES = tuple((row["id"], str(row.get("name") or row["id"])) for row in harn
 # joins N chairs and may spawn the window; seated stamps a chair's proof of
 # life; consent mints a one-time grant. await_seated only reads, but it holds
 # the request thread up to its timeout, which a public endpoint must not offer.
-_WRITE_TOOLS = frozenset({"stamp", "note", "seat", "join", "launch", "onboard", "clone", "mint", "repos",
+_WRITE_TOOLS = frozenset({"send", "stamp", "note", "seat", "join", "launch", "onboard", "clone", "mint", "repos",
                           "crew", "seated", "consent", "await_seated"})
+# MCP safety annotations describe what a tool can do on THIS process. Some
+# tools have a read-only form on the public process and a state-changing form
+# only after the operator enables the write gate. Keep this vocabulary
+# separate from _WRITE_TOOLS: repos and await_seated are gated for privacy and
+# resource control, but they do not mutate state.
+_STATE_CHANGING_TOOLS = frozenset({
+    "send", "stamp", "note", "seat", "join", "launch", "onboard", "clone",
+    "mint", "crew", "seated", "consent",
+})
+_CONDITIONAL_STATE_CHANGING_TOOLS = frozenset({
+    "bring_up", "open", "hide", "minimize", "background", "install",
+    "resume", "inbox",
+})
+_IRREVERSIBLE_TOOLS = frozenset({"send", "stamp", "note"})
 AWAIT_SEATED_MAX_S = 600.0
 
 
@@ -116,8 +132,26 @@ def _write_tools_enabled() -> bool:
 
 def _listed_tools() -> list[dict[str, Any]]:
     """What tools/list answers on THIS process: everything behind the gate,
-    the read-only verbs otherwise. card scores its preflight on the same list."""
-    return TOOLS if _write_tools_enabled() else [t for t in TOOLS if t["name"] not in _WRITE_TOOLS]
+    the read-only verbs otherwise. card scores its preflight on the same list.
+
+    OpenAI's plugin scanner consumes these annotations from the live endpoint,
+    so they must reflect the process gate rather than an imagined deployment.
+    """
+    writes = _write_tools_enabled()
+    tools = TOOLS if writes else [t for t in TOOLS if t["name"] not in _WRITE_TOOLS]
+    listed: list[dict[str, Any]] = []
+    for tool in tools:
+        name = tool["name"]
+        mutates = name in _STATE_CHANGING_TOOLS or (writes and name in _CONDITIONAL_STATE_CHANGING_TOOLS)
+        listed.append({
+            **tool,
+            "annotations": {
+                "readOnlyHint": not mutates,
+                "destructiveHint": mutates and name in _IRREVERSIBLE_TOOLS,
+                "openWorldHint": False,
+            },
+        })
+    return listed
 
 
 # No enum here on purpose: the vocabulary is per harness (grok xhigh, codex

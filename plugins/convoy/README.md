@@ -50,6 +50,8 @@ python <skill-creator>/scripts/quick_validate.py plugins/convoy/skills/convoy
 python -m unittest test.demo.openai_plugin_pack_test -v
 ```
 
-Public directory submission is a separate publisher action. Do not add an
-`.app.json` until OpenAI issues a real connector ID, and do not publish privacy
-or terms URLs until Deploy Forward has approved those policies.
+Public directory submission is a separate publisher action. The exact
+authentication, policy, domain, test, and portal sequence is in
+[`docs/openai-plugin-publication.md`](../../docs/openai-plugin-publication.md).
+Do not add an `.app.json` until OpenAI issues a real connector ID, and do not
+publish privacy or terms URLs until Deploy Forward has approved those policies.

@@ -76,6 +76,16 @@ class OpenAIPluginPackContract(unittest.TestCase):
         self.assertIn("isolates roots per user/team", text)
         self.assertIn("queued` alone is not counted as delivered", text)
 
+    def test_publication_runbook_keeps_external_gates_explicit(self):
+        text = (REPO / "docs" / "openai-plugin-publication.md").read_text(encoding="utf-8")
+        prose = " ".join(text.split())
+        self.assertIn("OAuth 2.1", text)
+        self.assertIn("never accept a filesystem root", text)
+        self.assertIn("https://convoy.bot/privacy", text)
+        self.assertIn("Apps Management: Write", prose)
+        self.assertIn("five positive and three negative", text)
+        self.assertIn("NOT APPLICABLE", text)
+
 
 if __name__ == "__main__":
     unittest.main()
