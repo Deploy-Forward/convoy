@@ -204,59 +204,61 @@ Claims in this document must point at code or stay RED. Paths are relative to re
 
 Marco lock: specs are a **build** — each step has pseudo-code, implementation pointer, and GREEN/RED DoD on live functions. Unknown stays `null`.
 
-### 13.1 Sorting-row evaluator
+### 13.1 Sorting-row evaluator — **null / landscape-only**
+
+No `what_survives` (or equivalent) function exists in `src/convoy/`. This subsection is a **positioning sketch**, not an implementation pointer.
 
 ```text
-fn what_survives(ui_closed):
-  sot = exists(root / ".convoy" / {"id","feed.jsonl","seats.jsonl"})
-  panes_alive = host_mux_still_has_neuron_ptys()   # WT/tmux/Herdr — NOT Convoy
-  vendor_alive = seat.resume.available == true      # vendor UUID still resumable
-  return {
-    sot_survives: sot,                 # Convoy GREEN when disk SoT present
-    agents_still_working: panes_alive AND vendor_alive,
-    herdr_equivalent: agents_still_working WITH zero_convoy_clients
-                       AND convoy_owns_pty == false  # today: always false
-  }
+# LANDSCAPE ONLY — not shipped code
+sot_survives          := exists(root / ".convoy" / {id, feed.jsonl, seats.jsonl})
+agents_still_working  := host_mux_has_neuron_ptys() AND seat.resume.available
+herdr_equivalent      := agents_still_working WITH zero_convoy_clients
+                         AND convoy_owns_pty   # today: convoy_owns_pty is always false
 ```
 
-**DoD today:** `sot_survives` can be GREEN via unit + disk. `herdr_equivalent` is **RED** until §15.
+**Unit score:** **null**. Disk SoT can still be falsified offline via `phase7_attach_test.py` (`test_id_before_init_is_null_does_not_create`), `temporal_hooks_test.py`, `feed_v2_contract_test.py`. `herdr_equivalent` stays **RED** until §14.
 
 ### 13.2 SoT read path (implementation)
 
+Two real entry points — do **not** invent a composed `convoy_context`:
+
 ```text
-fn convoy_context(root):
-  # src/convoy/context.py + convoy.py
-  return {
-    convoy_id: read_id(root),           # convoy.py:37 — null if missing, never invent
-    thread_key: read_thread(root),
-    seats: list_seats(root),            # convoy.py:208
-    feed_window: feed_since(root, ts),  # layer.py:137
-  }
+fn pack(root, instance_id=None) -> dict:       # context.py:34
+  # convoy_id / thread_key via _one_line(.convoy/id|thread) — null if missing, never invent
+  ...
+
+fn attach(root, convoy_id=None, probe_fn=None) -> dict:  # convoy.py:437
+  # seats + feed (+ roster probes); uses list_seats / feed paths
+  ...
+
+# Related primitives (not a single composed API):
+#   read_id(root)       convoy.py:37
+#   list_seats(root)    convoy.py:208
+#   feed_since(root,t)  layer.py:137
 ```
 
-**DoD:** `test/demo/phase1_threaded_context_test.py` GREEN; missing id ⇒ JSON `null`, not a minted UUID.
+**DoD:** missing id ⇒ JSON `null`, not a minted UUID — falsify with `neuron_identity_test.py` (`test_pack_convoy_id_from_disk_not_invented`) and `phase7_attach_test.py` (read_id / CLI id null). Do **not** cite `phase1_threaded_context_test.py` for convoy_id null (it does not assert that).
 
 ### 13.3 Seat + bring_up (mux owns PTY)
 
 ```text
 fn seat(root, session_id, worktree, ...):
-  # convoy.py:111 — C8 lives HERE, not in bring_up
-  holder = chair_holding_worktree(root, worktree, except_session=session_id)  # convoy.py:148 / :247
+  # convoy.py:111 — C8 enforced at seat/join time, NOT inside bring_up
+  holder = chair_holding_worktree(root, worktree, except_session=session_id)
+  # chair_holding_worktree: convoy.py:247 (call sites ~:148, :311)
   if holder: refuse("C8: one worktree, one chair")
-  append_or_update seats.jsonl
+  write seats.jsonl
 
-fn bring_up_thread(root, convoy_id, thread):
-  # bringup.py:998
-  seats = list_seats(root, convoy_id)
-  panes = _pane_seats(seats)                    # bringup.py:185 — dedup panes only; not C8
-  window = host.open_isolated_window()          # WT `--window new` / mux equivalent
-  for seat in panes:
-    argv = resume_argv(seat)                    # bringup.py:289 — vendor UUID, never Convoy seat id
-    host.split_pane(window, argv)               # PTY owned by host
-  return card(panes=..., convoy_id=..., nulls_ok=true)
+fn bring_up(root, convoy_id=None, thread=None, ...):  # bringup.py:998
+  seats = list_seats(...)
+  panes = _pane_seats(seats)                 # bringup.py:185 — pane dedup only
+  wt_argv = isolated_wt_argv(thread, panes)  # bringup.py:660 — ONE wt.exe spawn
+  # per-seat argv built via resume_argv(seat)  # bringup.py:289 — vendor UUID, never Convoy seat id
+  live_runner(wt_argv)                       # PTY owned by Windows Terminal / host mux
+  return card(...)
 ```
 
-**DoD:** C8 enforced at `seat` / `chair_holding_worktree` (`convoy.py`); `bring_up` only tiles. `phase7_bringup_test.py` unit-GREEN. Live GREEN only on a machine with WT/tmux proof — cloud box without WT ≠ live bring-up GREEN.
+**DoD:** C8 → `worktree_conflict_test.py`. Dry bring-up / `isolated_wt_argv` → `phase7_bringup_test.py`. Live WT proof is out of Unit (cloud box without WT ≠ live GREEN).
 
 ### 13.4 Synapse send (orchestration, not attach-PTY)
 
@@ -368,7 +370,7 @@ See `CANON.md` and the terminology lock in `SPEC.md`.
 | Domain | Agent | Score | Notes |
 |---|---|---|---|
 | Acceptance | Acceptance Testing (`a5236dab-…`) | **RED** | Softened §10; pack≠SoT GREEN; §16 GREEN; clear = live Gate 0 + host-render |
-| Unit | Unit Test | pending | |
+| Unit | Unit Test (`b3b3741d-…`) | **mixed** (13.4–6 GREEN; 13.2–3 fixed from RED; 13.1 null) | Rewrote §13.1–§13.3 to real `pack`/`attach`/`resume_argv`/`isolated_wt_argv`; C8 at seat |
 | Integration | Integration Test (`62eaa2dc-…`) | **GREEN** (+ citation fix) | C8 at `seat`/`chair_holding_worktree` not `bring_up`; `resume_argv`; `_WRITE_TOOLS` L108 |
 | System | System Testing (`f5936e5a-…`) | **GREEN** (SPEC) / live wire **RED** ops | Persistence §4/§6/§14 honest; WT owns PTY; Worker≠origin; POST /mcp 405 this probe — tool count null |
 
