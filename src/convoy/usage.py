@@ -9,6 +9,8 @@ import shutil
 import subprocess
 from typing import Any, Callable
 
+from .cmd import quiet_spawn_kwargs
+
 ProbeFn = Callable[[str], dict[str, Any]]
 _ALIASES = {
     "antigravity": "agy",
@@ -26,7 +28,7 @@ def _run(cmd: list[str], timeout: int = 15) -> tuple[int, str]:
         "errors": "replace",
     }
     if os.name == "nt":
-        kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
+        kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP | quiet_spawn_kwargs()["creationflags"]
     try:
         p = subprocess.Popen(cmd, **kwargs)
     except OSError as e:
@@ -214,3 +216,50 @@ def surface(harness: str, probed: dict[str, Any] | None = None) -> dict[str, Any
         out["usage_remaining"] = None
     return out
 
+
+
+class CachedProbe:
+    """A probe_fn for long-lived readers (the widget): never blocks the caller.
+
+    The first ask for a harness returns {usage_remaining: null, limited: false,
+    probing: true} and starts ONE background probe; later asks return the
+    cached vendor answer until ttl_s passes, then refresh once in the
+    background again. Live 2026-09-05: codex's probe times out at ~17 s and
+    claude's takes ~10 s, so probing on the paint path froze the strip for
+    30 s at start and on every tick. Unknown stays null, never 0.
+    """
+
+    def __init__(self, probe_fn: ProbeFn | None = None, *, ttl_s: float = 60.0,
+                 clock=None, start_thread=None):
+        import threading
+        import time as _t
+        self._probe = probe_fn or probe
+        self._ttl = float(ttl_s)
+        self._clock = clock or _t.monotonic
+        self._start = start_thread or (lambda fn: threading.Thread(target=fn, daemon=True).start())
+        self._lock = threading.Lock()
+        self._cache: dict[str, tuple[float, dict[str, Any]]] = {}
+        self._inflight: set[str] = set()
+
+    def _refresh(self, name: str) -> None:
+        try:
+            got = self._probe(name)
+        except Exception as e:  # a failed probe is unknown, never a number
+            got = {"usage_remaining": None, "limited": False, "raw": None, "error": type(e).__name__}
+        with self._lock:
+            self._cache[name] = (self._clock(), dict(got))
+            self._inflight.discard(name)
+
+    def __call__(self, harness: str) -> dict[str, Any]:
+        name = (harness or "").strip().lower()
+        with self._lock:
+            hit = self._cache.get(name)
+            stale = hit is None or (self._clock() - hit[0]) >= self._ttl
+            kick = stale and name not in self._inflight
+            if kick:
+                self._inflight.add(name)
+        if kick:
+            self._start(lambda: self._refresh(name))
+        if hit is None:
+            return {"usage_remaining": None, "limited": False, "raw": None, "probing": True}
+        return dict(hit[1])

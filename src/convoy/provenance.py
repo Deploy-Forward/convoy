@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any, Sequence
 
 from .convoy import list_seats
+from .cmd import quiet_spawn_kwargs
 from .layer import SCHEMA_VERSION, feed_path, hook, parse_since
 
 
@@ -38,6 +39,7 @@ def _git(args: Sequence[str], cwd: Path | str) -> tuple[int | None, str]:
             capture_output=True,
             text=True,
             timeout=10,
+            **quiet_spawn_kwargs(),
         )
     except (OSError, subprocess.TimeoutExpired):
         return None, ""

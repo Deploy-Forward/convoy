@@ -5,9 +5,11 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
+from .cmd import quiet_spawn_kwargs
+
 def _run(cmd: list[str], cwd: Path) -> str | None:
     try:
-        r = subprocess.run(cmd, cwd=str(cwd), capture_output=True, text=True, timeout=10)
+        r = subprocess.run(cmd, cwd=str(cwd), capture_output=True, text=True, timeout=10, **quiet_spawn_kwargs())
     except (OSError, subprocess.TimeoutExpired):
         return None
     if r.returncode != 0:
