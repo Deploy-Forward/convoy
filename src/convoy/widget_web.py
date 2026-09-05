@@ -82,6 +82,8 @@ class WidgetApi:
         self.refresh_s = float(refresh_s)
         self.on_pin = on_pin
         self.pinned = True
+        self.raise_fn: Callable[[int], dict[str, Any]] | None = None
+        self.identify_kwargs: dict[str, Any] = {}
         self._lock = threading.Lock()
         self._cached: dict[str, Any] | None = None
         self._built_at = float("-inf")
@@ -127,11 +129,35 @@ class WidgetApi:
         return dict(cached)
 
     def focus(self, root: str, seat: str) -> dict[str, Any]:
+        """Elevate the chair's pane. First the host adapter (focus_seat: tmux
+        select-pane, WT evidence-gated). If that has no adapter, identify the
+        window the way nudge does (a WT title that names the chair or its
+        worktree; never a guess) and raise THAT window to the foreground.
+        focused stays false with the reason otherwise."""
         from .focus import focus_seat
+        from .nudge import identify_target
         try:
-            return focus_seat(Path(root), seat)
+            card = focus_seat(Path(root), seat)
         except (ValueError, OSError) as e:
-            return {"ok": False, "focused": False, "reason": str(e)}
+            card = {"ok": False, "seat": seat, "focused": False, "reason": str(e)}
+        if card.get("focused"):
+            return card
+        try:
+            ident = identify_target(Path(root), seat, **self.identify_kwargs)
+        except (ValueError, OSError) as e:
+            card["identify"] = {"identified": False, "reason": str(e)}
+            return card
+        pane = ident.get("pane") or {}
+        card["identify"] = {"identified": bool(ident.get("identified")), "reason": ident.get("reason"), "host": ident.get("host"), "pane": pane}
+        if ident.get("identified") and pane.get("hwnd"):
+            raised = (self.raise_fn or raise_window)(int(pane["hwnd"]))
+            card["focused"] = bool(raised.get("ok"))
+            card["method"] = "raise-window"
+            card["pane_title"] = pane.get("title")
+            card["reason"] = None if raised.get("ok") else raised.get("error")
+        elif not card.get("reason"):
+            card["reason"] = ident.get("reason") or "pane not identified"
+        return card
 
     def nudge(self, root: str, seat: str, dry_run: bool = True, consent: str | None = None, force: bool = False) -> dict[str, Any]:
         from .nudge import nudge_seat
@@ -332,6 +358,33 @@ def serve(api: WidgetApi, host: str = "127.0.0.1", port: int = 0) -> ThreadingHT
     httpd = ThreadingHTTPServer((host, port), make_handler(api))
     threading.Thread(target=httpd.serve_forever, daemon=True).start()
     return httpd
+
+
+def raise_window(hwnd: int) -> dict[str, Any]:
+    """Bring one top-level window to the foreground (Windows). An Alt tap +
+    AttachThreadInput is what lets a background process take the foreground;
+    a bare SetForegroundWindow is refused (live 2026-09-05)."""
+    if os.name != "nt":
+        return {"ok": False, "error": "raise-window: windows only"}
+    try:
+        import ctypes
+        from ctypes import wintypes
+        user32 = ctypes.windll.user32
+        kernel32 = ctypes.windll.kernel32
+        h = wintypes.HWND(int(hwnd))
+        if not user32.IsWindow(h):
+            return {"ok": False, "error": "hwnd is not a window"}
+        user32.keybd_event(0x12, 0, 0, 0); user32.keybd_event(0x12, 0, 2, 0)
+        pid = wintypes.DWORD(0)
+        tid = user32.GetWindowThreadProcessId(h, ctypes.byref(pid))
+        me = kernel32.GetCurrentThreadId()
+        user32.AttachThreadInput(me, tid, True)
+        user32.ShowWindow(h, 9)
+        ok = bool(user32.SetForegroundWindow(h))
+        user32.AttachThreadInput(me, tid, False)
+        return {"ok": ok, "hwnd": int(hwnd), "error": None if ok else "SetForegroundWindow refused"}
+    except Exception as e:  # pragma: no cover - platform specific
+        return {"ok": False, "error": type(e).__name__ + ": " + str(e)}
 
 
 def _apply_windows_glass(title: str) -> dict[str, Any]:
