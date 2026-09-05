@@ -32,6 +32,14 @@ thread orchestration through Convoy MCP.
   `rows[].effort`); `choices` is a lower-level read of the same catalogs.
   A `null` catalog is a free field.
 
+## `/convoy --start` (CLI, not MCP)
+
+`convoy start [<repo>]` is a thin CLI alias: git URL → clone once + onboard
+`--github yes`; local path → onboard `--github no`; no repo → picker from
+`recent()` (never auto-pick newest); empty → new-thread ask; cancel → unbound.
+Already-live harness on the root → `attach`, never a duplicate `bring_up`.
+It is not an MCP tool; a marketplace install uses the wizard sequence above.
+
 ## Preferred operator flow
 
 1. Discover live harness/worktree state with `card` (one card, all rows).
