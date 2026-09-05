@@ -68,7 +68,7 @@ def lookup_any(root: Path, token: str, to: str | None = None, worktree: str | No
     return found
 
 def parse_session_id(stdout: str) -> str | None:
-    """JSON card first. Else ola-brain instance_id: reply. Never a UUID regex guess."""
+    """JSON card first. Else a legacy `instance_id: reply` prefix. Never a UUID regex guess."""
     text = (stdout or "").strip()
     if not text:
         return None
@@ -106,6 +106,7 @@ def _from_ola_prefix(text: str) -> str | None:
     return prefix
 
 def parse_agents_jsonl(root: Path, to: str, label: str | None = None) -> str | None:
+    # labelled legacy fallback: older seats wrote session rows here
     path = Path(root) / ".ola" / "agent-chat" / "agents.jsonl"
     if not path.is_file():
         return None

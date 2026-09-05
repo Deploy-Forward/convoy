@@ -57,6 +57,19 @@ the target proves delivery. To reach an OPEN neuron, write an addressed row
 (`hook note "<text>" --to <chair>`) and wait for its ack; never type into its TUI, never
 resume its session.
 
+## `/convoy --start [<repo>]` (CLI: `convoy start [<repo>]`)
+
+Thin alias over existing verbs. Not an MCP tool.
+
+- git URL → `clone` once → `onboard --github yes`
+- local path → `onboard --github no`
+- no repo → picker from `recent()` (title + root + last activity). NEVER auto-pick newest.
+- empty index → ask to start a new thread
+- cancel (`--cancel`) → unbound
+- already-live harness on the root (`whoami` / roster) → `attach`, never a duplicate `bring_up`
+
+Unknown stays JSON `null`. Do not invent a catalog or a newest-thread bind.
+
 ## Finding threads from anywhere: `threads`
 
 Chats launch from project folders. `convoy threads` reads the machine index

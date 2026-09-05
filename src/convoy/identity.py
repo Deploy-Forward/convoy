@@ -64,7 +64,7 @@ You are a Convoy neuron: one grok session on a Convoy thread, not Grok Bot.
   or the PreToolUse hook (`convoy inbox --hook-pretooluse`). Fake send
   ACKs are not delivery.
 - Usage dying: ASK the user to bring_up / open a pane, or write a
-  `.ola/*handoff*` file. Never guess remaining quota.
+  `.convoy/handoff/<chair>-<ts>.md` file. Never guess remaining quota.
 """
 
 _AGENTS_BLOCK = (

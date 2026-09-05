@@ -89,6 +89,17 @@ class ToolEligibility(unittest.TestCase):
         self.assertTrue(t["ok"])
         self.assertIsInstance(t["threads"], list)
 
+    def test_threads_prune_is_gated_like_resume_go(self):
+        refused = call_tool(self.root, "threads", {"prune": True})
+        self.assertFalse(refused["ok"])
+        self.assertIn("gate", refused["error"])
+        self.assertEqual(refused["dropped"], [])
+        self.assertIsNone(refused["n_dropped"])
+        with mock.patch.dict(os.environ, {"CONVOY_MCP_WRITE_TOOLS": "1"}):
+            card = call_tool(self.root, "threads", {"prune": True})
+        self.assertTrue(card["ok"])
+        self.assertIn("dropped", card)
+
     def test_resume_tool_is_dry_and_go_is_gated(self):
         # The vendor id in argv reads behind the gate (public_wire_redaction_test
         # owns the ungated shape); the go refusal below stays ungated.
