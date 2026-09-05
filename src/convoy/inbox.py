@@ -26,6 +26,7 @@ from .layer import utc_now
 POINTER_RELS = (
     Path(".grok") / "convoy-root",
     Path(".claude") / "convoy-root",
+    Path(".codex") / "convoy-root",
 )
 
 # Proven vendor hook files vs honest cli-drain. Never invent iTerm/Terminal.app

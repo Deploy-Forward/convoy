@@ -19,6 +19,8 @@ node_modules/
 # If a curated AGENTS.md is ever wanted, `git add -f` it.
 .claude/
 .grok/
+.codex/
+.agents/skills/
 AGENTS.md
 CLAUDE.md
 
