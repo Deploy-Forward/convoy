@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>convoy.bot MCP attach</title>
+  <meta name="description" content="Attach clients to convoy.bot MCP at /mcp.">
+  <style>
+    :root {
+      --bg: #fbfbfa;
+      --surface: #ffffff;
+      --ink: #0a0c12;
+      --gray-700: #2b3242;
+      --line: rgba(10, 12, 18, 0.1);
+      --accent: #1d4ed8;
+      --mono: "JetBrains Mono", ui-monospace, monospace;
+      --sans: "Work Sans", system-ui, sans-serif;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: var(--bg);
+      color: var(--ink);
+      font: 400 1rem/1.5 var(--sans);
+      display: grid;
+      place-items: center;
+      padding: 1rem;
+      -webkit-font-smoothing: antialiased;
+      text-rendering: optimizeLegibility;
+    }
+
+    .card {
+      width: min(760px, 100%);
+      background: var(--surface);
+      border: 1px solid var(--line);
+      padding: clamp(1rem, 2.4vw, 1.5rem);
+    }
+
+    p {
+      margin: 0;
+    }
+
+    .line {
+      color: var(--gray-700);
+    }
+
+    .attach-row {
+      margin-top: 0.85rem;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.6rem;
+      align-items: center;
+    }
+
+    code {
+      font: 400 0.95rem/1.35 var(--mono);
+      border: 1px solid var(--line);
+      background: rgba(255, 255, 255, 0.75);
+      padding: 0.32rem 0.46rem;
+      word-break: break-all;
+    }
+
+    button {
+      border: 1px solid var(--ink);
+      background: var(--surface);
+      color: var(--ink);
+      font: 400 0.74rem/1 var(--mono);
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      min-height: 40px;
+      padding: 0.45rem 0.72rem;
+      cursor: pointer;
+    }
+
+    button:hover {
+      background: var(--ink);
+      color: var(--surface);
+    }
+
+    .note {
+      margin-top: 0.95rem;
+    }
+
+    .back {
+      margin-top: 0.95rem;
+      display: inline-block;
+      color: var(--accent);
+      text-underline-offset: 2px;
+      font: 400 0.9rem/1.3 var(--mono);
+    }
+
+    .status {
+      margin-top: 0.7rem;
+      min-height: 1.2rem;
+      font: 400 0.78rem/1.2 var(--mono);
+      color: var(--gray-700);
+    }
+  </style>
+</head>
+<body>
+  <main class="card">
+    <p class="line">This URL is the MCP root for clients.</p>
+    <div class="attach-row">
+      <code id="mcp-url">https://convoy.bot/mcp</code>
+      <button id="copy-url" type="button">Copy URL</button>
+    </div>
+    <p class="note">MCP clients POST JSON-RPC here; browsers use the landing for live tools.</p>
+    <a class="back" href="/">Back to live verbs</a>
+    <p class="status" id="copy-status" role="status" aria-live="polite"></p>
+  </main>
+  <script>
+    const button = document.getElementById("copy-url");
+    const status = document.getElementById("copy-status");
+    const value = "https://convoy.bot/mcp";
+
+    async function copyUrl() {
+      try {
+        await navigator.clipboard.writeText(value);
+        status.textContent = "Copied.";
+      } catch (_err) {
+        status.textContent = "Copy failed. Select the URL and copy manually.";
+      }
+    }
+
+    button?.addEventListener("click", copyUrl);
+  </script>
+</body>
+</html>
