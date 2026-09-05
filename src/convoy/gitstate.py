@@ -15,6 +15,11 @@ def _run(cmd: list[str], cwd: Path) -> str | None:
     out = (r.stdout or "").strip()
     return out or None
 
+def git_remote(cwd: Path | str, name: str = "origin") -> str | None:
+    """The named remote URL, or null. Never invented."""
+    return _run(["git", "remote", "get-url", name], Path(cwd))
+
+
 def git_state(cwd: Path | str) -> dict[str, Any]:
     root = Path(cwd)
     branch = _run(["git", "rev-parse", "--abbrev-ref", "HEAD"], root)

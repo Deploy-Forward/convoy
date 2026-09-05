@@ -10,6 +10,7 @@ from .bringup import bring_up, hide_windows, live_applier, live_runner, terminal
 from .consent import grant_consent
 from .install import install as install_harness
 from .onboard import onboard as run_onboard
+from .start import start as run_start
 from .context import pack
 from .convoy import attach, bind, ensure_id, list_seats, read_id, read_lead, seat, set_lead, CONDUCTOR
 from .crew import await_seated, crew
@@ -17,7 +18,7 @@ from .glance import build_glance, run_tray
 from .graph import build_graph, neighborhood
 from .graph_html import render_html, resume_neuron
 from .identity import ensure_inbox_hooks, install_neuron_identity
-from .index import find_root, index_path, list_threads
+from .index import find_root, index_path, list_threads, prune_threads
 from .activity import neuron_activity
 from .panes import bodies, identify
 from .provenance import build_provenance, rebase_check, record_commit
@@ -25,6 +26,8 @@ from .layer import SCHEMA_VERSION, conductor_stamp, feed_since, hook, parse_sinc
 from .rail import build_rail, root_for
 from .relaunch import relaunch
 from .lifecycle import join, pass_lead, seated_ack, swap
+from .focus import focus_seat
+from .widget import run_widget
 from .pane_host import close_managed_pane
 from .synapse import fake_runner, native_runner, send_many, send_one
 from .targeted_launch import active_pane_runner, launch_choices, launch_seat
@@ -173,8 +176,17 @@ def main(argv: list[str] | None = None) -> int:
     sw.add_argument("--to", required=True, help="replacement harness")
     sw.add_argument("--model")
     sw.add_argument("--effort", help="declared effort for the incoming harness; unset, the old one survives only if that harness takes it")
-    sw.add_argument("--handoff", required=True, help="fresh .ola/*handoff* file written by the outgoing neuron")
+    sw.add_argument("--handoff", required=True, help="fresh .convoy/handoff/<chair>-<ts>.md file written by the outgoing neuron")
     sw.add_argument("--as", dest="author", required=True, help="outgoing neuron's session_id (neuron-authored; conductor asks via stamp)")
+
+    fo = sub.add_parser("focus", help="ask the pane host to highlight one chair; focused:false with reason until a host adapter is evidenced")
+    fo.add_argument("--seat", required=True, help="chair session_id")
+    fo.add_argument("--target", help="host pane id (tmux select-pane -t); omitted -> focused:false")
+
+    wg = sub.add_parser("widget", help="always-on-top tkinter strip: one dot per thread from recent(), expand chairs, click -> focus")
+    wg.add_argument("--topmost", dest="topmost", action="store_true", default=True)
+    wg.add_argument("--no-topmost", dest="topmost", action="store_false")
+    wg.add_argument("--refresh", type=float, default=3.0, help="seconds between model rebuilds (default 3)")
 
     sd = sub.add_parser("seated")
     sd.add_argument("--seat", required=True)
@@ -194,7 +206,9 @@ def main(argv: list[str] | None = None) -> int:
 
     sub.add_parser("panes", help="every body of every neuron on this thread from the OS process table: pid, via token|cwd, duplicates, unassigned harness processes; never a token")
 
-    sub.add_parser("threads", help="every Convoy thread this machine knows (the global index; present=false when a root is gone)")
+    th = sub.add_parser("threads", help="every Convoy thread this machine knows (the global index; present=false when a root is gone)")
+    th.add_argument("--prune", action="store_true",
+                    help="drop rows whose root is under the OS temp dir or is absent; reports every dropped row")
 
     rs = sub.add_parser("resume", help="resume one neuron at its most recent place: native argv + cwd (dry) or --go to spawn once")
     rs.add_argument("--neuron", required=True, help="chair session_id")
@@ -244,6 +258,12 @@ def main(argv: list[str] | None = None) -> int:
     gl.add_argument("--tray", action="store_true", help="render glance in tray/app-indicator")
     gl.add_argument("--refresh-seconds", type=int, default=60)
 
+    go = sub.add_parser("start", help="thin alias: git URL -> clone once + onboard --github yes; local path -> onboard --github no; no repo -> picker from recent(); already-live -> attach, never bring_up")
+    go.add_argument("repo", nargs="?", help="git URL or local checkout path")
+    go.add_argument("--to", action="append", help="harness you already have (repeat); default: those on PATH")
+    go.add_argument("--thread")
+    go.add_argument("--cancel", action="store_true", help="do not bind; leave unbound")
+
     ob = sub.add_parser("onboard")
     ob.add_argument("--to", action="append", required=True, help="named harness id(s) you already have")
     ob.add_argument("--thread")
@@ -263,7 +283,7 @@ def main(argv: list[str] | None = None) -> int:
     root = Path(args.root).resolve()
     # Chats launch from project subfolders: for read verbs, walk up to the
     # nearest .convoy/id when the given root has none (never for writes).
-    if args.cmd in ("graph", "threads", "panes", "resume", "seats", "feed", "context", "glance", "inbox", "provenance", "rebase") and not (root / ".convoy" / "id").is_file():
+    if args.cmd in ("graph", "threads", "panes", "resume", "seats", "feed", "context", "glance", "inbox", "provenance", "rebase", "focus") and not (root / ".convoy" / "id").is_file():
         found = find_root(root)
         if found is not None:
             root = found
@@ -451,6 +471,14 @@ def main(argv: list[str] | None = None) -> int:
             return 1
         print(json.dumps(card))
         return 0 if card.get("ok") else 1
+    if args.cmd == "focus":
+        card = focus_seat(root, args.seat, target=getattr(args, "target", None))
+        print(json.dumps(card))
+        return 0 if card.get("ok") else 1
+    if args.cmd == "widget":
+        card = run_widget(topmost=bool(args.topmost), refresh=float(args.refresh or 3.0))
+        print(json.dumps(card))
+        return 0 if card.get("ok") else 1
     if args.cmd == "crew":
         try:
             seats = [_seat_spec(s) for s in args.seat]
@@ -516,6 +544,10 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(card))
         return 0
     if args.cmd == "threads":
+        if getattr(args, "prune", False):
+            card = prune_threads()
+            print(json.dumps(card))
+            return 0 if card.get("ok") else 1
         print(json.dumps({"ok": True, "index": str(index_path()), "threads": list_threads()}))
         return 0
     if args.cmd == "panes":
@@ -615,6 +647,16 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(card))
         return 0 if card.get("ok") else 1
 
+    if args.cmd == "start":
+        card = run_start(
+            root,
+            args.repo,
+            harnesses=args.to,
+            thread=args.thread,
+            cancel=bool(args.cancel),
+        )
+        print(json.dumps(card))
+        return 0 if card.get("ok") else 1
     if args.cmd == "onboard":
         card = run_onboard(root, args.to, thread=args.thread, checkout_root=args.checkout_root,
                            github=None if args.github is None else args.github == "yes")

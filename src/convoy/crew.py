@@ -17,7 +17,7 @@ import time
 from pathlib import Path
 from typing import Any, Callable
 
-from .bringup import Runner, bring_up
+from .bringup import Runner, bring_up, pane_host_available
 from .convoy import list_seats, read_id, read_thread
 from .harness_contract import canonical_harness_id, harness_entries, validate_effort, validate_model, validate_where
 from .inbox import connect_mode
@@ -93,6 +93,9 @@ def crew(
     except ValueError as e:
         card["error"] = str(e)
         return card
+    if runner is not None and not pane_host_available():
+        card["error"] = "no pane host (wt) on PATH; refuse mint and join"
+        return card
     base = Path(checkout) if checkout else root
     card["checkout"] = str(base)
     local = [p for p in plan if p["where"] == "local"]
@@ -112,16 +115,15 @@ def crew(
                           model=p["model"], title=p["title"], effort=p["effort"], author=author, where=p["where"])
         except ValueError as e:
             card["error"] = "join refused for " + p["session_id"] + ": " + str(e) + " (" + str(len(card["seats"])) + " chairs already joined)"
+            if card["seats"]:
+                _mark_partial(card, root, [s["session_id"] for s in card["seats"]], card["error"])
             return card
         card["seats"].append({**joined["seat"], "token": joined["token"], "connect_mode": connect_mode(p["harness"])})
     sids = [s["session_id"] for s in card["seats"]]
     try:
         up = bring_up(root, thread=bound, runner=runner, session_ids=sids)
     except OSError as e:
-        # The chairs ARE written; the window never came up. Say both.
-        card["error"] = "launch failed: " + str(e)
-        card["seated"] = await_seated(root, sids, timeout=0)
-        return card
+        return _mark_partial(card, root, sids, "launch failed: " + str(e))
     card["windows"] = up.get("windows") or []
     card["cloud"] = up.get("cloud") or []
     if up.get("error"):
@@ -143,6 +145,20 @@ def crew(
     card["seated"] = await_seated(root, sids, timeout=0)
     card["ok"] = bool(up.get("ok"))
     card["next"] = "await_seated"
+    if not card["ok"] and sids:
+        _mark_partial(card, root, sids, str(card.get("error") or "launch failed"))
+    return card
+
+
+def _mark_partial(card: dict[str, Any], root: Path, sids: list[str], error: str) -> dict[str, Any]:
+    """Chairs from this call exist; the window did not. Recovery is per chair."""
+    card["ok"] = False
+    card["launched"] = False
+    card["partial"] = True
+    card["error"] = error
+    card["recovery"] = [{"session_id": sid, "verb": "launch --seat " + sid} for sid in sids]
+    card["seated"] = await_seated(root, sids, timeout=0)
+    card["next"] = "launch"
     return card
 
 
