@@ -25,7 +25,7 @@ contract implemented to fail closed on public MCP deploys.
 
 ### Write-gated verbs
 
-`_WRITE_TOOLS = {"stamp", "note", "seat", "join", "launch", "onboard", "clone", "mint", "repos", "crew", "seated", "consent", "await_seated", "focus"}`
+`_WRITE_TOOLS = {"stamp", "note", "seat", "join", "launch", "onboard", "clone", "mint", "repos", "crew", "seated", "consent", "await_seated", "focus", "nudge"}`
 
 - Public process (gate closed): these verbs are hidden from `tools/list`.
 - Gated/loopback process (`CONVOY_MCP_WRITE_TOOLS=1`): verbs are listed and
@@ -47,7 +47,7 @@ contract implemented to fail closed on public MCP deploys.
 ### Public list behavior (truthful Gate 0 signal)
 
 - Public `tools/list` **must hide**: `seat`, `join`, `launch`, `onboard`,
-  `clone`, `mint`, `repos`, `crew`, `seated`, `consent`, `await_seated`, `focus`.
+  `clone`, `mint`, `repos`, `crew`, `seated`, `consent`, `await_seated`, `focus`, `nudge`.
 - Public `tools/list` **must keep** read-only verbs listed (including `inbox`
   read mode), so the wire truthfully reflects what is usable without
   mutation. `repos` lists names and URLs from `gh repo list`; a missing gh is
@@ -68,7 +68,8 @@ When the write gate is closed:
 - `threads` with `prune=true` refuses before rewriting the machine index (`dropped: []`, counts JSON null). Dry `threads` list stays public.
 - `crew` refuses before validation, mint or join (`seats: []`, `launched: false`);
   `seated` refuses before stamping; `consent` before granting; `await_seated`
-  before reading (`chairs: []`).
+  before reading (`chairs: []`); `nudge` refuses before SendInput/send-keys/queue
+  (`delivery: null`, `delivered: false`).
 - Refusal text names `CONVOY_MCP_WRITE_TOOLS` and does not claim action.
 
 ### Inbox safety contract

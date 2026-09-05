@@ -107,6 +107,7 @@ Launch / panes:
 - `launch --seat <chair> [--dry-run] [--consent <id>]` — split one already-joined fresh chair into the active pane host.
 - `consent --grant <request-id>` — grant a prior consent request after the user explicitly approves it.
 - `close --seat <chair> [--consent <id>]` — request closure of one Convoy-managed pane.
+- `nudge --seat <chair> [--keys <exact>] [--target <tmux-pane>] [--dry-run] [--consent <id>]` — wake an idle chair on this machine. Identifies the pane first (live body from `panes` plus a unique WT title or tmux target). Live send needs a consent card that names that pane and the exact keys. `delivery: nudged`, never `delivered`. Refuses when the pane cannot be proven. Write-gated on MCP.
 - `bring-up` / `open [--thread <name>] [--dry-run]` — bulk show of seated neurons in one new terminal window.
 - `hide` / `minimize` / `background [--dry-run]` — bulk hide.
 - `resume --neuron <chair> --go` — spawn once in the chair's worktree; refuses when a live body holds the chair.
@@ -124,7 +125,7 @@ convoy mcp --root <thread-root> --port 8788
 Then attach `http://127.0.0.1:8788/mcp` in your MCP client. Write tools are
 off by default on the RPC layer: set `CONVOY_MCP_WRITE_TOOLS=1` on a
 gated/loopback deploy to expose `stamp`, `note`, `join`, `seat`, `launch`,
-`crew`, `seated`, `consent`, `await_seated`, `onboard`, `clone`, `mint`,
+`crew`, `seated`, `consent`, `await_seated`, `nudge`, `onboard`, `clone`, `mint`,
 `repos`, `resume` with `go=true`, and `inbox` with `drain=true`. An ungated
 public `tools/list` hides the write tools rather than
 listing and refusing them, so a listed verb is a promise. Reads (`choices`,
