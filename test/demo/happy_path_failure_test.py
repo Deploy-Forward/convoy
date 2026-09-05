@@ -216,9 +216,16 @@ class GitUrlWithoutGhAuth(unittest.TestCase):
             checkout_root="https://github.com/acme/api.git",
             clone_runner=fail,
         )
-        self.assertTrue(card.get("ok"), card)
+        # "soft continue-local" is an ASK, not a silent bind (repo_step_test:
+        # a failed clone binds nothing). The refusal card offers the exact
+        # onboard that binds THIS root with github=no, for the human to run.
+        self.assertFalse(card.get("ok"), card)
+        self.assertIn("Authentication failed", card["error"])
+        self.assertTrue(card["ask"]["continue_local"], card)
+        self.assertIn("--checkout-root " + str(self.root.resolve()), card["ask"]["next"])
+        self.assertIn("--github no", card["ask"]["next"])
         self.assertIn(card.get("github"), (False, "no", None), card)
-        self.assertEqual(Path(card["root"]).resolve(), self.root.resolve())
+        self.assertFalse((self.root / ".convoy" / "id").exists(), "a failed clone bound the local root silently")
 
 
 class IndexHygiene(unittest.TestCase):
