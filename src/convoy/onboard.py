@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from .bringup import ensure_first_run, ensure_interactive_path
-from .convoy import bind, ensure_id, read_github, read_id, read_thread, set_github
+from .convoy import bind, ensure_id, read_github, read_id, read_lead, read_thread, set_github, set_lead
 from .harness_contract import canonical_harness_id, harness_entries
 from .install import HARNESSES, _which
 from .repo import Runner, checkout_path_for, clone, is_repo_url
@@ -226,6 +226,15 @@ def onboard(
         set_github(target_root, True if repo is not None else bool(github))
     if declared_checkout and convoy_id is None:
         convoy_id = ensure_id(target_root)
+    # Frame 1 of the happy path: whoever launched first conducts. The first
+    # harness named on the FIRST onboard of this root becomes lead; a later
+    # onboard reports the standing lead and never steals it (lead passes are
+    # neuron-authored via `lead --to <chair> --as`).
+    standing = read_lead(target_root) if convoy_id is not None else None
+    if standing is None and convoy_id is not None:
+        lead_card = {"harness": set_lead(target_root, named[0])["lead"], "set": True}
+    else:
+        lead_card = {"harness": standing, "set": False}
 
     harness_cards = [_harness_card(hid, target_root, declared_checkout) for hid in named]
     missing = [h["to"] for h in harness_cards if not h.get("present")]
@@ -236,6 +245,7 @@ def onboard(
         "thread_bind": bind_status,
         "root": str(target_root),
         "github": read_github(target_root),
+        "lead": lead_card,
         "repo": repo,
         "named": named,
         "harnesses": harness_cards,
