@@ -92,33 +92,38 @@ One line per verb; flags shown are the ones you will reach for (see
 
 Read (no writes to thread state):
 
-- `threads` — every Convoy thread this machine knows.
+- `threads [--prune]` — every Convoy thread this machine knows. `--prune` drops rows whose root is under the OS temp dir or is absent and reports every dropped row (never silent).
 - `panes` — every body of every neuron on this thread, from the OS process table; never a token.
 - `whoami` — which chair is this process? Walks process ancestry to the harness.
 - `graph [--neuron <chair>] [--html [--out <file>]]` — read-only ontology of the thread.
 - `seats [--convoy-id <id>]` — seat rows.
-- `feed --since <ts>` — events since a timestamp.
+- `feed --since <10m|2h|1d|45s|ISO>` — events in a window; the card echoes `since_iso`.
+- `relaunch [--thread <name>] [--timeout <s>] [--dry-run]` — after the panes died (shutdown): brings every chair up again from `seats.jsonl` in its own worktree, queues each chair an inbox row saying when it left off (`last_seen`, `unread`, the exact `feed --since <ts>` to run), stamps `kind=relaunch`, and proves connected only from seated acks stamped after the relaunch. Dry shows the timeline and spawns nothing.
+- `rail [--since <window>]` — the strip under the panes: feed events, seats connected | pending | stale (from the seated acks), usage remaining per harness (`null` is unknown, never 0), last stamp, lead. Reads only the thread; from a chair's worktree it finds its thread through the machine index, so every neuron sees one rail.
 - `context [--instance-id <chair>]` — pointer pack for a neuron.
 - `glance [--thread <name>] [--tray]` — one-screen status.
 - `resume --neuron <chair>` — dry: prints native argv + cwd, spawns nothing.
 - `choices` — installed harnesses, known worktrees, chairs, terminal adapter; no resume tokens.
 - `probe --to <harness>`, `id`, `terminals`.
+- `widget [--topmost/--no-topmost] [--refresh 3]` — always-on-top tkinter strip: one dot per thread from `recent()`, expand chairs, click → `focus`. Stdlib only.
+- `focus --seat <chair>` — ask the pane host to highlight that chair. `{focused: false, reason}` until a host adapter is evidenced (tmux `select-pane -t` is tested; Windows Terminal `wt focus-pane` is not evidenced on this machine).
 
 Write (thread state):
 
 - `init` — create the thread layer at `--root`.
 - `bind --thread <name>` — bind this root to a named thread.
-- `onboard --to <harness> [--to ...] [--thread <name>] [--checkout-root <path|git-url>] [--github yes|no]` — name installed harnesses and bind; a URL is cloned once under `$CONVOY_HOME/checkouts/<owner>/<repo>` (`.convoy/` and `thread.md` go into that clone's `.git/info/exclude`).
+- `start [<repo>] [--to <harness> ...] [--thread <name>] [--cancel]` — thin alias: git URL → clone once then `onboard --github yes`; local path → `onboard --github no`; no repo → picker from `recent()` (title + root + last activity, never auto-picks newest); empty index → ask to start a new thread; `--cancel` leaves unbound. Already-live harness on the root (whoami/roster) → `attach`, never a duplicate `bring_up`.
+- `onboard --to <harness> [--to ...] [--thread <name>] [--checkout-root <path|git-url>] [--github yes|no]` — name installed harnesses and bind; a URL is cloned once under `$CONVOY_HOME/checkouts/<owner>/<repo>` (`.convoy/` and `thread.md` go into that clone's `.git/info/exclude`). Whoever launched first conducts: the first harness named on the first onboard becomes `lead`; a later onboard reports it and never steals it.
 - `seat --to <harness> --session-id <chair> [--worktree <path>] [--model M] [--resume <vendor-id>] [--title T] [--effort E]` — register a seated neuron.
 - `join --to <harness> [--worktree <path>] [--title T] [--as <chair>] [--launch] [--consent <id>]` — register one fresh chair.
 - `crew --seat <harness>[,model=M][,effort=E][,where=local|cloud][,title=T] [--seat ...] [--checkout <path>] [--launch]` — N neurons at once: validates every seat first, mints one worktree per local seat, joins every chair with a boot prompt, and (with `--launch`) brings them up in ONE window. Launched is not connected: the card's `seated` snapshot says `pending`.
 - `await-seated --seat <chair> [--seat ...] [--timeout <s>]` — observe the acks: per chair `connected` (its own `seated` row cites the minted token) | `pending` | `stale`, with the seconds waited.
-- `swap --seat <chair> --to <harness> --handoff <.ola/*handoff*> --as <chair>` — replace the occupant, keep the chair.
+- `swap --seat <chair> --to <harness> --handoff <.convoy/handoff/<chair>-<ts>.md> --as <chair>` — replace the occupant, keep the chair.
 - `seated --seat <chair> --token <token>` — proof-of-life echo from the new occupant.
 - `lead --to <chair> --as <you>` — pass lead to a chair.
 - `hook note "<text>" [--as-me] --to <chair>` — leave a note for a chair (or `grok-bot`).
 - `stamp "<summary>" [--agent A] [--model M] [--effort E] [--transcript <pointer>]` — conductor stamp.
-- `send --to <harness> "<body>" [--live] [--dry-run] [--instance-id <chair>]` — synapse; default runner records a feed row (`delivery: recorded`); `--live` runs a fresh headless vendor session (`executed`); a named live seat queues (`delivery: queued`, `delivered: false`).
+- `send --to <chair|harness> "<body>" [--live] [--dry-run] [--instance-id <chair>]` — synapse. `--to <chair>` (a session_id, e.g. `codex-1-demo`) queues into that chair's inbox in its own worktree (`delivery: queued`, `delivered: false`); `--to <harness>` with a chair already on that harness refuses (naming a vendor is not naming a neuron); default runner records a feed row (`delivery: recorded`); `--live` runs a fresh headless vendor session (`executed`).
 - `inbox [--seat <chair>] [--drain | --hook-pretooluse]` — list or drain the live-seat inbox. The hook command is always `convoy inbox --hook-pretooluse` (never a baked interpreter path).
 - `end [--summary <text>] [--push | --hook]` — explicit task completion, or the Codex/Claude Stop heartbeat. `--push` authorizes exactly one plain `git push` and refuses dirty, detached, or no-upstream state; `--hook` never pushes.
 - `install --to <harness> --opt-in [--live]` — cataloged installer; dry-run by default.
@@ -129,6 +134,7 @@ Launch / panes:
 - `launch --seat <chair> [--dry-run] [--consent <id>]` — split one already-joined fresh chair into the active pane host.
 - `consent --grant <request-id>` — grant a prior consent request after the user explicitly approves it.
 - `close --seat <chair> [--consent <id>]` — request closure of one Convoy-managed pane.
+- `nudge --seat <chair> [--keys <exact>] [--target <tmux-pane>] [--dry-run] [--consent <id>]` — wake an idle chair on this machine. Identifies the pane first (live body from `panes` plus a unique WT title or tmux target). Live send needs a consent card that names that pane and the exact keys. `delivery: nudged`, never `delivered`. Refuses when the pane cannot be proven. Write-gated on MCP.
 - `bring-up` / `open [--thread <name>] [--dry-run]` — bulk show of seated neurons in one new terminal window.
 - `hide` / `minimize` / `background [--dry-run]` — bulk hide.
 - `resume --neuron <chair> --go` — spawn once in the chair's worktree; refuses when a live body holds the chair.
@@ -146,7 +152,7 @@ convoy mcp --root <thread-root> --port 8788
 Then attach `http://127.0.0.1:8788/mcp` in your MCP client. Write tools are
 off by default on the RPC layer: set `CONVOY_MCP_WRITE_TOOLS=1` on a
 gated/loopback deploy to expose `send`, `stamp`, `note`, `join`, `seat`, `launch`,
-`crew`, `seated`, `consent`, `await_seated`, `onboard`, `clone`, `mint`,
+`crew`, `seated`, `consent`, `await_seated`, `focus`, `nudge`, `onboard`, `clone`, `mint`,
 `repos`, `resume` with `go=true`, and `inbox` with `drain=true`. An ungated
 public `tools/list` hides the write tools rather than
 listing and refusing them, so a listed verb is a promise. Reads (`choices`,
@@ -226,7 +232,7 @@ Notes tied to code/tests:
 
 - `seat.session_id` and `seat.resume` are distinct: session key vs vendor resume token.
 - First-run seats can omit vendor resume; then no resume token is passed.
-- Live `send` is headless and never steals an active interactive neuron; refusal cards ask users to `bring_up` / open a pane or write `.ola/*handoff*`.
+- Live `send` is headless and never steals an active interactive neuron; refusal cards ask users to `bring_up` / open a pane or write `.convoy/handoff/<chair>-<ts>.md`.
 - `context.pack` overlays home-layer `convoy_id` + `thread_key` onto seat-worktree pointers when present.
 - `bring_up` / `open` are the bulk show commands; targeted `join --launch` is
   the explicit one-chair exception described below.

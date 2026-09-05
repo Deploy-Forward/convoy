@@ -10,6 +10,7 @@ from .bringup import bring_up, hide_windows, live_applier, live_runner, terminal
 from .consent import grant_consent
 from .install import install as install_harness
 from .onboard import onboard as run_onboard
+from .start import start as run_start
 from .context import pack
 from .convoy import attach, bind, ensure_id, list_seats, read_id, read_lead, seat, set_lead, CONDUCTOR
 from .crew import await_seated, crew
@@ -17,11 +18,17 @@ from .glance import build_glance, run_tray
 from .graph import build_graph, neighborhood
 from .graph_html import render_html, resume_neuron
 from .identity import ensure_inbox_hooks, install_neuron_identity
-from .index import find_root, index_path, list_threads
+from .index import find_root, index_path, list_threads, prune_threads
 from .activity import neuron_activity
 from .panes import bodies, identify
-from .layer import SCHEMA_VERSION, conductor_stamp, feed_since, hook
+from .provenance import build_provenance, rebase_check, record_commit
+from .layer import SCHEMA_VERSION, conductor_stamp, feed_since, hook, parse_since
+from .rail import build_rail, root_for
+from .relaunch import relaunch
 from .lifecycle import join, pass_lead, seated_ack, swap
+from .focus import focus_seat
+from .widget import run_widget
+from .nudge import nudge_seat
 from .pane_host import close_managed_pane
 from .synapse import fake_runner, native_runner, send_many, send_one
 from .targeted_launch import active_pane_runner, launch_choices, launch_seat
@@ -59,7 +66,31 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("whoami", help="which chair is this body? walks your own process ancestry to the harness and matches it to a chair (token, then cwd); null with an ask when none")
 
     f = sub.add_parser("feed")
-    f.add_argument("--since", required=True)
+    f.add_argument("--since", required=True, help="10m | 2h | 1d | 45s, or an ISO UTC timestamp")
+
+    rlx = sub.add_parser("relaunch", help="after the panes died: bring every chair up again from seats.jsonl in its worktree, queue each a 'you left off at <ts>' inbox row, and prove connected only from acks stamped after the relaunch")
+    rlx.add_argument("--thread", help="must match the bound thread")
+    rlx.add_argument("--timeout", type=float, default=0.0, help="seconds to wait for fresh seated acks; 0 is one snapshot")
+    rlx.add_argument("--dry-run", action="store_true", help="show the windows and the per-chair timeline; spawn and write nothing")
+    rlx.add_argument("--seat", action="append", help="relaunch only this chair (repeat); default every chair. Use it when some panes are still alive")
+
+    rl = sub.add_parser("rail", help="the strip under the panes: feed events since, seats connected, usage per harness (null is unknown, never 0), last stamp; reads only the thread, so any neuron sees the same rail")
+    rl.add_argument("--since", default="10m", help="feed window (default 10m)")
+
+    cm = sub.add_parser("committed", help="append one kind=commit provenance row for a Git revision")
+    author = cm.add_mutually_exclusive_group(required=True)
+    author.add_argument("--as-me", action="store_true", help="author = the chair whoami detects for this body")
+    author.add_argument("--as", dest="author", help="authoring chair session_id")
+    cm.add_argument("--rev", default="HEAD", help="commit-ish to record (default HEAD)")
+    cm.add_argument("--worktree", help="Git worktree to inspect (default cwd)")
+
+    pv = sub.add_parser("provenance", help="read per-chair commit provenance from seats plus feed rows")
+    pv.add_argument("--since", help="optional feed window: 10m | 2h | 1d | 45s, or an ISO UTC timestamp")
+
+    rb = sub.add_parser("rebase", help="inspect rebase overlap without changing Git state")
+    rb.add_argument("--check", action="store_true", help="required read-only mode")
+    rb.add_argument("--base", help="base branch or commit (default feat/happy-path-proof)")
+    rb.add_argument("--worktree", help="Git worktree to inspect (default cwd)")
 
     st = sub.add_parser("stamp")
     st.add_argument("summary")
@@ -84,7 +115,9 @@ def main(argv: list[str] | None = None) -> int:
     ib = sub.add_parser("inbox", help="queue/drain live-seat messages without stealing a TUI")
     ib.add_argument("--seat")
     ib.add_argument("--drain", action="store_true")
-    ib.add_argument("--hook-pretooluse", action="store_true", help="Grok/Claude hook JSON on stdout")
+    ib.add_argument("--hook-pretooluse", action="store_true", help="Grok/Claude hook JSON on stdout (reads hook_event_name from stdin; on Stop, blocks the stop with the waiting rows as the reason)")
+    ib.add_argument("--wait", action="store_true", help="block until a row is pending or --timeout; run it as a BACKGROUND command at the end of your turn so the arriving row wakes you (grok background-task completion wakes the agent)")
+    ib.add_argument("--timeout", type=float, default=3600.0, help="seconds for --wait (default 3600)")
 
     en = sub.add_parser("end", help="record task completion; --hook is the Codex/Claude turn-end heartbeat")
     mode = en.add_mutually_exclusive_group()
@@ -146,13 +179,29 @@ def main(argv: list[str] | None = None) -> int:
     cl.add_argument("--seat", required=True)
     cl.add_argument("--consent", help="one-time close-chair consent")
 
+    ng = sub.add_parser("nudge", help="wake an idle chair on this machine: proven pane + consent + exact keys; delivery=nudged never delivered")
+    ng.add_argument("--seat", required=True)
+    ng.add_argument("--keys", help="exact keystroke the consent card names")
+    ng.add_argument("--target", help="tmux pane id for send-keys -t")
+    ng.add_argument("--dry-run", action="store_true", help="identify only; never send, never consume consent")
+    ng.add_argument("--consent", help="one-time nudge-pane consent returned by `convoy consent --grant`")
+
     sw = sub.add_parser("swap")
     sw.add_argument("--seat", required=True, help="chair session_id (identity survives the swap)")
     sw.add_argument("--to", required=True, help="replacement harness")
     sw.add_argument("--model")
     sw.add_argument("--effort", help="declared effort for the incoming harness; unset, the old one survives only if that harness takes it")
-    sw.add_argument("--handoff", required=True, help="fresh .ola/*handoff* file written by the outgoing neuron")
+    sw.add_argument("--handoff", required=True, help="fresh .convoy/handoff/<chair>-<ts>.md file written by the outgoing neuron")
     sw.add_argument("--as", dest="author", required=True, help="outgoing neuron's session_id (neuron-authored; conductor asks via stamp)")
+
+    fo = sub.add_parser("focus", help="ask the pane host to highlight one chair; focused:false with reason until a host adapter is evidenced")
+    fo.add_argument("--seat", required=True, help="chair session_id")
+    fo.add_argument("--target", help="host pane id (tmux select-pane -t); omitted -> focused:false")
+
+    wg = sub.add_parser("widget", help="always-on-top tkinter strip: one dot per thread from recent(), expand chairs, click -> focus")
+    wg.add_argument("--topmost", dest="topmost", action="store_true", default=True)
+    wg.add_argument("--no-topmost", dest="topmost", action="store_false")
+    wg.add_argument("--refresh", type=float, default=3.0, help="seconds between model rebuilds (default 3)")
 
     sd = sub.add_parser("seated")
     sd.add_argument("--seat", required=True)
@@ -172,7 +221,9 @@ def main(argv: list[str] | None = None) -> int:
 
     sub.add_parser("panes", help="every body of every neuron on this thread from the OS process table: pid, via token|cwd, duplicates, unassigned harness processes; never a token")
 
-    sub.add_parser("threads", help="every Convoy thread this machine knows (the global index; present=false when a root is gone)")
+    th = sub.add_parser("threads", help="every Convoy thread this machine knows (the global index; present=false when a root is gone)")
+    th.add_argument("--prune", action="store_true",
+                    help="drop rows whose root is under the OS temp dir or is absent; reports every dropped row")
 
     rs = sub.add_parser("resume", help="resume one neuron at its most recent place: native argv + cwd (dry) or --go to spawn once")
     rs.add_argument("--neuron", required=True, help="chair session_id")
@@ -222,6 +273,12 @@ def main(argv: list[str] | None = None) -> int:
     gl.add_argument("--tray", action="store_true", help="render glance in tray/app-indicator")
     gl.add_argument("--refresh-seconds", type=int, default=60)
 
+    go = sub.add_parser("start", help="thin alias: git URL -> clone once + onboard --github yes; local path -> onboard --github no; no repo -> picker from recent(); already-live -> attach, never bring_up")
+    go.add_argument("repo", nargs="?", help="git URL or local checkout path")
+    go.add_argument("--to", action="append", help="harness you already have (repeat); default: those on PATH")
+    go.add_argument("--thread")
+    go.add_argument("--cancel", action="store_true", help="do not bind; leave unbound")
+
     ob = sub.add_parser("onboard")
     ob.add_argument("--to", action="append", required=True, help="named harness id(s) you already have")
     ob.add_argument("--thread")
@@ -242,7 +299,7 @@ def main(argv: list[str] | None = None) -> int:
     root = Path(args.root).resolve()
     # Chats launch from project subfolders: for read verbs, walk up to the
     # nearest .convoy/id when the given root has none (never for writes).
-    if args.cmd in ("graph", "threads", "panes", "resume", "seats", "feed", "context", "glance", "inbox") and not (root / ".convoy" / "id").is_file():
+    if args.cmd in ("graph", "threads", "panes", "resume", "seats", "feed", "context", "glance", "inbox", "provenance", "rebase", "focus") and not (root / ".convoy" / "id").is_file():
         found = find_root(root)
         if found is not None:
             root = found
@@ -295,9 +352,61 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(row))
         return 0
     if args.cmd == "feed":
-        rows = feed_since(root, args.since)
-        print(json.dumps({"schema_version": SCHEMA_VERSION, "since": args.since, "events": rows}))
+        try:
+            since_iso = parse_since(args.since)
+        except ValueError as e:
+            print(json.dumps({"ok": False, "error": str(e)}))
+            return 1
+        rows = feed_since(root, since_iso)
+        print(json.dumps({"schema_version": SCHEMA_VERSION, "since": args.since, "since_iso": since_iso, "events": rows}))
         return 0
+    if args.cmd == "relaunch":
+        card = relaunch(root, thread=args.thread, runner=None if args.dry_run else live_runner, timeout=args.timeout, seats=args.seat)
+        print(json.dumps(card))
+        return 0 if card.get("ok") else 1
+    if args.cmd == "rail":
+        if not (root / ".convoy" / "id").is_file():
+            # A neuron runs this from its worktree: the pointer bring-up wrote
+            # there, or the thread index seating this worktree, names the
+            # thread root, so the rail it reads is the lead's rail.
+            root = root_for(root) or root
+        try:
+            card = build_rail(root, since=args.since)
+        except ValueError as e:
+            print(json.dumps({"ok": False, "error": str(e)}))
+            return 1
+        print(json.dumps(card))
+        return 0 if card.get("ok") else 1
+    if args.cmd == "committed":
+        chair = args.author
+        if args.as_me:
+            me = identify(root)
+            chair = me.get("chair")
+            if not chair:
+                print(json.dumps({"ok": False, "error": "refuse committed --as-me: no chair on this thread matches this body", "whoami": me}))
+                return 1
+        try:
+            card = record_commit(root, str(chair or ""), rev=args.rev, worktree=args.worktree)
+        except ValueError as e:
+            print(json.dumps({"ok": False, "error": str(e)}))
+            return 1
+        print(json.dumps(card))
+        return 0
+    if args.cmd == "provenance":
+        try:
+            card = build_provenance(root, since=args.since)
+        except ValueError as e:
+            print(json.dumps({"ok": False, "error": str(e)}))
+            return 1
+        print(json.dumps(card))
+        return 0
+    if args.cmd == "rebase":
+        if not args.check:
+            print(json.dumps({"ok": False, "error": "this verb only reports; run git rebase yourself"}))
+            return 1
+        card = rebase_check(args.worktree or Path.cwd(), base=args.base or "feat/happy-path-proof", root=root)
+        print(json.dumps(card))
+        return 0 if card.get("ok") else 1
     if args.cmd == "stamp":
         try:
             row = conductor_stamp(
@@ -338,6 +447,11 @@ def main(argv: list[str] | None = None) -> int:
         if not sid:
             print(json.dumps({"ok": False, "error": "inbox requires --seat"}))
             return 1
+        if getattr(args, "wait", False):
+            from .inbox import wait_for_pending
+            card = wait_for_pending(root, sid, timeout=args.timeout)
+            print(json.dumps(card))
+            return 0 if card.get("ok") else 1
         if args.drain:
             taken = drain(root, sid)
             print(json.dumps({"ok": True, "session_id": sid, "drained": taken, "n": len(taken)}))
@@ -401,6 +515,14 @@ def main(argv: list[str] | None = None) -> int:
             return 1
         print(json.dumps(card))
         return 0 if card.get("ok") else 1
+    if args.cmd == "focus":
+        card = focus_seat(root, args.seat, target=getattr(args, "target", None))
+        print(json.dumps(card))
+        return 0 if card.get("ok") else 1
+    if args.cmd == "widget":
+        card = run_widget(topmost=bool(args.topmost), refresh=float(args.refresh or 3.0))
+        print(json.dumps(card))
+        return 0 if card.get("ok") else 1
     if args.cmd == "crew":
         try:
             seats = [_seat_spec(s) for s in args.seat]
@@ -443,6 +565,17 @@ def main(argv: list[str] | None = None) -> int:
         card = close_managed_pane(root, args.seat, consent=args.consent)
         print(json.dumps(card))
         return 0 if card.get("ok") else 1
+    if args.cmd == "nudge":
+        card = nudge_seat(
+            root,
+            args.seat,
+            consent=args.consent,
+            keys=args.keys,
+            dry_run=args.dry_run,
+            target=args.target,
+        )
+        print(json.dumps(card))
+        return 0 if card.get("ok") else 1
     if args.cmd == "seats":
         print(json.dumps(list_seats(root, convoy_id=args.convoy_id)))
         return 0
@@ -466,6 +599,10 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(card))
         return 0
     if args.cmd == "threads":
+        if getattr(args, "prune", False):
+            card = prune_threads()
+            print(json.dumps(card))
+            return 0 if card.get("ok") else 1
         print(json.dumps({"ok": True, "index": str(index_path()), "threads": list_threads()}))
         return 0
     if args.cmd == "panes":
@@ -565,6 +702,16 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(card))
         return 0 if card.get("ok") else 1
 
+    if args.cmd == "start":
+        card = run_start(
+            root,
+            args.repo,
+            harnesses=args.to,
+            thread=args.thread,
+            cancel=bool(args.cancel),
+        )
+        print(json.dumps(card))
+        return 0 if card.get("ok") else 1
     if args.cmd == "onboard":
         card = run_onboard(root, args.to, thread=args.thread, checkout_root=args.checkout_root,
                            github=None if args.github is None else args.github == "yes")

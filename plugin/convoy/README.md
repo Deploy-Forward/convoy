@@ -117,7 +117,7 @@ them for two different reasons, and the wizard's Gate 0 tells them apart:
   spawn the window; `repos` runs `gh repo list` as the MCP host's own login,
   the conductor's account; `consent` mints a one-time grant; `await_seated`
   holds the request thread up to its timeout). The same gate covers `seat`,
-  `join`, `launch`, `mint`, `seated`, `stamp` and `note`, which the wizard no
+  `join`, `launch`, `mint`, `seated`, `stamp`, `note` and `nudge`, which the wizard no
   longer calls per chair now that `crew` does that work in one call,
   so an ungated public process hides them from `tools/list` on purpose and
   Gate 0 is RED there by design. They appear only on a deploy

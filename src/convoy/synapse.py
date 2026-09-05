@@ -1,7 +1,6 @@
 """Phase 1 synapse: pointers in stdin, real session_id or null, dry-run cannot mint an id."""
 from __future__ import annotations
 
-import os
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import shutil
@@ -83,40 +82,6 @@ def fake_runner(to: str, body: str, instance_id: str | None = None, label: str |
         "body": "ACK " + to + ": " + body,
         "label": label,
     }
-
-def ola_runner(to: str, body: str, instance_id: str | None = None, label: str | None = None, cwd: str | None = None, worktree: str | None = None, **_k: Any) -> dict[str, Any]:
-    target = instance_id or to
-    brain = os.environ.get("OLA_BRAIN") or shutil.which("ola-brain") or "ola-brain"
-    cmd = [brain, "side-chat", "send"]
-    if label and not instance_id:
-        cmd.extend(["--label", label])
-    cmd.extend([target, body])
-    r = subprocess.run(
-        cmd,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        timeout=180,
-        cwd=cwd,
-    )
-    text = (r.stdout or "") + (r.stderr or "")
-    session_id = parse_session_id(r.stdout or "") or parse_session_id(text)
-    if not session_id and cwd:
-        session_id = parse_agents_jsonl(Path(cwd), to, label=label)
-    if instance_id:
-        session_id = instance_id
-    return {
-        "ok": r.returncode == 0,
-        "to": to,
-        "session_id": session_id,
-        "model": None,
-        "usage_remaining": None,
-        "body": text.strip()[-2000:] if text.strip() else None,
-        "exit_code": r.returncode,
-        "label": label,
-    }
-
 
 def native_runner(
     to: str,
@@ -201,8 +166,6 @@ def runner_kind(run: Runner) -> str | None:
         return "native"
     if run is fake_runner:
         return "fake"
-    if run is ola_runner:
-        return "ola"
     return getattr(run, "__name__", None)
 
 
@@ -305,6 +268,24 @@ def deliver_to_live_seat(
     }
 
 
+def _resolve_chair_address(root: Path, to: str, instance_id: str | None, worktree: str | None) -> tuple[str, str | None, str | None]:
+    """(harness, chair session_id, worktree) when `to` is a chair's
+    session_id on this thread; otherwise everything unchanged."""
+    want = str(to or "").strip()
+    given = instance_id.strip() if isinstance(instance_id, str) and instance_id.strip() else None
+    if not want or given:
+        return to, instance_id, worktree
+    cid = read_id(root)
+    if not cid:
+        return to, instance_id, worktree
+    hits = [s for s in list_seats(root, convoy_id=cid) if s.get("session_id") == want and s.get("to")]
+    if len(hits) != 1:
+        return to, instance_id, worktree
+    seat = hits[0]
+    wt = worktree if worktree else (str(seat["worktree"]) if seat.get("worktree") else None)
+    return str(seat["to"]), str(seat["session_id"]), wt
+
+
 def _send_one(
     root: Path,
     to: str,
@@ -318,6 +299,12 @@ def _send_one(
     resume: str | None = None,
     allow_interactive_resume: bool = True,
 ) -> dict[str, Any]:
+    # Address a CHAIR by its name (`send --to codex-1`): a `to` that is a
+    # chair session_id resolves to that chair's harness, id and worktree. A
+    # harness name never resolves to a chair, even a lone one: that stays
+    # the "seat exists; attach and resume session_id" refusal below, because
+    # naming a vendor is not naming a neuron.
+    to, instance_id, worktree = _resolve_chair_address(root, to, instance_id, worktree)
     cwd_root = Path(worktree).resolve() if worktree else Path(root).resolve()
     cid = read_id(root)
     target_name = str(to or "").strip()
@@ -365,7 +352,7 @@ def _send_one(
         return card
     if probe_fn is not None:
         usage = probe_fn(to)
-    elif runner in (ola_runner, native_runner):
+    elif runner is native_runner:
         usage = probe(to)
     else:
         usage = {"usage_remaining": None, "limited": False, "raw": None}
@@ -374,8 +361,8 @@ def _send_one(
         limited_remaining = None if _normalize_target_name(target_name) == "grok" else normalize_usage_remaining(usage.get("usage_remaining"))
         ask = {
             "action": "bring_up",
-            "handoff": ".ola/*handoff*",
-            "text": to + " limited: ASK the user to bring_up / open a pane, or write a .ola/*handoff* file; do not steal a TUI, do not mint a sibling session, do not guess remaining quota",
+            "handoff": ".convoy/handoff/<chair>-<ts>.md",
+            "text": to + " limited: ASK the user to bring_up / open a pane, or write a .convoy/handoff/<chair>-<ts>.md file; do not steal a TUI, do not mint a sibling session, do not guess remaining quota",
         }
         # v2: the feed row carries the whole ask card so siblings pulling
         # feed --since see the remedy, not just the caller.
