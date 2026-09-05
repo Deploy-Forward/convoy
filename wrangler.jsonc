@@ -11,9 +11,10 @@
     }
   },
   "vars": {
-    // A Worker Route fetch to the same hostname continues to the proxied DNS
-    // origin: the convoy-bot Tunnel, whose ingress is 127.0.0.1:8788.
-    "MCP_ORIGIN": "https://convoy.bot"
+    // convoy.bot GET requests are served by Assets at the apex route.
+    // Non-GET /mcp* requests must proxy to www, which reaches the same
+    // tunnel origin without re-entering this Worker route.
+    "MCP_ORIGIN": "https://www.convoy.bot"
   },
   // This is a Route in front of an application origin, not a Custom Domain
   // where the Worker itself would replace that origin.
