@@ -43,7 +43,7 @@ convoy --root <root> inbox --drain --seat <your chair>
 
 | Harness | Hook that drains the inbox for you | Fires | Installed by |
 | --- | --- | --- | --- |
-| grok | `.grok/hooks/convoy-inbox.json` PreToolUse → `convoy inbox --hook-pretooluse` | at tool time, mid-turn only | Convoy first run (`ensure_first_run`) |
+| grok | `.grok/hooks/convoy-inbox.json` PreToolUse + Stop → `convoy inbox --hook-pretooluse` | at tool time, and at turn end: a Stop with rows waiting is blocked and the rows become the reason you keep working (grok-build 10-hooks.md). Idle wake: at the end of every turn start `convoy --root <root> inbox --wait --seat <you>` with `background: true`; a completing background command wakes you (grok-build 20-background-tasks.md), and the row that ended the wait is yours to drain and ack | Convoy first run (`ensure_first_run`) |
 | claude | `.claude/settings.json` PreToolUse + UserPromptSubmit → same command | tool time and turn start | Convoy first run |
 | codex | none proven; `codex queue --thread <id> --message` exists and is unproven as delivery | never on its own | you: run the loop by hand |
 | cursor-agent, agy, hermes, pi | none | never on its own | you: run the loop by hand |

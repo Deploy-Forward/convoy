@@ -274,6 +274,45 @@ class HappyPath(unittest.TestCase):
         rail = self.run_cli("rail")
         self.assertEqual(rail["last_stamp"]["summary"], "after")
 
+    def test_idle_wake_is_vendor_native_stop_gate_and_background_wait(self):
+        from convoy.identity import grok_inbox_hook_document
+        from convoy.inbox import hook_pretooluse, wait_for_pending
+        doc = grok_inbox_hook_document("convoy inbox --hook-pretooluse")
+        self.assertIn("Stop", doc["hooks"], "grok Stop gate keeps a neuron working while rows wait")
+        self.assertEqual(doc["hooks"]["Stop"], doc["hooks"]["PreToolUse"])
+
+        self.run_cli("onboard", "--to", "claude", "--thread", "demo", "--checkout-root", str(self.root), "--github", "no")
+        cw = self.run_cli("crew", "--seat", "grok", "--thread", "demo", "--launch")
+        sid = cw["seats"][0]["session_id"]; wt = cw["seats"][0]["worktree"]
+
+        # the pane's hook resolves its thread root the way a live pane does
+        # (pointer or CONVOY_ROOT); the fake spawn wrote no pointer here.
+        env = mock.patch.dict(os.environ, {"CONVOY_ROOT": str(self.root)}); env.start(); self.addCleanup(env.stop)
+        # nothing waiting: Stop returns the safe no-op, never a block
+        with mock.patch("convoy.inbox._hook_event_from_stdin", return_value="Stop"):
+            self.assertEqual(hook_pretooluse(wt), {})
+
+        # background wait: the arriving row ends the wait; the row is NOT drained by the waiter
+        ticks = iter([0.0, 0.0, 1.0, 1.0, 2.0, 2.0, 3.0, 3.0])
+        def fake_sleep(_s):
+            if not (self.root / ".convoy" / "inbox" / (sid + ".jsonl")).exists():
+                self.run_cli("send", "--to", sid, "draft tests")
+        card = wait_for_pending(self.root, sid, timeout=10, interval=1, clock=lambda: next(ticks), sleep=fake_sleep)
+        self.assertTrue(card["ok"]); self.assertEqual(card["n"], 1); self.assertFalse(card["timed_out"])
+        self.assertEqual(self.run_cli("inbox", "--seat", sid)["n"], 1, "wait never drains")
+
+        # Stop with a row waiting: block the stop, the row is the reason
+        with mock.patch("convoy.inbox._hook_event_from_stdin", return_value="Stop"):
+            out = hook_pretooluse(wt)
+        self.assertEqual(out["decision"], "block")
+        self.assertIn("draft tests", out["reason"])
+        self.assertEqual(self.run_cli("inbox", "--seat", sid)["n"], 0, "the Stop hook drained it")
+
+        # timeout is honest
+        t2 = iter([0.0, 0.0, 5.0, 5.0])
+        card = wait_for_pending(self.root, sid, timeout=4, interval=1, clock=lambda: next(t2), sleep=lambda s: None)
+        self.assertTrue(card["timed_out"]); self.assertEqual(card["n"], 0)
+
     def test_rail_on_an_unbound_root_says_so(self):
         card = self.run_cli("rail", expect=1)
         self.assertFalse(card["ok"])

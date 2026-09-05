@@ -241,9 +241,13 @@ def _command_hook_entry(command: str) -> dict[str, Any]:
 
 def grok_inbox_hook_document(command: str | None = None) -> dict[str, Any]:
     command = command or inbox_hook_command()
+    entry = _command_hook_entry(command)
+    # Stop: keep the turn alive while rows wait (grok-build 10-hooks.md, the
+    # Stop gate). Same command; the handler reads hook_event_name from stdin.
     return {
         "hooks": {
-            "PreToolUse": [_command_hook_entry(command)],
+            "PreToolUse": [entry],
+            "Stop": [entry],
         }
     }
 

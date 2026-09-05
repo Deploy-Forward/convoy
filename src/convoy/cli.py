@@ -93,7 +93,9 @@ def main(argv: list[str] | None = None) -> int:
     ib = sub.add_parser("inbox", help="queue/drain live-seat messages without stealing a TUI")
     ib.add_argument("--seat")
     ib.add_argument("--drain", action="store_true")
-    ib.add_argument("--hook-pretooluse", action="store_true", help="Grok/Claude hook JSON on stdout")
+    ib.add_argument("--hook-pretooluse", action="store_true", help="Grok/Claude hook JSON on stdout (reads hook_event_name from stdin; on Stop, blocks the stop with the waiting rows as the reason)")
+    ib.add_argument("--wait", action="store_true", help="block until a row is pending or --timeout; run it as a BACKGROUND command at the end of your turn so the arriving row wakes you (grok background-task completion wakes the agent)")
+    ib.add_argument("--timeout", type=float, default=3600.0, help="seconds for --wait (default 3600)")
 
     prb = sub.add_parser("probe")
     prb.add_argument("--to", required=True)
@@ -334,6 +336,11 @@ def main(argv: list[str] | None = None) -> int:
         if not sid:
             print(json.dumps({"ok": False, "error": "inbox requires --seat"}))
             return 1
+        if getattr(args, "wait", False):
+            from .inbox import wait_for_pending
+            card = wait_for_pending(root, sid, timeout=args.timeout)
+            print(json.dumps(card))
+            return 0 if card.get("ok") else 1
         if args.drain:
             taken = drain(root, sid)
             print(json.dumps({"ok": True, "session_id": sid, "drained": taken, "n": len(taken)}))
