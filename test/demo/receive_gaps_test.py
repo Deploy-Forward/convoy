@@ -11,6 +11,7 @@
 """
 import io
 import json
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -263,6 +264,56 @@ class ATimedOutProbeIsUnknownNotExhausted(unittest.TestCase):
         self.assertFalse(card.get("refused"), card.get("error"))
         self.assertEqual(card["delivery"], "queued")
         self.assertEqual(len(pending(root, "c-t1")), 1)
+
+
+class ProbeKillTimeoutIsStillUnknown(unittest.TestCase):
+    """Live 2026-09-05: `convoy rail` crashed. claude -p /usage timed out at
+    15s, then taskkill /T of that pid timed out at 5s, and the nested
+    TimeoutExpired escaped usage._run. A kill that fails is still a probe
+    timeout: 124, never a traceback, never an invented 0."""
+
+    def test_taskkill_timeout_returns_124_not_a_raise(self):
+        from convoy import usage
+
+        class FakeP:
+            pid = 99080
+            returncode = None
+            killed = False
+
+            def communicate(self, input="", timeout=None):
+                raise subprocess.TimeoutExpired(cmd="claude", timeout=timeout or 0)
+
+            def kill(self):
+                self.killed = True
+
+        fake = FakeP()
+
+        def boom_taskkill(*_a, **_k):
+            raise subprocess.TimeoutExpired(cmd="taskkill", timeout=5)
+
+        with mock.patch.object(usage.os, "name", "nt"), \
+             mock.patch.object(usage.subprocess, "Popen", return_value=fake), \
+             mock.patch.object(usage.subprocess, "run", side_effect=boom_taskkill):
+            code, raw = usage._run(["claude", "-p", "/usage"], timeout=15)
+        self.assertEqual(code, 124)
+        self.assertEqual(raw, "probe timeout")
+        self.assertTrue(fake.killed)
+
+    def test_rail_survives_a_raising_probe(self):
+        from convoy.rail import build_rail
+        root = Path(tempfile.mkdtemp())
+        ensure_id(root)
+        bind(root, "t1")
+        seat(root, "claude", "c-t1", worktree=str(root))
+
+        def boom(_h):
+            raise subprocess.TimeoutExpired(cmd="taskkill", timeout=5)
+
+        card = build_rail(root, probe_fn=boom)
+        self.assertTrue(card["ok"], card)
+        self.assertIsNone(card["usage"]["claude"]["usage_remaining"])
+        self.assertFalse(card["usage"]["claude"]["limited"])
+        self.assertNotEqual(card["usage"]["claude"]["usage_remaining"], 0)
 
 
 class CodexQueueBodyCarriesTheToken(unittest.TestCase):
