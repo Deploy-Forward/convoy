@@ -213,6 +213,10 @@ def main(argv: list[str] | None = None) -> int:
     wg.add_argument("--no-topmost", dest="topmost", action="store_false")
     wg.add_argument("--refresh", type=float, default=3.0, help="seconds between model rebuilds (default 3)")
     wg.add_argument("--service", action="store_true", help="start one detached widget per machine (pidfile $CONVOY_HOME/widget.pid); alive -> already:true, no second window")
+    wg.add_argument("--engine", default="auto", choices=["auto", "webview", "edge", "browser", "tk"], help="auto: pywebview (WebView2 + acrylic) if importable, else Edge --app, else the browser; tk is the legacy strip")
+    wg.add_argument("--width", type=int, default=560)
+    wg.add_argument("--height", type=int, default=760)
+    wg.add_argument("--no-glass", dest="glass", action="store_false", default=True, help="opaque window instead of the translucent acrylic shell")
 
     sd = sub.add_parser("seated")
     sd.add_argument("--seat", required=True)
@@ -537,7 +541,12 @@ def main(argv: list[str] | None = None) -> int:
             card = ensure_widget_service(convoy_home())
             print(json.dumps(card))
             return 0 if card.get("ok") else 1
-        card = run_widget(topmost=bool(args.topmost), refresh=float(args.refresh or 3.0))
+        if args.engine != "tk":
+            from .widget_web import run_web_widget
+            card = run_web_widget(engine=args.engine, topmost=bool(args.topmost), refresh=float(args.refresh or 3.0),
+                                  width=int(args.width), height=int(args.height), glass=bool(args.glass))
+        else:
+            card = run_widget(topmost=bool(args.topmost), refresh=float(args.refresh or 3.0))
         print(json.dumps(card))
         return 0 if card.get("ok") else 1
     if args.cmd == "crew":
