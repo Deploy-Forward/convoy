@@ -22,7 +22,8 @@ from pathlib import Path
 from typing import Any
 
 from .bringup import Runner, bring_up, is_conductor
-from .convoy import list_seats, read_id, read_lead, read_thread
+from .convoy import list_seats, read_id, read_lead, read_thread, update_seat
+from .lifecycle import convoy_root_command
 from .crew import await_seated
 from .inbox import enqueue, pending
 from .layer import feed_since, hook, utc_now
@@ -76,6 +77,31 @@ def relaunch(root: Path | str, *, thread: str | None = None, runner: Runner | No
         card["chairs"].append({"session_id": sid, "harness": s.get("to"), "worktree": s.get("worktree"),
                                "last_seen": _last_seen(rows, sid), "unread": len(pending(root, sid))})
     dry = runner is None
+    if not dry:
+        # The boot prompt is ONE-SHOT: join sets it, the seated ack clears it
+        # (lifecycle.py). A relaunched pane therefore booted to a blank prompt
+        # and no turn ever started (live 2026-09-05 05:5x: two grok panes at
+        # the welcome screen, inbox rows waiting, Stop gate idle). Re-arm one
+        # per chair, carrying the token ITS join minted, so the ack that
+        # clears it again is the same proof await_seated already reads.
+        for c in card["chairs"]:
+            sid = c["session_id"]
+            tok = None
+            for r in rows:
+                if r.get("instance_id") == sid and r.get("kind") in ("join", "swap") and r.get("token"):
+                    tok = str(r["token"])
+            since = c["last_seen"] or EPOCH
+            prompt = ("You are the occupant of Convoy seat '" + sid + "', relaunched at " + now +
+                      " after your pane died. Run " + convoy_root_command(root) + " feed --since " + since +
+                      " then " + convoy_root_command(root) + " inbox --drain --seat " + sid +
+                      " and act on every row. Ack with " + convoy_root_command(root) + " seated --seat " + sid +
+                      (" --token " + tok if tok else " --token <your join token>") +
+                      ". Then continue the seat's work from " + str(c["worktree"]) +
+                      "; at the end of every turn start " + convoy_root_command(root) + " inbox --wait --seat " + sid +
+                      " as a background command.")
+            update_seat(root, sid, boot_prompt=prompt)
+            c["boot_prompt_rearmed"] = True
+            c["token_found"] = tok is not None
     up = bring_up(root, thread=bound, runner=runner, session_ids=sids)
     card["windows"] = up.get("windows") or []
     if up.get("error"):
