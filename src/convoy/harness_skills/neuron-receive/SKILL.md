@@ -56,6 +56,17 @@ When a hook fires it hands you the drained rows as extra context. You still
 owe the ack row. No hook fires while you are idle at your prompt; if a human
 types anything, run the loop first.
 
+## Started outside Convoy (no chair, no worktree)
+
+If `whoami` says `chair: null` from a folder that is no worktree, you are an
+outside body. Do not guess a chair: `convoy threads`, then `convoy start`
+(a picker; it never picks for you), then on the root you chose
+`convoy --root <root> attach` and `convoy --root <root> join --to <you>`.
+The join card's boot prompt carries your token; sends to that chair queue in
+`.convoy/inbox/<chair>.jsonl` until you drain and ack, and you are
+`connected` only after `seated --token <join token>`. Full walk:
+`docs/OUTSIDE_HARNESS_JOIN.md`.
+
 ## Reaching the conductor (grok-bot)
 
 The conductor reads the thread only through its MCP `feed` on the root it is
