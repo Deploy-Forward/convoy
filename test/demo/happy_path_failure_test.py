@@ -206,7 +206,16 @@ class GitUrlWithoutGhAuth(unittest.TestCase):
         self.assertNotIn('"owner": "acme"', blob)
         self.assertNotIn('"name": "acme/api"', blob)
         self.assertFalse(bool(card.get("repo") and card["repo"].get("cloned")), card)
-        # brief: soft continue-local — onboard the given root as github no
+
+    def test_onboard_clone_auth_failure_soft_continues_local(self):
+        def fail(_argv, cwd=None, **_k):
+            return subprocess.CompletedProcess(_argv, 128, "", "fatal: Authentication failed")
+
+        card = onboard(
+            self.root, ["grok"], thread="demo",
+            checkout_root="https://github.com/acme/api.git",
+            clone_runner=fail,
+        )
         self.assertTrue(card.get("ok"), card)
         self.assertIn(card.get("github"), (False, "no", None), card)
         self.assertEqual(Path(card["root"]).resolve(), self.root.resolve())
@@ -227,16 +236,9 @@ class IndexHygiene(unittest.TestCase):
         else:
             os.environ["CONVOY_HOME"] = self._prev
 
-    def _durable_root(self) -> Path:
-        base = Path(__file__).resolve().parent / "_keep_roots"
-        base.mkdir(exist_ok=True)
-        p = Path(tempfile.mkdtemp(prefix="g2-keep-", dir=str(base)))
-        self.addCleanup(shutil.rmtree, p, True)
-        return p
-
     def test_recent_returns_newest_present_excluding_temp(self):
         self.assertTrue(callable(getattr(index, "recent", None)), "g1 slice 1c: index.recent(limit) is missing")
-        keep = self._durable_root()
+        keep = _durable_root(self)
         cid = ensure_id(keep)
         bind(keep, "keep-t")
         vanished = Path(tempfile.mkdtemp())
@@ -315,23 +317,21 @@ class StartFailurePaths(unittest.TestCase):
         self.assertFalse((self.root / ".convoy" / "id").is_file())
 
     def test_no_repo_many_threads_requires_picker_never_auto_newest(self):
-        older = Path(tempfile.mkdtemp(dir=str(self.home)))
-        newer = Path(tempfile.mkdtemp(dir=str(self.home)))
+        older = _durable_root(self)
+        newer = _durable_root(self)
         ensure_id(older)
         bind(older, "old-t")
         ensure_id(newer)
         bind(newer, "new-t")
         rc, card = _run_cli(self.root, "start")
-        blob = json.dumps(card).lower()
-        self.assertTrue(
-            "picker" in blob or "choices" in blob or "threads" in blob,
-            "many threads must present a picker, never auto-bind: " + json.dumps(card),
-        )
-        self.assertNotEqual(
-            str(Path(str(card.get("root") or "")).resolve()) if card.get("root") else None,
-            str(newer.resolve()),
-            "never auto-pick newest",
-        )
+        self.assertFalse(card.get("ok"), card)
+        self.assertEqual(card.get("ask"), "pick", card)
+        titles = [t.get("title") or t.get("thread") for t in (card.get("threads") or [])]
+        self.assertIn("old-t", titles, card)
+        self.assertIn("new-t", titles, card)
+        self.assertIsNone(card.get("convoy_id") if not card.get("bound") else card.get("root"))
+        self.assertFalse((self.root / ".convoy" / "id").is_file(), "never auto-bind newest")
+        self.assertFalse(card.get("brought_up"))
 
     def test_git_url_without_gh_auth_soft_continues_local(self):
         def fail(_argv, cwd=None, **_k):
@@ -359,12 +359,21 @@ class StartFailurePaths(unittest.TestCase):
             return {"ok": True, "pid": 7, "argv": list(argv)}
 
         with mock.patch("convoy.cli.live_runner", new=capture), \
-             mock.patch("convoy.panes.identify", return_value={"ok": True, "chair": "g-live", "harness": "grok"}), \
-             mock.patch("convoy.panes.chair_live", return_value=True):
+             mock.patch("convoy.bringup.live_runner", new=capture), \
+             mock.patch("convoy.start.identify", return_value={"ok": True, "chair": "g-live", "harness": "grok"}), \
+             mock.patch("convoy.start.bodies", return_value={"ok": True, "chairs": [{"session_id": "g-live", "live": True}]}):
             rc, card = _run_cli(repo, "start", str(repo))
         self.assertEqual(spawns, [], "already-live harness must attach, never duplicate bring_up: " + json.dumps(card))
         blob = json.dumps(card).lower()
         self.assertTrue(card.get("attached") or "attach" in blob, card)
+
+
+def _durable_root(test: unittest.TestCase) -> Path:
+    base = Path(__file__).resolve().parent / "_keep_roots"
+    base.mkdir(exist_ok=True)
+    p = Path(tempfile.mkdtemp(prefix="g2-keep-", dir=str(base)))
+    test.addCleanup(shutil.rmtree, p, True)
+    return p
 
 
 def _is_os_temp(path: Path) -> bool:
