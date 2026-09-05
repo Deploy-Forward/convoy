@@ -250,6 +250,16 @@ except Exception:
 
 
 @unittest.skipUnless(_HAS_TK, "tkinter missing")
+class UsageIsRemainingNotUsed(unittest.TestCase):
+    def test_vendor_used_percent_renders_as_remaining(self):
+        from convoy.widget import _usage_block
+        b = _usage_block("claude", {"usage_remaining": {"session_pct": 64}, "limited": False, "session_pct": 64, "week_pct": 20})
+        self.assertEqual(b["used_session"], 64); self.assertEqual(b["bar_session"], 36); self.assertEqual(b["display_session"], "36%")
+        self.assertEqual(b["bar_week"], 80); self.assertEqual(b["display_week"], "80%"); self.assertEqual(b["display"], "36%")
+        u = _usage_block("codex", {"usage_remaining": None, "limited": False, "probe_timed_out": True})
+        self.assertIsNone(u["bar_session"]); self.assertEqual(u["display_session"], "unknown"); self.assertIn("timed out", u["reason"])
+
+
 class WidgetWindow(unittest.TestCase):
     def test_builds_without_mainloop(self):
         # Tk must not live in this interpreter: destroy() + later GC on a

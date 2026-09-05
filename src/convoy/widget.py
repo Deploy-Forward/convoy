@@ -62,7 +62,7 @@ def _usage_display(surfaced: dict[str, Any]) -> str:
         return "unknown"
     pct = surfaced.get("session_pct")
     if isinstance(pct, int):
-        return str(pct) + "%"
+        return str(max(0, min(100, 100 - pct))) + "%"   # remaining, not used
     if isinstance(remaining, (int, float)) and remaining != 0:
         return str(remaining)
     if remaining == 0:
@@ -85,8 +85,15 @@ def _pct_or_none(value: Any) -> int | None:
 
 
 def _usage_block(harness: str, surfaced: dict[str, Any]) -> dict[str, Any]:
-    session = _pct_or_none(surfaced.get("session_pct"))
-    week = _pct_or_none(surfaced.get("week_pct"))
+    # The vendor reports percent USED ("Current session: 64%"); this card is
+    # USAGE REMAINING, so the bar and the label are 100 - used (Marco
+    # 2026-09-05: "we have 36% left, currently showing 64%").
+    used_session = _pct_or_none(surfaced.get("session_pct"))
+    used_week = _pct_or_none(surfaced.get("week_pct"))
+    session = (100 - used_session) if used_session is not None else None
+    week = (100 - used_week) if used_week is not None else None
+    session = max(0, min(100, session)) if session is not None else None
+    week = max(0, min(100, week)) if week is not None else None
     footnote = None
     if str(harness).strip().lower() == "grok":
         raw = surfaced.get("raw")
@@ -111,6 +118,8 @@ def _usage_block(harness: str, surfaced: dict[str, Any]) -> dict[str, Any]:
     return {
         **surfaced,
         "reason": reason,
+        "used_session": used_session,
+        "used_week": used_week,
         "display": _usage_display(surfaced),
         "display_session": (str(session) + "%") if session is not None else "unknown",
         "display_week": (str(week) + "%") if week is not None else "unknown",
