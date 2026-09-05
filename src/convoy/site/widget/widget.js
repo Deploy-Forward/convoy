@@ -36,7 +36,8 @@
       const known = typeof pct === "number";
       const cls = probing ? "probing" : (known ? "" : "unknown");
       const label = probing ? "probing…" : (known ? pct + "%" : "unknown");
-      return `<div class="usage-row"><span>${esc(h)}</span><div class="bar ${cls}"><i style="width:${known ? pct : 0}%"></i></div><span class="pct ${known ? "" : "unknown"}">${label}</span></div>`;
+      const why = !known && row.reason ? `<div class="why">${esc(row.reason)}</div>` : "";
+      return `<div class="usage-row"><span>${esc(h)}</span><div class="bar ${cls}"><i style="width:${known ? pct : 0}%"></i></div><span class="pct ${known ? "" : "unknown"}">${label}</span></div>${why}`;
     }).join("") || `<div class="foot">no harness attached</div>`;
   }
 
@@ -62,6 +63,34 @@
     </tr>`;
   }
 
+  const chat = { seat: null, reply: "", ok: false, meta: "", draft: "" };
+  function actionBar(seat) {
+    if (chat.seat !== seat) { chat.seat = seat; chat.reply = ""; chat.ok = false; chat.meta = ""; }
+    return `<div class="row1"><span class="btn" id="act-ping" title="queue an identity check; the chair's own reply is the ID">ping ${esc(seat)}</span><input class="in" id="act-msg" placeholder="message ${esc(seat)} (queued into its inbox; delivered only when it acks)" value="${esc(chat.draft)}"><span class="btn" id="act-send">send</span></div>${chat.reply ? `<div class="reply ${chat.ok ? "ok" : ""}">${esc(chat.reply)}</div>` : ""}${chat.meta ? `<div class="meta">${esc(chat.meta)}</div>` : ""}`;
+  }
+  let watching = null;
+  async function watchReply(seat, since, pingId, started) {
+    const t = thread(); if (!t) return;
+    const r = await api("/api/replies", { root: t.root, seat, since, ping_id: pingId || null });
+    if (r.answered) { const last = r.rows[r.rows.length - 1]; chat.reply = (pingId ? "identified · " : "replied · ") + last.summary; chat.ok = true; chat.meta = "own row at " + last.ts; watching = null; render(); return; }
+    const waited = Math.round((Date.now() - started) / 1000);
+    chat.meta = (pingId ? "queued; waiting for " + seat + "'s own feed row citing " + pingId : "queued; waiting for a reply row") + " · " + waited + " s"; render();
+    if (waited < 180) watching = setTimeout(() => watchReply(seat, since, pingId, started), 3000); else { chat.meta += " · no reply in 3 min: the pane is idle or gone (nudge or relaunch)"; watching = null; render(); }
+  }
+  async function act(kind) {
+    const seat = state.selectedSeat; const t = thread(); if (!seat || !t) return;
+    const bodyText = kind === "ping" ? "ping" : ($("act-msg") ? $("act-msg").value : "");
+    if (kind !== "ping" && !bodyText.trim()) { chat.reply = "type a message first"; chat.ok = false; render(); return; }
+    const r = await api("/api/send", { root: t.root, seat, body: bodyText, label: kind === "ping" ? "ping" : "widget" });
+    if (!r.ok) { chat.reply = "refused: " + (r.error || JSON.stringify(r)); chat.ok = false; chat.meta = ""; render(); return; }
+    chat.draft = ""; chat.ok = false; chat.reply = (kind === "ping" ? "ping " + r.ping_id : "message") + " " + (r.delivery || "queued") + " · delivered: false until " + seat + " acks";
+    const since = r.ts || new Date().toISOString().replace("Z", "000Z");
+    if (watching) clearTimeout(watching);
+    render(); watchReply(seat, since, r.ping_id || null, Date.now());
+  }
+  document.addEventListener("input", (e) => { if (e.target.id === "act-msg") chat.draft = e.target.value; });
+  document.addEventListener("keydown", (e) => { if (e.target.id === "act-msg" && e.key === "Enter") act("send"); });
+
   function render() {
     const m = state.model; const main = $("main");
     if (!m || !m.ok) { main.innerHTML = `<div class="empty">${esc((m && m.error) || "no model")}</div>`; return; }
@@ -83,13 +112,14 @@
     <section class="card">
       <div class="eyebrow"><span>Usage remaining</span><span class="seg nodrag"><span class="${state.usage === "session" ? "on" : ""}" data-usage="session">session</span><span class="${state.usage === "week" ? "on" : ""}" data-usage="week">week</span></span></div>
       ${usageRows(t)}
-      ${Object.values(t.usage || {}).map((u) => u.footnote).filter(Boolean).slice(0, 1).map((f) => `<div class="foot">${esc(f)}</div>`).join("")}
+
     </section>
     <section class="card">
       <div class="eyebrow"><span>Harnesses · neurons in thread</span><span class="right">${t.seated_n || 0} seated · ${(t.seats && t.seats.stale) || 0} stale</span></div>
-      <table><colgroup><col style="width:33%"><col style="width:11%"><col style="width:19%"><col style="width:13%"><col style="width:24%"></colgroup>
+      <table><colgroup><col style="width:30%"><col style="width:11%"><col style="width:18%"><col style="width:17%"><col style="width:24%"></colgroup>
       <thead><tr><th>seat</th><th>harness</th><th>model</th><th>effort</th><th>chip</th></tr></thead>
       <tbody>${(t.chairs || []).map(chairRow).join("")}</tbody></table>
+      <div class="actions ${state.selectedSeat ? "show" : ""}" id="actions">${state.selectedSeat ? actionBar(state.selectedSeat) : ""}</div>
       ${m.footer ? `<div class="foot">${esc(m.footer)}</div>` : ""}
     </section>`;
     if (main.innerHTML !== html) main.innerHTML = html;
@@ -112,7 +142,9 @@
     setTimeout(refresh, 300);
   });
   document.addEventListener("click", async (e) => {
-    if (e.target.closest(".tune") || e.target.closest("select") || e.target.closest("input")) return;
+    if (e.target.id === "act-ping") { await act("ping"); return; }
+    if (e.target.id === "act-send") { await act("send"); return; }
+    if (e.target.closest(".actions") || e.target.closest(".tune") || e.target.closest("select") || e.target.closest("input")) return;
     const dot = e.target.closest(".dot"); if (dot) { state.selected = +dot.dataset.n; render(); return; }
     const seg = e.target.closest("[data-usage]"); if (seg) { state.usage = seg.dataset.usage; render(); return; }
     const nd = e.target.closest("[data-nudge]"); if (nd) { e.stopPropagation(); await nudgeDry(nd.dataset.nudge); return; }

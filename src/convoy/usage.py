@@ -41,6 +41,7 @@ def _run(cmd: list[str], timeout: int = 15) -> tuple[int, str]:
                 ["taskkill", "/F", "/T", "/PID", str(p.pid)],
                 capture_output=True,
                 timeout=5,
+                **quiet_spawn_kwargs(),   # a probe timeout popped a 'taskkill' console every minute (live 2026-09-05)
             )
         else:
             p.kill()

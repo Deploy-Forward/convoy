@@ -94,8 +94,23 @@ def _usage_block(harness: str, surfaced: dict[str, Any]) -> dict[str, Any]:
             footnote = raw.strip().splitlines()[0][:160]
         else:
             footnote = "grok reports no meter"
+    # why a bar is unknown, in the vendor's own terms: never a bare "unknown"
+    # when the probe told us more (Marco 2026-09-05: "if we can see threads
+    # we can see usage").
+    reason = None
+    if surfaced.get("probing"):
+        reason = "probing the vendor…"
+    elif str(harness).strip().lower() == "grok":
+        reason = "grok exposes no usage meter"
+    elif surfaced.get("probe_timed_out"):
+        reason = "vendor probe timed out; retrying every minute"
+    elif surfaced.get("error"):
+        reason = "probe failed: " + str(surfaced.get("error"))
+    elif surfaced.get("usage_remaining") is None and surfaced.get("session_pct") is None:
+        reason = "vendor returned no number"
     return {
         **surfaced,
+        "reason": reason,
         "display": _usage_display(surfaced),
         "display_session": (str(session) + "%") if session is not None else "unknown",
         "display_week": (str(week) + "%") if week is not None else "unknown",
