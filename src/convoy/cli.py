@@ -157,7 +157,7 @@ def main(argv: list[str] | None = None) -> int:
     sw.add_argument("--to", required=True, help="replacement harness")
     sw.add_argument("--model")
     sw.add_argument("--effort", help="declared effort for the incoming harness; unset, the old one survives only if that harness takes it")
-    sw.add_argument("--handoff", required=True, help="fresh .ola/*handoff* file written by the outgoing neuron")
+    sw.add_argument("--handoff", required=True, help="fresh .convoy/handoff/<chair>-<ts>.md file written by the outgoing neuron")
     sw.add_argument("--as", dest="author", required=True, help="outgoing neuron's session_id (neuron-authored; conductor asks via stamp)")
 
     sd = sub.add_parser("seated")
