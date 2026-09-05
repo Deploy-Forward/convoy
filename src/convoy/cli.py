@@ -20,6 +20,7 @@ from .identity import ensure_inbox_hooks, install_neuron_identity
 from .index import find_root, index_path, list_threads
 from .activity import neuron_activity
 from .panes import bodies, identify
+from .provenance import build_provenance, rebase_check, record_commit
 from .layer import SCHEMA_VERSION, conductor_stamp, feed_since, hook, parse_since
 from .rail import build_rail, root_for
 from .relaunch import relaunch
@@ -70,6 +71,21 @@ def main(argv: list[str] | None = None) -> int:
 
     rl = sub.add_parser("rail", help="the strip under the panes: feed events since, seats connected, usage per harness (null is unknown, never 0), last stamp; reads only the thread, so any neuron sees the same rail")
     rl.add_argument("--since", default="10m", help="feed window (default 10m)")
+
+    cm = sub.add_parser("committed", help="append one kind=commit provenance row for a Git revision")
+    author = cm.add_mutually_exclusive_group(required=True)
+    author.add_argument("--as-me", action="store_true", help="author = the chair whoami detects for this body")
+    author.add_argument("--as", dest="author", help="authoring chair session_id")
+    cm.add_argument("--rev", default="HEAD", help="commit-ish to record (default HEAD)")
+    cm.add_argument("--worktree", help="Git worktree to inspect (default cwd)")
+
+    pv = sub.add_parser("provenance", help="read per-chair commit provenance from seats plus feed rows")
+    pv.add_argument("--since", help="optional feed window: 10m | 2h | 1d | 45s, or an ISO UTC timestamp")
+
+    rb = sub.add_parser("rebase", help="inspect rebase overlap without changing Git state")
+    rb.add_argument("--check", action="store_true", help="required read-only mode")
+    rb.add_argument("--base", help="base branch or commit (default feat/happy-path-proof)")
+    rb.add_argument("--worktree", help="Git worktree to inspect (default cwd)")
 
     st = sub.add_parser("stamp")
     st.add_argument("summary")
@@ -247,7 +263,7 @@ def main(argv: list[str] | None = None) -> int:
     root = Path(args.root).resolve()
     # Chats launch from project subfolders: for read verbs, walk up to the
     # nearest .convoy/id when the given root has none (never for writes).
-    if args.cmd in ("graph", "threads", "panes", "resume", "seats", "feed", "context", "glance", "inbox") and not (root / ".convoy" / "id").is_file():
+    if args.cmd in ("graph", "threads", "panes", "resume", "seats", "feed", "context", "glance", "inbox", "provenance", "rebase") and not (root / ".convoy" / "id").is_file():
         found = find_root(root)
         if found is not None:
             root = found
@@ -295,6 +311,36 @@ def main(argv: list[str] | None = None) -> int:
         except ValueError as e:
             print(json.dumps({"ok": False, "error": str(e)}))
             return 1
+        print(json.dumps(card))
+        return 0 if card.get("ok") else 1
+    if args.cmd == "committed":
+        chair = args.author
+        if args.as_me:
+            me = identify(root)
+            chair = me.get("chair")
+            if not chair:
+                print(json.dumps({"ok": False, "error": "refuse committed --as-me: no chair on this thread matches this body", "whoami": me}))
+                return 1
+        try:
+            card = record_commit(root, str(chair or ""), rev=args.rev, worktree=args.worktree)
+        except ValueError as e:
+            print(json.dumps({"ok": False, "error": str(e)}))
+            return 1
+        print(json.dumps(card))
+        return 0
+    if args.cmd == "provenance":
+        try:
+            card = build_provenance(root, since=args.since)
+        except ValueError as e:
+            print(json.dumps({"ok": False, "error": str(e)}))
+            return 1
+        print(json.dumps(card))
+        return 0
+    if args.cmd == "rebase":
+        if not args.check:
+            print(json.dumps({"ok": False, "error": "this verb only reports; run git rebase yourself"}))
+            return 1
+        card = rebase_check(args.worktree or Path.cwd(), base=args.base or "feat/happy-path-proof", root=root)
         print(json.dumps(card))
         return 0 if card.get("ok") else 1
     if args.cmd == "stamp":

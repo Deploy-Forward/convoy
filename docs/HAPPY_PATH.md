@@ -58,6 +58,7 @@ pane). `pending` and `stale` are not connections, whatever the pane shows.
 convoy send --to codex-1-demo "draft tests for retry planner"   # delivery: queued, delivered: false
 convoy send --to grok-2-demo  "audit retry paths"
 convoy stamp "tests drafted"
+convoy committed --as-me
 convoy feed --since 10m                                          # join, seated, synapse, conductor rows
 ```
 
@@ -69,6 +70,7 @@ when the target drains its inbox and authors an ack citing the token.
 
 ```
 convoy rail [--since 10m]
+convoy provenance
 ```
 
 The strip under the panes: `feed.events`, `seats {total, connected, pending,
