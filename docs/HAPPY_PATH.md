@@ -89,6 +89,15 @@ its worktree with an inbox row that says when it left off and which
 `feed --since` to run, and it is `connected` again only when it acks after
 the relaunch. Old acks are an old life.
 
+## Idle wake
+
+An idle grok pane has no vendor push API. Occupant-side: `inbox --wait --seat`
+as a background command, plus the Stop gate while rows wait. Host-side:
+`nudge --seat` after `panes` plus a unique window title (or tmux target) prove
+the pane, and a consent card names that pane and the exact keys. Success is
+`delivery: nudged`; only the occupant's ack is `delivered`. A generic title
+(`grok`) is not identity.
+
 ## What "cloud" means here
 
 The thread is a directory under the bound root. A cloud thread is that same
