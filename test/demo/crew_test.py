@@ -401,7 +401,7 @@ class CrewWire(unittest.TestCase):
 
     def test_public_list_hides_crew_seated_consent_await_and_a_public_call_writes_nothing(self):
         names = self._names()
-        for hidden in ("crew", "seated", "consent", "await_seated"):
+        for hidden in ("crew", "seated", "consent", "await_seated", "nudge"):
             self.assertNotIn(hidden, names, hidden)
             self.assertIn(hidden, _WRITE_TOOLS)
         card = self._call("crew", seats=[{"harness": "grok"}], launch=True)
@@ -413,7 +413,7 @@ class CrewWire(unittest.TestCase):
         self.assertFalse(refused["ok"])
         self.assertEqual(feed_since(self.root, EPOCH), [])
         os.environ["CONVOY_MCP_WRITE_TOOLS"] = "1"
-        for name in ("crew", "seated", "consent", "await_seated"):
+        for name in ("crew", "seated", "consent", "await_seated", "nudge"):
             self.assertIn(name, self._names(), name)
 
     def test_gated_crew_then_seated_over_rpc_closes_the_loop_the_graph_shows(self):
