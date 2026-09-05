@@ -1,6 +1,7 @@
 /**
  * Cloudflare edge split for convoy.bot:
- * - /mcp and /mcp/* proxy to the existing Python MCP origin.
+ * - GET/HEAD /mcp and /mcp/ serve the MCP attach page.
+ * - other /mcp and /mcp/* requests pass through to zone origin.
  * - everything else is served from static assets.
  */
 
@@ -9,25 +10,6 @@
  * @property {Fetcher} ASSETS
  * @property {string} MCP_ORIGIN
  */
-
-/**
- * @param {Request} request
- * @param {Env} env
- * @returns {Promise<Response>}
- */
-async function handleMcpProxy(request, env) {
-  let upstream;
-  try {
-    upstream = new URL(env.MCP_ORIGIN);
-  } catch (_err) {
-    return new Response("MCP_ORIGIN is not a valid URL", { status: 500 });
-  }
-
-  const incoming = new URL(request.url);
-  const target = new URL(incoming.pathname + incoming.search, upstream);
-  const upstreamRequest = new Request(target.toString(), request);
-  return fetch(upstreamRequest);
-}
 
 /**
  * @param {Request} request
@@ -53,7 +35,7 @@ export default {
       return handleMcpAttachPage(request, env);
     }
     if (pathname === "/mcp" || pathname.startsWith("/mcp/")) {
-      return handleMcpProxy(request, env);
+      return fetch(request);
     }
     return env.ASSETS.fetch(request);
   },
