@@ -77,7 +77,12 @@ def build_rail(root: Path | str, *, since: str = "10m", probe_fn: ProbeFn | None
     fn = probe_fn or probe
     usage: dict[str, Any] = {}
     for harness in sorted({str(s.get("to")) for s in chairs if s.get("to")}):
-        usage[harness] = surface(harness, fn(harness))
+        try:
+            probed = fn(harness)
+        except Exception as e:
+            probed = {"usage_remaining": None, "limited": False, "raw": None,
+                      "error": type(e).__name__}
+        usage[harness] = surface(harness, probed)
     card["usage"] = usage
 
     card["provenance"] = rail_provenance(root, since=since)

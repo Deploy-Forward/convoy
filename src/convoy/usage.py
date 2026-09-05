@@ -36,14 +36,12 @@ def _run(cmd: list[str], timeout: int = 15) -> tuple[int, str]:
     try:
         out, err = p.communicate(input="", timeout=timeout)
     except subprocess.TimeoutExpired:
-        if os.name == "nt":
-            subprocess.run(
-                ["taskkill", "/F", "/T", "/PID", str(p.pid)],
-                capture_output=True,
-                timeout=5,
-            )
-        else:
-            p.kill()
+        # Live 2026-09-05: claude -p /usage timed out at 15s, then
+        # taskkill /T of that pid also timed out at 5s, and the nested
+        # TimeoutExpired escaped, crashing `convoy rail` instead of
+        # returning usage=null. A kill that fails is still a probe
+        # timeout. Never invent 0; never crash the reader.
+        _kill_probe(p)
         try:
             p.communicate(timeout=3)
         except Exception:
@@ -51,6 +49,25 @@ def _run(cmd: list[str], timeout: int = 15) -> tuple[int, str]:
         return 124, "probe timeout"
     text = ((out or "") + (err or "")).strip()
     return p.returncode if p.returncode is not None else 1, text
+
+
+def _kill_probe(p: subprocess.Popen[Any]) -> None:
+    """Best-effort. A kill that times out is still a probe timeout, never a crash."""
+    try:
+        if os.name == "nt":
+            try:
+                subprocess.run(
+                    ["taskkill", "/F", "/T", "/PID", str(p.pid)],
+                    capture_output=True,
+                    timeout=5,
+                    **quiet_spawn_kwargs(),
+                )
+            except (OSError, subprocess.TimeoutExpired):
+                p.kill()
+        else:
+            p.kill()
+    except Exception:
+        pass
 
 
 def normalize_usage_remaining(value: Any) -> Any:

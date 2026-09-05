@@ -28,7 +28,7 @@ class QuietSpawn(unittest.TestCase):
     def test_every_read_path_spawn_passes_the_flag(self):
         """Every subprocess call on the widget's read path carries it (source-level gate)."""
         src = Path(__file__).resolve().parents[2] / "src" / "convoy"
-        for name in ("panes.py", "gitstate.py", "provenance.py", "widget.py", "cmd.py"):
+        for name in ("panes.py", "gitstate.py", "provenance.py", "widget.py", "cmd.py", "usage.py"):
             text = (src / name).read_text(encoding="utf-8")
             calls = [i for i in range(len(text)) if text.startswith("subprocess.run(", i)]
             for i in calls:
