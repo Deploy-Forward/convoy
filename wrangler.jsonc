@@ -7,6 +7,7 @@
     "directory": "src/convoy/site",
     "binding": "ASSETS",
     "config": {
+      "run_worker_first": true,
       "html_handling": "none"
     }
   },
