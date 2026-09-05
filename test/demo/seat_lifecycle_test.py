@@ -127,7 +127,7 @@ class SwapVerb(unittest.TestCase):
         ensure_id(self.root)
         seat(self.root, "claude", "chair-1", worktree=str(self.root), model="claude-opus-5",
              resume="claude-uuid", title="opus-1", effort="high")
-        self.handoff = self.root / ".ola" / "handoff-swap.md"
+        self.handoff = self.root / ".convoy" / "handoff" / "chair-1-20260905T000000Z.md"
         self.handoff.parent.mkdir(parents=True, exist_ok=True)
         self.handoff.write_text("state of the work\n", encoding="utf-8")
 
@@ -171,6 +171,15 @@ class SwapVerb(unittest.TestCase):
         agy_argv = resume_argv({"to": "agy", "session_id": "x", "boot_prompt": "hello seat"})
         self.assertEqual(agy_argv[-2:], ["--prompt", "hello seat"])
 
+    def test_swap_accepts_labelled_legacy_ola_handoff(self):
+        legacy = self.root / ".ola" / "handoff-swap.md"
+        legacy.parent.mkdir(parents=True, exist_ok=True)
+        legacy.write_text("legacy state\n", encoding="utf-8")
+        card = swap(self.root, "chair-1", to="codex", handoff=str(legacy), author="chair-1")
+        self.assertTrue(card["ok"])
+        seat_row = [s for s in list_seats(self.root) if s["session_id"] == "chair-1"][0]
+        self.assertIn(str(legacy), seat_row["boot_prompt"])
+
     def test_seated_ack_closes_the_loop(self):
         card = swap(self.root, "chair-1", to="codex", handoff=str(self.handoff), author="chair-1")
         ack = seated_ack(self.root, "chair-1", token=card["token"])
@@ -204,7 +213,7 @@ class JoinVerb(unittest.TestCase):
         rc, _ = _run_cli(self.root, "join", "--to", "claude", "--session-id", "c1",
                          "--worktree", str(self.root), "--title", "c1")
         self.assertEqual(rc, 0)
-        handoff = self.root / ".ola" / "h-handoff.md"
+        handoff = self.root / ".convoy" / "handoff" / "c1-20260905T000000Z.md"
         handoff.parent.mkdir(parents=True, exist_ok=True)
         handoff.write_text("x", encoding="utf-8")
         rc, card = _run_cli(self.root, "swap", "--seat", "c1", "--to", "codex",

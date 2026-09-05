@@ -20,6 +20,8 @@ from typing import Any
 from urllib.parse import urlparse
 
 from .bringup import bring_up, ensure_interactive_path, hide_windows, live_applier, live_runner, terminals
+from .rail import build_rail
+from .provenance import build_provenance
 from .card import CARD_OUTPUT_SCHEMA, build_card
 from .harness_contract import (
     canonical_harness_id,
@@ -45,13 +47,15 @@ from .graph import build_graph, neighborhood
 from .inbox import drain as drain_inbox, pending as pending_inbox
 from .lifecycle import join as join_chair, seated_ack
 from .consent import grant_consent
+from .nudge import nudge_seat
 from .crew import await_seated, crew as crew_chairs
 from .targeted_launch import active_pane_runner, launch_choices, launch_seat
+from .focus import focus_seat
 from .graph_html import resume_neuron
-from .index import index_path, list_threads
+from .index import index_path, list_threads, prune_threads
 from .panes import bodies
 from .gitstate import git_state
-from .layer import SCHEMA_VERSION, conductor_stamp, feed_since, neuron_note
+from .layer import SCHEMA_VERSION, conductor_stamp, feed_since, neuron_note, parse_since
 from .synapse import fake_runner, native_runner, send_one
 from .usage import normalize_usage_remaining, probe
 
@@ -108,7 +112,7 @@ HARNESSES = tuple((row["id"], str(row.get("name") or row["id"])) for row in harn
 # life; consent mints a one-time grant. await_seated only reads, but it holds
 # the request thread up to its timeout, which a public endpoint must not offer.
 _WRITE_TOOLS = frozenset({"send", "stamp", "note", "seat", "join", "launch", "onboard", "clone", "mint", "repos",
-                          "crew", "seated", "consent", "await_seated"})
+                          "crew", "seated", "consent", "await_seated", "focus", "nudge"})
 # MCP safety annotations describe what a tool can do on THIS process. Some
 # tools have a read-only form on the public process and a state-changing form
 # only after the operator enables the write gate. Keep this vocabulary
@@ -116,7 +120,7 @@ _WRITE_TOOLS = frozenset({"send", "stamp", "note", "seat", "join", "launch", "on
 # resource control, but they do not mutate state.
 _STATE_CHANGING_TOOLS = frozenset({
     "send", "stamp", "note", "seat", "join", "launch", "onboard", "clone",
-    "mint", "crew", "seated", "consent",
+    "mint", "crew", "seated", "consent", "focus", "nudge",
 })
 _CONDITIONAL_STATE_CHANGING_TOOLS = frozenset({
     "bring_up", "open", "hide", "minimize", "background", "install",
@@ -292,7 +296,21 @@ TOOLS: list[dict[str, Any]] = [
         "name": "feed",
         "description": "Layer events since ts (feed contract v2: schema_version + additive kinds — conductor stamps, synapse, refuse+ask). Default last 24h. Not vendor resume; readers skip unknown kinds.",
         "inputSchema": _schema({
-            "since": {"type": "string", "description": "ISO UTC lower bound. Default last 24h."},
+            "since": {"type": "string", "description": "ISO UTC lower bound, or a window: 10m | 2h | 1d | 45s. Default last 24h."},
+        }),
+    },
+    {
+        "name": "rail",
+        "description": "Read-only: the thread rail, the strip under the panes. Feed events in the window, seats connected | pending | stale from the seated acks, usage remaining per harness (null is unknown, never 0), last conductor stamp, lead. Reads only the bound thread, so every neuron and this chat see one rail. Never a token.",
+        "inputSchema": _schema({
+            "since": {"type": "string", "description": "feed window: 10m | 2h | 1d | 45s, or an ISO UTC lower bound. Default 10m."},
+        }),
+    },
+    {
+        "name": "provenance",
+        "description": "Read-only: per-chair Git provenance folded from seats.jsonl and kind=commit feed rows. Unknown fields stay null; chairs without commit rows report commits 0.",
+        "inputSchema": _schema({
+            "since": {"type": "string", "description": "optional feed window: 10m | 2h | 1d | 45s, or an ISO UTC timestamp"},
         }),
     },
     {
@@ -382,8 +400,8 @@ TOOLS: list[dict[str, Any]] = [
     },
     {
         "name": "threads",
-        "description": "Every Convoy thread this machine's index knows (convoy_id, thread, root, updated_at). present=false when the root is gone or its id changed; never a token.",
-        "inputSchema": _schema({}),
+        "description": "Every Convoy thread this machine's index knows (convoy_id, thread, root, updated_at). present=false when the root is gone or its id changed; never a token. prune=true drops temp-dir and absent roots and reports every dropped row (write-gated, like resume go=true).",
+        "inputSchema": _schema({"prune": {"type": "boolean", "default": False, "description": "drop temp-dir and absent roots from the machine index; reports every dropped row"}}),
     },
     {
         "name": "resume",
@@ -469,6 +487,15 @@ TOOLS: list[dict[str, Any]] = [
             required=["seat"],
         ),
     },
+    {
+        "name": "focus",
+        "description": "Ask the pane host to highlight one chair (write gate: this is a host action). tmux: select-pane -t when a target is supplied. Windows Terminal: focused=false with reason until a pane-target adapter is evidenced. Never a token.",
+        "inputSchema": _schema(
+            {"seat": {"type": "string", "description": "chair session_id"},
+             "target": {"type": "string", "description": "tmux pane id for select-pane -t"}},
+            required=["seat"],
+        ),
+    },
     # N neurons -> N chairs -> ONE window -> observed connects (2026-09-04, item E).
     # crew replaces the join/launch/seat/bring_up walk that left chairs 2..N
     # without a boot prompt: every chair it mints carries one. seated is the
@@ -497,6 +524,17 @@ TOOLS: list[dict[str, Any]] = [
         "name": "consent",
         "description": "Grant a prior consent request after the user explicitly approved it (write gate: mints a one-time, action-scoped grant). Pass the returned consent only to the exact pending command (launch).",
         "inputSchema": _schema({"grant": {"type": "string", "description": "request_id from the awaiting-user-consent card"}}, required=["grant"]),
+    },
+    {
+        "name": "nudge",
+        "description": "Wake one idle chair on the user's own machine (write gate: host SendInput/send-keys/queue). Requires a proven pane (panes body + unique WT title or tmux target) and a consent card that names that pane and the exact keys. delivery=nudged, never delivered. Refuses when the pane cannot be identified. Never on a public MCP.",
+        "inputSchema": _schema(
+            {"seat": {"type": "string"}, "keys": {"type": "string", "description": "exact keystroke the consent card names"},
+             "target": {"type": "string", "description": "tmux pane id"},
+             "dry_run": {"type": "boolean", "default": False},
+             "consent": {"type": "string"}},
+            required=["seat"],
+        ),
     },
     {
         "name": "await_seated",
@@ -732,6 +770,11 @@ def _call_tool(root: Path, name: str, arguments: dict[str, Any] | None) -> dict[
         except ValueError as e:
             return {"ok": False, "error": str(e)}
     if name == "threads":
+        if args.get("prune"):
+            if not _write_tools_enabled():
+                return {"ok": False, "dropped": [], "n_dropped": None, "kept": None,
+                        "error": "threads prune=true is behind the write gate on this process (set CONVOY_MCP_WRITE_TOOLS=1 on a gated/loopback deploy); dry list allowed"}
+            return prune_threads()
         return {"ok": True, "index": str(index_path()), "threads": list_threads()}
     if name == "panes":
         return bodies(root)
@@ -747,8 +790,22 @@ def _call_tool(root: Path, name: str, arguments: dict[str, Any] | None) -> dict[
             return {"ok": False, "error": str(e)}
     if name == "feed":
         since = _opt_str(args, "since") or _default_since()
-        rows = feed_since(root, since)
-        return {"ok": True, "schema_version": SCHEMA_VERSION, "since": since, "events": rows}
+        try:
+            since_iso = parse_since(since)
+            rows = feed_since(root, since_iso)
+        except ValueError as e:
+            return {"ok": False, "error": str(e), "since": since}
+        return {"ok": True, "schema_version": SCHEMA_VERSION, "since": since, "since_iso": since_iso, "events": rows}
+    if name == "rail":
+        try:
+            return build_rail(root, since=_opt_str(args, "since") or "10m", probe_fn=probe)
+        except ValueError as e:
+            return {"ok": False, "error": str(e)}
+    if name == "provenance":
+        try:
+            return build_provenance(root, since=_opt_str(args, "since"))
+        except ValueError as e:
+            return {"ok": False, "error": str(e)}
     if name == "stamp":
         try:
             row = conductor_stamp(
@@ -883,6 +940,13 @@ def _call_tool(root: Path, name: str, arguments: dict[str, Any] | None) -> dict[
             return launch_seat(root, sid, runner=active_pane_runner, consent=_opt_str(args, "consent"))
         except ValueError as e:
             return {"ok": False, "seat": sid, "spawned": False, "error": str(e)}
+    if name == "focus":
+        sid = (_opt_str(args, "seat") or "").strip()
+        if not sid:
+            return {"ok": False, "focused": False, "error": "focus requires seat"}
+        if not _write_tools_enabled():
+            return {"ok": False, "seat": sid, "focused": False, "error": _gate_text("focus")}
+        return focus_seat(root, sid, target=_opt_str(args, "target"))
     if name == "crew":
         seats = args.get("seats")
         if not isinstance(seats, list) or not seats:
@@ -917,6 +981,21 @@ def _call_tool(root: Path, name: str, arguments: dict[str, Any] | None) -> dict[
             return grant_consent(root, rid)
         except ValueError as e:
             return {"ok": False, "request_id": rid, "error": str(e)}
+    if name == "nudge":
+        sid = (_opt_str(args, "seat") or "").strip()
+        if not sid:
+            return {"ok": False, "identified": False, "delivered": False, "delivery": None,
+                    "error": "nudge requires seat"}
+        if not _write_tools_enabled():
+            return {"ok": False, "seat": sid, "identified": False, "delivered": False,
+                    "delivery": None, "error": _gate_text("nudge")}
+        return nudge_seat(
+            root, sid,
+            consent=_opt_str(args, "consent"),
+            keys=_opt_str(args, "keys"),
+            dry_run=_opt_bool(args, "dry_run", False),
+            target=_opt_str(args, "target"),
+        )
     if name == "await_seated":
         seats = args.get("seats")
         if not isinstance(seats, list) or not seats:

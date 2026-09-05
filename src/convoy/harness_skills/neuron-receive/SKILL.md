@@ -5,9 +5,13 @@ description: How a neuron on ANY harness (grok, claude, codex, cursor-agent, agy
 
 # Receiving on a Convoy thread
 
-You are a neuron. Two channels can carry a message to you. Neither one wakes
-you while you are idle at your prompt; you receive at your next turn, or when
-a hook fires at tool time. That is the honest contract on every harness today.
+You are a neuron. Two channels can carry a message to you. You receive at
+tool time (PreToolUse), at turn end (a Stop with rows waiting is blocked and
+the rows become your reason to keep working), and when a background
+`convoy --root <root> inbox --wait --seat <you>` completes: start that at the
+end of EVERY turn with `background: true`, so an arriving row wakes you. Idle
+at your prompt with no wait running, nothing reaches you; the lead can then
+only relaunch or nudge your pane (skills/convoy-nudge).
 
 | Channel | Where it lives | Who writes it | How you read it |
 | --- | --- | --- | --- |
@@ -43,7 +47,7 @@ convoy --root <root> inbox --drain --seat <your chair>
 
 | Harness | Hook that drains the inbox for you | Fires | Installed by |
 | --- | --- | --- | --- |
-| grok | `.grok/hooks/convoy-inbox.json` PreToolUse → `convoy inbox --hook-pretooluse` | at tool time, mid-turn only | Convoy first run (`ensure_first_run`) |
+| grok | `.grok/hooks/convoy-inbox.json` PreToolUse + Stop → `convoy inbox --hook-pretooluse` | at tool time, and at turn end: a Stop with rows waiting is blocked and the rows become the reason you keep working (grok-build 10-hooks.md). Idle wake: at the end of every turn start `convoy --root <root> inbox --wait --seat <you>` with `background: true`; a completing background command wakes you (grok-build 20-background-tasks.md), and the row that ended the wait is yours to drain and ack | Convoy first run (`ensure_first_run`) |
 | claude | `.claude/settings.json` PreToolUse + UserPromptSubmit → same command | tool time and turn start | Convoy first run |
 | codex | none proven; `codex queue --thread <id> --message` exists and is unproven as delivery | never on its own | you: run the loop by hand |
 | cursor-agent, agy, hermes, pi | none | never on its own | you: run the loop by hand |

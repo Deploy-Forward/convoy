@@ -45,3 +45,25 @@ class SkillsFolderContract(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ConvoyNudgeSkillIsReplicable(unittest.TestCase):
+    """The deaf-pane recovery that worked live (2026-09-05) ships as a skill
+    plus the script it runs; both must exist, agree, and carry the refusals."""
+
+    def test_skill_and_script_exist_and_agree(self):
+        from pathlib import Path
+        repo = Path(__file__).resolve().parents[2]
+        skill = (repo / "skills" / "convoy-nudge" / "SKILL.md").read_text(encoding="utf-8")
+        script = (repo / "scripts" / "wt-nudge.ps1").read_text(encoding="utf-8")
+        self.assertIn("scripts\wt-nudge.ps1", skill)
+        for step in ("relaunch", "--seat", "inbox --wait", "seated", "whoami"):
+            self.assertIn(step, skill, step)
+        for guard in ("-List", "-DryRun", "IdleTitle", "Waiting for response", "CASCADIA_HOSTING_WINDOW_CLASS", "AttachThreadInput"):
+            self.assertIn(guard, script, guard)
+        # refuses: busy pane, several windows, no root; never -p / --resume
+        self.assertIn("nothing typed", script)
+        self.assertIn("-Root <thread root> is required", script)
+        for banned in ("--resume", " -p "):
+            self.assertNotIn(banned, script.split("# Only on the machine")[1] if "# Only on the machine" in script else script, banned)
+        self.assertIn("## Refuse", skill)

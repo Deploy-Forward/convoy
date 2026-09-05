@@ -382,9 +382,45 @@ def hook_pretooluse(cwd: str | Path | None = None) -> dict[str, Any]:
     )
     if len(context) > 10000:
         context = context[:9997] + "..."
+    if event == "Stop":
+        # grok-build 10-hooks.md: a Stop hook may return decision=block and
+        # the reason is fed to the model as a user message, keeping the turn
+        # alive. So a neuron never goes idle while rows are waiting: the
+        # queue is the reason to keep working. (Fable, 2026-09-05, after g1
+        # sat idle with 4 rows for an hour because PreToolUse only fires
+        # while the agent is already using tools.)
+        return {"decision": "block", "reason": context}
     return {
         "hookSpecificOutput": {
             "hookEventName": event,
             "additionalContext": context,
         },
     }
+
+
+def wait_for_pending(root: Path, session_id: str, *, timeout: float = 3600.0, interval: float = 2.0,
+                     clock=None, sleep=None) -> dict[str, Any]:
+    """Block until this chair has a pending row, or timeout. A neuron runs
+    `convoy inbox --wait --seat <me>` as a BACKGROUND command at the end of
+    its turn: grok-build 20-background-tasks.md says a completing background
+    command wakes the parent automatically, so the row that ends this wait
+    is the row that wakes the idle neuron. Vendor-native; no keystroke, no
+    second session. Returns the pending rows without draining them (the
+    neuron drains, so the consumed marker is its own)."""
+    import time as _t
+    clk = clock or _t.monotonic
+    slp = sleep or _t.sleep
+    sid = str(session_id or "").strip()
+    if not sid:
+        return {"ok": False, "error": "wait requires --seat"}
+    budget = max(0.0, float(timeout))
+    step = max(0.05, float(interval))
+    start = clk()
+    while True:
+        waiting = pending(root, sid)
+        waited = max(0.0, clk() - start)
+        if waiting or waited >= budget:
+            return {"ok": True, "session_id": sid, "pending": waiting, "n": len(waiting),
+                    "waited_s": round(waited, 3), "timed_out": not waiting,
+                    "next": "inbox --drain --seat " + sid if waiting else "inbox --wait --seat " + sid}
+        slp(min(step, budget - waited))

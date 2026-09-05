@@ -12,7 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 from convoy.layer import SCHEMA_VERSION, conductor_stamp, feed_since, hook, neuron_note
 from convoy.cli import main
 from convoy.mcp_http import TOOLS, call_tool, handle_rpc
-from convoy.synapse import fake_runner, native_runner, ola_runner, send_one
+from convoy.synapse import fake_runner, native_runner, send_one
 
 
 def _run_cli(root, *argv):
@@ -209,7 +209,8 @@ class SynapseRunnerProvenance(unittest.TestCase):
 
         self.assertEqual(runner_kind(native_runner), "native")
         self.assertEqual(runner_kind(fake_runner), "fake")
-        self.assertEqual(runner_kind(ola_runner), "ola")
+        import convoy.synapse as syn
+        self.assertFalse(hasattr(syn, "ola_runner"))
 
 
 class ChipSeatFields(unittest.TestCase):

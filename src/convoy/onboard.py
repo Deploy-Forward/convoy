@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from .bringup import ensure_first_run, ensure_interactive_path
-from .convoy import bind, ensure_id, read_github, read_id, read_thread, set_github
+from .convoy import bind, ensure_id, read_github, read_id, read_lead, read_thread, set_github, set_lead
 from .harness_contract import canonical_harness_id, harness_entries
 from .install import HARNESSES, _which
 from .repo import Runner, checkout_path_for, clone, is_repo_url
@@ -20,6 +20,14 @@ REFUSED_HARNESSES = frozenset({
 })
 SUPPORTED_HARNESSES = tuple(row["id"] for row in harness_entries(mcp_supported_only=True))
 SUPPORTED_SET = frozenset(SUPPORTED_HARNESSES)
+
+
+class CloneFailed(Exception):
+    """A URL checkout could not be cloned; carries the repo card (url, dest, error)."""
+
+    def __init__(self, repo: dict[str, Any]):
+        super().__init__(repo.get("error") or "git clone failed")
+        self.repo = repo
 
 
 def _dedupe(values: list[str]) -> list[str]:
@@ -75,7 +83,13 @@ def _resolve_root(root: Path, checkout_root: str | None,
         if not (dest / ".git").exists():
             card = clone(repo["url"], dest, runner=clone_runner)
             if not card.get("ok"):
-                raise ValueError(str(card.get("error") or "git clone failed"))
+                # A failed clone (no gh auth, offline, not found) binds NOTHING:
+                # a thread bound on a failed clone is a silent write. The "soft
+                # continue-local" the design asks for (2026-09-05) is an ASK on
+                # the refusal card: the exact onboard that binds this root with
+                # github=no, for the human to run. No owner/repo is invented.
+                repo["error"] = str(card.get("error") or "git clone failed")
+                raise CloneFailed(repo)
             repo["cloned"] = True
         return dest.resolve(), True, repo
     target = Path(checkout_root).expanduser().resolve()
@@ -204,6 +218,23 @@ def onboard(
 
     try:
         target_root, declared_checkout, repo = _resolve_root(root, checkout_root, clone_runner)
+    except CloneFailed as e:
+        failed = e.repo
+        local = Path(root).resolve()
+        return {
+            "ok": False,
+            "error": failed["error"],
+            "repo": failed,
+            "github": None,
+            "root": None,
+            "ask": {
+                "continue_local": True,
+                "text": "the clone failed, so nothing was bound. Continue on this machine instead? That binds "
+                        + str(local) + " to thread " + repr(thread) + " with github=no.",
+                "next": "onboard --to " + " --to ".join(named) + (" --thread " + thread if thread else "")
+                        + " --checkout-root " + str(local) + " --github no",
+            },
+        }
     except ValueError as e:
         return {"ok": False, "error": str(e)}
 
@@ -226,6 +257,15 @@ def onboard(
         set_github(target_root, True if repo is not None else bool(github))
     if declared_checkout and convoy_id is None:
         convoy_id = ensure_id(target_root)
+    # Frame 1 of the happy path: whoever launched first conducts. The first
+    # harness named on the FIRST onboard of this root becomes lead; a later
+    # onboard reports the standing lead and never steals it (lead passes are
+    # neuron-authored via `lead --to <chair> --as`).
+    standing = read_lead(target_root) if convoy_id is not None else None
+    if standing is None and convoy_id is not None:
+        lead_card = {"harness": set_lead(target_root, named[0])["lead"], "set": True}
+    else:
+        lead_card = {"harness": standing, "set": False}
 
     harness_cards = [_harness_card(hid, target_root, declared_checkout) for hid in named]
     missing = [h["to"] for h in harness_cards if not h.get("present")]
@@ -236,6 +276,7 @@ def onboard(
         "thread_bind": bind_status,
         "root": str(target_root),
         "github": read_github(target_root),
+        "lead": lead_card,
         "repo": repo,
         "named": named,
         "harnesses": harness_cards,

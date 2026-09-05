@@ -38,6 +38,7 @@ Codex custom-prompt namespace, not a second Convoy identity skill.
 
 ## Skills
 
+- `convoy-nudge/` — lead-side recovery for a deaf pane: detect from the tape, relaunch dead chairs scoped, or wake an idle pane with a title-verified keystroke (`scripts/wt-nudge.ps1`); live-proven 2026-09-05
 - `neuron-receive/` — how a neuron on ANY harness receives from the thread
   (feed rows addressed to it, its inbox file), which hook drains for it at
   tool time (grok, claude) and which harnesses must run the loop by hand

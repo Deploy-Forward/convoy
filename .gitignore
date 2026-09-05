@@ -24,6 +24,9 @@ node_modules/
 AGENTS.md
 CLAUDE.md
 
+# Durable-root fixtures for index prune tests (must sit outside OS temp).
+test/demo/_keep_roots/
+
 # Per-seat thread pointer / handoff layer written into a checkout.
 .ola/
 thread.md
