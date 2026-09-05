@@ -72,6 +72,7 @@ Read (no writes to thread state):
 - `graph [--neuron <chair>] [--html [--out <file>]]` — read-only ontology of the thread.
 - `seats [--convoy-id <id>]` — seat rows.
 - `feed --since <10m|2h|1d|45s|ISO>` — events in a window; the card echoes `since_iso`.
+- `relaunch [--thread <name>] [--timeout <s>] [--dry-run]` — after the panes died (shutdown): brings every chair up again from `seats.jsonl` in its own worktree, queues each chair an inbox row saying when it left off (`last_seen`, `unread`, the exact `feed --since <ts>` to run), stamps `kind=relaunch`, and proves connected only from seated acks stamped after the relaunch. Dry shows the timeline and spawns nothing.
 - `rail [--since <window>]` — the strip under the panes: feed events, seats connected | pending | stale (from the seated acks), usage remaining per harness (`null` is unknown, never 0), last stamp, lead. Reads only the thread; from a chair's worktree it finds its thread through the machine index, so every neuron sees one rail.
 - `context [--instance-id <chair>]` — pointer pack for a neuron.
 - `glance [--thread <name>] [--tray]` — one-screen status.

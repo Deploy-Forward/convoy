@@ -8,6 +8,7 @@ Grok Bot bubble history never lands here; a transcript is a pointer at most.
 from __future__ import annotations
 
 import json
+import os
 import re
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -69,8 +70,17 @@ def hook(root: Path, kind: str, summary: str, instance_id: str | None = None, ex
     if extra:
         event.update(extra)
     path = feed_path(root)
-    with path.open("a", encoding="utf-8") as f:
-        f.write(json.dumps(event, separators=(",", ":")) + "\n")
+    # ONE os-level append per row. Four neurons and a lead write this file
+    # concurrently; buffered text-mode appends tore a row in two on Windows
+    # (live 2026-09-05, feed lines 37-39). O_APPEND + a single write() is the
+    # strongest atomicity the OS offers for a small record; the reader still
+    # tolerates a tear (feed_since) so the bus never goes down on one.
+    data = (json.dumps(event, separators=(",", ":")) + "\n").encode("utf-8")
+    fd = os.open(str(path), os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o644)
+    try:
+        os.write(fd, data)
+    finally:
+        os.close(fd)
     return event
 
 def _blank_to_none(val: Any) -> str | None:
@@ -165,11 +175,29 @@ def feed_since(root: Path, since: str) -> list[dict[str, Any]]:
         return []
     out: list[dict[str, Any]] = []
     with path.open(encoding="utf-8-sig") as f:
-        for line in f:
+        for lineno, line in enumerate(f, 1):
             line = line.strip()
             if not line:
                 continue
-            row = json.loads(line)
-            if row.get("ts", "") >= since_iso:
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError as e:
+                # One bad line (a neuron's stray stdout, a torn write) must not
+                # take the whole bus down for every reader (live 2026-09-05:
+                # feed, rail, await-seated all crashed on one row). The line is
+                # kept on disk and surfaced as a row, never dropped silently.
+                row = {"ts": None, "kind": "malformed", "instance_id": None,
+                       "summary": "feed line " + str(lineno) + " is not JSON: " + str(e)[:80],
+                       "raw": line[:200]}
+                if not isinstance(row, dict):
+                    continue
+                out.append(row)
+                continue
+            if not isinstance(row, dict):
+                row = {"ts": None, "kind": "malformed", "instance_id": None,
+                       "summary": "feed line " + str(lineno) + " is not an object", "raw": line[:200]}
+                out.append(row)
+                continue
+            if str(row.get("ts") or "") >= since_iso:
                 out.append(row)
     return out

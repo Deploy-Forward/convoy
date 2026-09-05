@@ -78,6 +78,17 @@ worktree it finds its thread through the machine index, so the neuron, the
 lead and a chat over MCP (`rail` is a public read verb) see one rail. That
 is the definition of done: any neuron rehydrates from the thread alone.
 
+## Relaunch after the panes die
+
+```
+convoy relaunch --thread demo --timeout 300
+```
+
+The thread survived on disk; only the panes died. Every chair comes back in
+its worktree with an inbox row that says when it left off and which
+`feed --since` to run, and it is `connected` again only when it acks after
+the relaunch. Old acks are an old life.
+
 ## What "cloud" means here
 
 The thread is a directory under the bound root. A cloud thread is that same
