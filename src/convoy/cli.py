@@ -17,7 +17,7 @@ from .glance import build_glance, run_tray
 from .graph import build_graph, neighborhood
 from .graph_html import render_html, resume_neuron
 from .identity import ensure_inbox_hooks, install_neuron_identity
-from .index import find_root, index_path, list_threads
+from .index import find_root, index_path, list_threads, prune_threads
 from .activity import neuron_activity
 from .panes import bodies, identify
 from .layer import SCHEMA_VERSION, conductor_stamp, feed_since, hook, parse_since
@@ -178,7 +178,9 @@ def main(argv: list[str] | None = None) -> int:
 
     sub.add_parser("panes", help="every body of every neuron on this thread from the OS process table: pid, via token|cwd, duplicates, unassigned harness processes; never a token")
 
-    sub.add_parser("threads", help="every Convoy thread this machine knows (the global index; present=false when a root is gone)")
+    th = sub.add_parser("threads", help="every Convoy thread this machine knows (the global index; present=false when a root is gone)")
+    th.add_argument("--prune", action="store_true",
+                    help="drop rows whose root is under the OS temp dir or is absent; reports every dropped row")
 
     rs = sub.add_parser("resume", help="resume one neuron at its most recent place: native argv + cwd (dry) or --go to spawn once")
     rs.add_argument("--neuron", required=True, help="chair session_id")
@@ -470,6 +472,10 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(card))
         return 0
     if args.cmd == "threads":
+        if getattr(args, "prune", False):
+            card = prune_threads()
+            print(json.dumps(card))
+            return 0 if card.get("ok") else 1
         print(json.dumps({"ok": True, "index": str(index_path()), "threads": list_threads()}))
         return 0
     if args.cmd == "panes":
