@@ -55,7 +55,9 @@ xAI, and Agent Plugins use different discovery manifests. Installing the
 OpenAI plugin is the revocable permission grant for its declared MCP connection
 and skill; endpoint write gates and exact action consent still apply. Public
 directory submission remains a publisher step after Deploy Forward approves
-privacy and terms URLs and, if used, OpenAI issues a real connector ID.
+privacy and terms URLs and, if used, OpenAI issues a real connector ID. The
+release gates and exact submission sequence are tracked in
+[`docs/openai-plugin-publication.md`](docs/openai-plugin-publication.md).
 
 The canonical local, plugin, and future hosted sequence is documented in
 [`docs/convoy-happy-path.md`](docs/convoy-happy-path.md), including the exact
@@ -142,7 +144,7 @@ convoy mcp --root <thread-root> --port 8788
 
 Then attach `http://127.0.0.1:8788/mcp` in your MCP client. Write tools are
 off by default on the RPC layer: set `CONVOY_MCP_WRITE_TOOLS=1` on a
-gated/loopback deploy to expose `stamp`, `note`, `join`, `seat`, `launch`,
+gated/loopback deploy to expose `send`, `stamp`, `note`, `join`, `seat`, `launch`,
 `crew`, `seated`, `consent`, `await_seated`, `onboard`, `clone`, `mint`,
 `repos`, `resume` with `go=true`, and `inbox` with `drain=true`. An ungated
 public `tools/list` hides the write tools rather than

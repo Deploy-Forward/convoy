@@ -1,6 +1,6 @@
 {
   "name": "convoy",
-  "version": "0.1.0",
+  "version": "0.1.0+codex.20260905015247",
   "description": "Orchestrate multiple AI coding harnesses as neurons on one durable Convoy thread.",
   "author": {
     "name": "Deploy Forward",
