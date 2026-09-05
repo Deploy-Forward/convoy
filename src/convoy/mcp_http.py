@@ -20,6 +20,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 from .bringup import bring_up, ensure_interactive_path, hide_windows, live_applier, live_runner, terminals
+from .rail import build_rail
 from .card import CARD_OUTPUT_SCHEMA, build_card
 from .harness_contract import (
     canonical_harness_id,
@@ -51,7 +52,7 @@ from .graph_html import resume_neuron
 from .index import index_path, list_threads
 from .panes import bodies
 from .gitstate import git_state
-from .layer import SCHEMA_VERSION, conductor_stamp, feed_since, neuron_note
+from .layer import SCHEMA_VERSION, conductor_stamp, feed_since, neuron_note, parse_since
 from .synapse import fake_runner, native_runner, send_one
 from .usage import normalize_usage_remaining, probe
 
@@ -258,7 +259,14 @@ TOOLS: list[dict[str, Any]] = [
         "name": "feed",
         "description": "Layer events since ts (feed contract v2: schema_version + additive kinds — conductor stamps, synapse, refuse+ask). Default last 24h. Not vendor resume; readers skip unknown kinds.",
         "inputSchema": _schema({
-            "since": {"type": "string", "description": "ISO UTC lower bound. Default last 24h."},
+            "since": {"type": "string", "description": "ISO UTC lower bound, or a window: 10m | 2h | 1d | 45s. Default last 24h."},
+        }),
+    },
+    {
+        "name": "rail",
+        "description": "Read-only: the thread rail, the strip under the panes. Feed events in the window, seats connected | pending | stale from the seated acks, usage remaining per harness (null is unknown, never 0), last conductor stamp, lead. Reads only the bound thread, so every neuron and this chat see one rail. Never a token.",
+        "inputSchema": _schema({
+            "since": {"type": "string", "description": "feed window: 10m | 2h | 1d | 45s, or an ISO UTC lower bound. Default 10m."},
         }),
     },
     {
@@ -713,8 +721,17 @@ def _call_tool(root: Path, name: str, arguments: dict[str, Any] | None) -> dict[
             return {"ok": False, "error": str(e)}
     if name == "feed":
         since = _opt_str(args, "since") or _default_since()
-        rows = feed_since(root, since)
-        return {"ok": True, "schema_version": SCHEMA_VERSION, "since": since, "events": rows}
+        try:
+            since_iso = parse_since(since)
+            rows = feed_since(root, since_iso)
+        except ValueError as e:
+            return {"ok": False, "error": str(e), "since": since}
+        return {"ok": True, "schema_version": SCHEMA_VERSION, "since": since, "since_iso": since_iso, "events": rows}
+    if name == "rail":
+        try:
+            return build_rail(root, since=_opt_str(args, "since") or "10m", probe_fn=probe)
+        except ValueError as e:
+            return {"ok": False, "error": str(e)}
     if name == "stamp":
         try:
             row = conductor_stamp(

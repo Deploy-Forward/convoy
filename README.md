@@ -71,7 +71,8 @@ Read (no writes to thread state):
 - `whoami` — which chair is this process? Walks process ancestry to the harness.
 - `graph [--neuron <chair>] [--html [--out <file>]]` — read-only ontology of the thread.
 - `seats [--convoy-id <id>]` — seat rows.
-- `feed --since <ts>` — events since a timestamp.
+- `feed --since <10m|2h|1d|45s|ISO>` — events in a window; the card echoes `since_iso`.
+- `rail [--since <window>]` — the strip under the panes: feed events, seats connected | pending | stale (from the seated acks), usage remaining per harness (`null` is unknown, never 0), last stamp, lead. Reads only the thread; from a chair's worktree it finds its thread through the machine index, so every neuron sees one rail.
 - `context [--instance-id <chair>]` — pointer pack for a neuron.
 - `glance [--thread <name>] [--tray]` — one-screen status.
 - `resume --neuron <chair>` — dry: prints native argv + cwd, spawns nothing.
@@ -82,7 +83,7 @@ Write (thread state):
 
 - `init` — create the thread layer at `--root`.
 - `bind --thread <name>` — bind this root to a named thread.
-- `onboard --to <harness> [--to ...] [--thread <name>] [--checkout-root <path|git-url>] [--github yes|no]` — name installed harnesses and bind; a URL is cloned once under `$CONVOY_HOME/checkouts/<owner>/<repo>` (`.convoy/` and `thread.md` go into that clone's `.git/info/exclude`).
+- `onboard --to <harness> [--to ...] [--thread <name>] [--checkout-root <path|git-url>] [--github yes|no]` — name installed harnesses and bind; a URL is cloned once under `$CONVOY_HOME/checkouts/<owner>/<repo>` (`.convoy/` and `thread.md` go into that clone's `.git/info/exclude`). Whoever launched first conducts: the first harness named on the first onboard becomes `lead`; a later onboard reports it and never steals it.
 - `seat --to <harness> --session-id <chair> [--worktree <path>] [--model M] [--resume <vendor-id>] [--title T] [--effort E]` — register a seated neuron.
 - `join --to <harness> [--worktree <path>] [--title T] [--as <chair>] [--launch] [--consent <id>]` — register one fresh chair.
 - `crew --seat <harness>[,model=M][,effort=E][,where=local|cloud][,title=T] [--seat ...] [--checkout <path>] [--launch]` — N neurons at once: validates every seat first, mints one worktree per local seat, joins every chair with a boot prompt, and (with `--launch`) brings them up in ONE window. Launched is not connected: the card's `seated` snapshot says `pending`.
@@ -92,7 +93,7 @@ Write (thread state):
 - `lead --to <chair> --as <you>` — pass lead to a chair.
 - `hook note "<text>" [--as-me] --to <chair>` — leave a note for a chair (or `grok-bot`).
 - `stamp "<summary>" [--agent A] [--model M] [--effort E] [--transcript <pointer>]` — conductor stamp.
-- `send --to <harness> "<body>" [--live] [--dry-run] [--instance-id <chair>]` — synapse; default runner records a feed row (`delivery: recorded`); `--live` runs a fresh headless vendor session (`executed`); a named live seat queues (`delivery: queued`, `delivered: false`).
+- `send --to <chair|harness> "<body>" [--live] [--dry-run] [--instance-id <chair>]` — synapse. `--to <chair>` (a session_id, e.g. `codex-1-demo`) queues into that chair's inbox in its own worktree (`delivery: queued`, `delivered: false`); `--to <harness>` with a chair already on that harness refuses (naming a vendor is not naming a neuron); default runner records a feed row (`delivery: recorded`); `--live` runs a fresh headless vendor session (`executed`).
 - `inbox [--seat <chair>] [--drain | --hook-pretooluse]` — list or drain the live-seat inbox. The hook command is always `convoy inbox --hook-pretooluse` (never a baked interpreter path).
 - `install --to <harness> --opt-in [--live]` — cataloged installer; dry-run by default.
 

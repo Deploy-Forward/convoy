@@ -20,7 +20,8 @@ from .identity import ensure_inbox_hooks, install_neuron_identity
 from .index import find_root, index_path, list_threads
 from .activity import neuron_activity
 from .panes import bodies, identify
-from .layer import SCHEMA_VERSION, conductor_stamp, feed_since, hook
+from .layer import SCHEMA_VERSION, conductor_stamp, feed_since, hook, parse_since
+from .rail import build_rail, root_for
 from .lifecycle import join, pass_lead, seated_ack, swap
 from .pane_host import close_managed_pane
 from .synapse import fake_runner, native_runner, send_many, send_one
@@ -58,7 +59,10 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("whoami", help="which chair is this body? walks your own process ancestry to the harness and matches it to a chair (token, then cwd); null with an ask when none")
 
     f = sub.add_parser("feed")
-    f.add_argument("--since", required=True)
+    f.add_argument("--since", required=True, help="10m | 2h | 1d | 45s, or an ISO UTC timestamp")
+
+    rl = sub.add_parser("rail", help="the strip under the panes: feed events since, seats connected, usage per harness (null is unknown, never 0), last stamp; reads only the thread, so any neuron sees the same rail")
+    rl.add_argument("--since", default="10m", help="feed window (default 10m)")
 
     st = sub.add_parser("stamp")
     st.add_argument("summary")
@@ -259,9 +263,27 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(row))
         return 0
     if args.cmd == "feed":
-        rows = feed_since(root, args.since)
-        print(json.dumps({"schema_version": SCHEMA_VERSION, "since": args.since, "events": rows}))
+        try:
+            since_iso = parse_since(args.since)
+        except ValueError as e:
+            print(json.dumps({"ok": False, "error": str(e)}))
+            return 1
+        rows = feed_since(root, since_iso)
+        print(json.dumps({"schema_version": SCHEMA_VERSION, "since": args.since, "since_iso": since_iso, "events": rows}))
         return 0
+    if args.cmd == "rail":
+        if not (root / ".convoy" / "id").is_file():
+            # A neuron runs this from its worktree: the pointer bring-up wrote
+            # there, or the thread index seating this worktree, names the
+            # thread root, so the rail it reads is the lead's rail.
+            root = root_for(root) or root
+        try:
+            card = build_rail(root, since=args.since)
+        except ValueError as e:
+            print(json.dumps({"ok": False, "error": str(e)}))
+            return 1
+        print(json.dumps(card))
+        return 0 if card.get("ok") else 1
     if args.cmd == "stamp":
         try:
             row = conductor_stamp(

@@ -305,6 +305,24 @@ def deliver_to_live_seat(
     }
 
 
+def _resolve_chair_address(root: Path, to: str, instance_id: str | None, worktree: str | None) -> tuple[str, str | None, str | None]:
+    """(harness, chair session_id, worktree) when `to` is a chair's
+    session_id on this thread; otherwise everything unchanged."""
+    want = str(to or "").strip()
+    given = instance_id.strip() if isinstance(instance_id, str) and instance_id.strip() else None
+    if not want or given:
+        return to, instance_id, worktree
+    cid = read_id(root)
+    if not cid:
+        return to, instance_id, worktree
+    hits = [s for s in list_seats(root, convoy_id=cid) if s.get("session_id") == want and s.get("to")]
+    if len(hits) != 1:
+        return to, instance_id, worktree
+    seat = hits[0]
+    wt = worktree if worktree else (str(seat["worktree"]) if seat.get("worktree") else None)
+    return str(seat["to"]), str(seat["session_id"]), wt
+
+
 def _send_one(
     root: Path,
     to: str,
@@ -318,6 +336,12 @@ def _send_one(
     resume: str | None = None,
     allow_interactive_resume: bool = True,
 ) -> dict[str, Any]:
+    # Address a CHAIR by its name (`send --to codex-1`): a `to` that is a
+    # chair session_id resolves to that chair's harness, id and worktree. A
+    # harness name never resolves to a chair, even a lone one: that stays
+    # the "seat exists; attach and resume session_id" refusal below, because
+    # naming a vendor is not naming a neuron.
+    to, instance_id, worktree = _resolve_chair_address(root, to, instance_id, worktree)
     cwd_root = Path(worktree).resolve() if worktree else Path(root).resolve()
     cid = read_id(root)
     target_name = str(to or "").strip()
