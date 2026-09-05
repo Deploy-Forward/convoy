@@ -5,6 +5,7 @@ feed, and inbox into the shape the window draws. No store of its own.
 """
 from __future__ import annotations
 
+import gc
 import os
 from datetime import datetime
 from pathlib import Path
@@ -390,7 +391,10 @@ def run_widget(
     UNKNOWN = "#9aa3b2"
     BG = "#ffffff"
 
-    win = tk.Tk()
+    try:
+        win = tk.Tk()
+    except Exception as e:
+        return {"ok": False, "error": "widget requires a display", "detail": type(e).__name__}
     win.title("convoy")
     win.configure(bg=BG)
     win.attributes("-topmost", bool(topmost))
@@ -655,4 +659,7 @@ def run_widget(
     win.update_idletasks()
     n = len((_model().get("threads") or []))
     win.destroy()
+    win.quit()
+    del win
+    gc.collect()
     return {"ok": True, "threads": n, "loop": False}

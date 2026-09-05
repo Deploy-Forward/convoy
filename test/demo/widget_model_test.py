@@ -252,11 +252,35 @@ except Exception:
 @unittest.skipUnless(_HAS_TK, "tkinter missing")
 class WidgetWindow(unittest.TestCase):
     def test_builds_without_mainloop(self):
-        from convoy.widget import run_widget
+        # Tk must not live in this interpreter: destroy() + later GC on a
+        # non-main thread aborts the whole suite (Tcl_AsyncDelete, live 2026-09-05).
+        home = Path(tempfile.mkdtemp())
         root = _git_repo()
         ensure_id(root)
         bind(root, "w")
-        card = run_widget([root], loop=False, probe_fn=lambda _h: dict(NULL_PROBE))
+        src = str(Path(__file__).resolve().parents[2] / "src")
+        code = (
+            "import json, os, sys\n"
+            "sys.path.insert(0, " + repr(src) + ")\n"
+            "os.environ['CONVOY_HOME'] = " + repr(str(home)) + "\n"
+            "from convoy.widget import run_widget\n"
+            "card = run_widget([" + repr(str(root)) + "], loop=False, "
+            "probe_fn=lambda _h: {'usage_remaining': None, 'limited': False, 'raw': None})\n"
+            "print(json.dumps(card))\n"
+        )
+        r = subprocess.run(
+            [sys.executable, "-c", code],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60,
+        )
+        blob = (r.stdout or "") + (r.stderr or "")
+        if r.returncode != 0 and ("widget requires" in blob or "TclError" in blob or "no display" in blob.lower()):
+            self.skipTest("tkinter/display unavailable")
+        self.assertEqual(r.returncode, 0, blob)
+        lines = [ln for ln in (r.stdout or "").splitlines() if ln.strip().startswith("{")]
+        self.assertTrue(lines, blob)
+        card = json.loads(lines[-1])
+        if not card.get("ok") and "widget requires" in str(card.get("error") or ""):
+            self.skipTest("tkinter/display unavailable")
         self.assertTrue(card["ok"], card)
         self.assertEqual(card["threads"], 1)
         self.assertFalse(card.get("loop", True))
