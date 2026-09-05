@@ -40,6 +40,7 @@ One MCP endpoint. What is versioned is the feed contract, not the URL — a name
   - `conductor` — ONE compact line stamped by the conductor (MCP tool `stamp`, CLI `python -m convoy stamp`). Front-matter shape: `agent` / `model` / `effort` real-or-null, optional `instance_id` (the conductor agent id) and `transcript` (a pointer to where the bubble lives, never its bytes). Summary clamps to one line of ≤ 500 chars; a clamp marks `truncated: true`. The Grok Bot bubble history is not a Convoy object; neurons never receive it.
   - `synapse` — unchanged.
   - `refuse` — the feed row now carries the full `ask` card (`action: bring_up`, `handoff: .convoy/handoff/<chair>-<ts>.md`, text), so a sibling pulling `feed --since` sees the remedy without having been the caller.
+  - `heartbeat` — an attributed neuron lifecycle row. Automatic Codex/Claude `Stop` hooks record `event: turn-end`, never git mutation. Explicit `convoy end` records `event: task-end`; only its literal `--push` flag authorizes one plain `git push` after clean/attached/upstream checks. Vendor session/turn ids and assistant messages are never stored; duplicate Stop invocations carry only an opaque derived key.
 - Pack stays pointers. Unknown stays JSON `null`. Neurons pull the thread (`feed --since`); nothing in v2 mints a sibling session or steals a TUI.
 
 ### Feed contract v2.1 (2026-09-01, additive — stress-test increment)
@@ -1101,4 +1102,3 @@ RED live: grok+agy 10:51 ET started together (pids 79160, 94228) but grok argv s
 ### Definition of done
 
 Two live harnesses, two `session_id`s, two hook rows, two compact cards in this thread.
-

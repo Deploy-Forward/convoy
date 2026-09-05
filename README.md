@@ -38,6 +38,32 @@ documents. There is no OAuth step: `.mcp.json` points at
 compatibility surfaces, not the xAI catalog. A Grok Bot Settings path is
 unverified here.
 
+### OpenAI plugin
+
+The OpenAI package lives at [`plugins/convoy`](plugins/convoy), with the
+required `.codex-plugin/plugin.json`, a remote HTTP `.mcp.json`, the canonical
+Deploy Forward logo, and a bundled fail-closed Convoy skill. The repository's
+local Codex marketplace is [`.agents/plugins/marketplace.json`](.agents/plugins/marketplace.json).
+
+```bash
+codex plugin marketplace add <checkout-root>
+codex plugin add convoy@convoy
+```
+
+This package is intentionally separate from `plugin/convoy`: OpenAI, Cursor,
+xAI, and Agent Plugins use different discovery manifests. Installing the
+OpenAI plugin is the revocable permission grant for its declared MCP connection
+and skill; endpoint write gates and exact action consent still apply. Public
+directory submission remains a publisher step after Deploy Forward approves
+privacy and terms URLs and, if used, OpenAI issues a real connector ID. The
+release gates and exact submission sequence are tracked in
+[`docs/openai-plugin-publication.md`](docs/openai-plugin-publication.md).
+
+The canonical local, plugin, and future hosted sequence is documented in
+[`docs/convoy-happy-path.md`](docs/convoy-happy-path.md), including the exact
+chair-addressed `send` path and the tenant-isolation requirement behind the
+word "cloud."
+
 ### Receiving messages needs a command that resolves
 
 Neurons receive through a harness hook, and a hook runs in its own shell that
@@ -99,6 +125,7 @@ Write (thread state):
 - `stamp "<summary>" [--agent A] [--model M] [--effort E] [--transcript <pointer>]` — conductor stamp.
 - `send --to <chair|harness> "<body>" [--live] [--dry-run] [--instance-id <chair>]` — synapse. `--to <chair>` (a session_id, e.g. `codex-1-demo`) queues into that chair's inbox in its own worktree (`delivery: queued`, `delivered: false`); `--to <harness>` with a chair already on that harness refuses (naming a vendor is not naming a neuron); default runner records a feed row (`delivery: recorded`); `--live` runs a fresh headless vendor session (`executed`).
 - `inbox [--seat <chair>] [--drain | --hook-pretooluse]` — list or drain the live-seat inbox. The hook command is always `convoy inbox --hook-pretooluse` (never a baked interpreter path).
+- `end [--summary <text>] [--push | --hook]` — explicit task completion, or the Codex/Claude Stop heartbeat. `--push` authorizes exactly one plain `git push` and refuses dirty, detached, or no-upstream state; `--hook` never pushes.
 - `install --to <harness> --opt-in [--live]` — cataloged installer; dry-run by default.
 
 Launch / panes:
@@ -124,8 +151,8 @@ convoy mcp --root <thread-root> --port 8788
 
 Then attach `http://127.0.0.1:8788/mcp` in your MCP client. Write tools are
 off by default on the RPC layer: set `CONVOY_MCP_WRITE_TOOLS=1` on a
-gated/loopback deploy to expose `stamp`, `note`, `join`, `seat`, `launch`,
-`crew`, `seated`, `consent`, `await_seated`, `nudge`, `onboard`, `clone`, `mint`,
+gated/loopback deploy to expose `send`, `stamp`, `note`, `join`, `seat`, `launch`,
+`crew`, `seated`, `consent`, `await_seated`, `focus`, `nudge`, `onboard`, `clone`, `mint`,
 `repos`, `resume` with `go=true`, and `inbox` with `drain=true`. An ungated
 public `tools/list` hides the write tools rather than
 listing and refusing them, so a listed verb is a promise. Reads (`choices`,
@@ -194,8 +221,8 @@ and their direct-id resume is unverified.
 | Harness | `onboard` / `roster` id | `resume_argv` shape | `ensure_first_run` behavior | `send --live` behavior |
 | --- | --- | --- | --- | --- |
 | `grok` | `grok` | `grok -m <model?> --agent <path?> --resume <vendor-id?>` | Writes PATH ungate block; installs `neuron-identity`; writes Convoy-owned `--agent` file; writes project PreToolUse hook (`convoy inbox --hook-pretooluse`). | Native CLI on PATH. Named live seats queue (`delivery: queued`); never steals `--resume`. |
-| `claude` | `claude` | `claude --resume <vendor-id?>` | Writes PATH ungate block; installs `neuron-identity`; writes project `.claude/settings.json` (ungate + PreToolUse/UserPromptSubmit inbox hooks), merges user `~/.claude/settings.json` skip key, and writes `~/.claude.json` trust project keys. | Native CLI on PATH. Named live seats queue (`delivery: queued`); never steals `--resume`. |
-| `codex` | `codex` | `codex resume <vendor-id?>` (**not** `--resume`) | Writes PATH ungate block; installs `neuron-identity`. No Claude permission-ungate writes. | Native CLI on PATH. Named live seats queue; may `codex queue` (`delivery: native-queued`). |
+| `claude` | `claude` | `claude --resume <vendor-id?>` | Writes PATH ungate block; installs neuron skills plus `.claude/commands/end.md`; writes project `.claude/settings.json` (inbox hooks + Stop heartbeat), merges user `~/.claude/settings.json` skip key, and writes `~/.claude.json` trust project keys. | Native CLI on PATH. Named live seats queue (`delivery: queued`); never steals `--resume`. |
+| `codex` | `codex` | `codex resume <vendor-id?>` (**not** `--resume`) | Writes PATH ungate block; installs neuron skills, `.agents/skills/convoy-end`, and project `.codex/hooks.json` Stop heartbeat. No Claude permission-ungate writes. | Native CLI on PATH. Named live seats queue; may `codex queue` (`delivery: native-queued`). |
 | `cursor-agent` | `cursor-agent` | `cursor-agent --resume <vendor-id?>` | Writes PATH ungate block; installs `neuron-identity`; writes Grok/Claude inbox hook files (swap-safe). Drain via `convoy inbox --drain` (no vendor hook proven). | Native CLI on PATH. Named live seats queue (`delivery: queued`); never steals `--resume`. |
 | `agy` | `agy` | `agy --conversation <vendor-id?>` (live `--help` 2026-09-01: no `--resume`) | Writes PATH ungate block; installs `neuron-identity`; inbox hook files as above. | Native CLI on PATH. Named live seats queue (`delivery: queued`); never steals `--resume`. |
 | `hermes` | `hermes` | `hermes --resume <vendor-id?>` (live `--help` 2026-09-01) | Writes PATH ungate block; installs `neuron-identity`; inbox hook files as above. | Native CLI on PATH. Named live seats queue (`delivery: queued`); never steals `--resume`. |

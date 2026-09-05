@@ -33,6 +33,7 @@ def _probe(ok_for):
 class HookCommandResolution(unittest.TestCase):
     def setUp(self):
         cmd._RESOLVED = None
+        cmd._END_RESOLVED = None
 
     def test_bare_console_script_wins_when_it_probes_ok(self):
         with mock.patch.object(cmd, "_probe_inbox_command", _probe({"convoy inbox --hook-pretooluse"})):
@@ -73,10 +74,26 @@ class HookCommandResolution(unittest.TestCase):
         self.assertIsNotNone(live["command"], "some candidate must resolve on the machine running the suite")
         self.assertIn(live["resolved_via"], ("console-script", "interpreter", "interpreter+src"))
 
+    @unittest.skipUnless(sys.platform == "win32", "Windows shell selection")
+    def test_windows_hook_shell_prefers_git_bash_over_wsl_bash_on_path(self):
+        git_bash = Path(r"C:\Program Files\Git\bin\bash.exe")
+        if not git_bash.is_file():
+            self.skipTest("Git Bash is not installed in the standard location")
+        with mock.patch.object(cmd.shutil, "which", return_value=r"C:\Windows\System32\bash.exe"):
+            shell = cmd.hook_shell()
+        self.assertEqual(shell, [str(git_bash), "-c"])
+
+    def test_end_hook_has_the_same_probed_portable_resolution(self):
+        with mock.patch.object(cmd, "_probe_end_command", _probe({"convoy end --hook"})):
+            result = cmd.resolve_end_hook_command()
+        self.assertEqual(result["command"], "convoy end --hook")
+        self.assertEqual(result["resolved_via"], "console-script")
+
 
 class HookWritersUseResolvedCommand(unittest.TestCase):
     def setUp(self):
         cmd._RESOLVED = None
+        cmd._END_RESOLVED = None
         self.wt = Path(tempfile.mkdtemp())
         self.root = Path(tempfile.mkdtemp())
         (self.root / ".convoy").mkdir()
@@ -103,6 +120,21 @@ class HookWritersUseResolvedCommand(unittest.TestCase):
         self.assertFalse(g["ok"])
         self.assertIn("pipx", g["error"])
         self.assertFalse((self.wt / ".grok" / "hooks" / "convoy-inbox.json").exists())
+
+    def test_codex_and_claude_stop_hooks_share_end_heartbeat(self):
+        from convoy.identity import ensure_end_hooks
+
+        with mock.patch.object(cmd, "_probe_end_command", _probe({"convoy end --hook"})):
+            card = ensure_end_hooks(self.wt, root=self.root)
+        self.assertTrue(card["ok"], card)
+        codex = json.loads((self.wt / ".codex" / "hooks.json").read_text(encoding="utf-8"))
+        claude = json.loads((self.wt / ".claude" / "settings.json").read_text(encoding="utf-8"))
+        self.assertEqual(codex["hooks"]["Stop"][0]["hooks"][0]["command"], "convoy end --hook")
+        self.assertEqual(claude["hooks"]["Stop"][0]["hooks"][0]["command"], "convoy end --hook")
+        self.assertEqual(
+            (self.wt / ".codex" / "convoy-root").read_text(encoding="utf-8").strip(),
+            str(self.root.resolve()),
+        )
 
     def test_a_working_prior_hook_is_kept_not_overwritten(self):
         """grok-lead's baked hook is the only one that ever delivered; a later

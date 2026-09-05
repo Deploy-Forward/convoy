@@ -51,6 +51,7 @@ def _seat_spec(text: str) -> dict:
 
 
 def main(argv: list[str] | None = None) -> int:
+    raw_argv = list(argv) if argv is not None else sys.argv[1:]
     p = argparse.ArgumentParser(prog="convoy")
     p.add_argument("--root", default=".", help="layer root")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -117,6 +118,12 @@ def main(argv: list[str] | None = None) -> int:
     ib.add_argument("--hook-pretooluse", action="store_true", help="Grok/Claude hook JSON on stdout (reads hook_event_name from stdin; on Stop, blocks the stop with the waiting rows as the reason)")
     ib.add_argument("--wait", action="store_true", help="block until a row is pending or --timeout; run it as a BACKGROUND command at the end of your turn so the arriving row wakes you (grok background-task completion wakes the agent)")
     ib.add_argument("--timeout", type=float, default=3600.0, help="seconds for --wait (default 3600)")
+
+    en = sub.add_parser("end", help="record task completion; --hook is the Codex/Claude turn-end heartbeat")
+    mode = en.add_mutually_exclusive_group()
+    mode.add_argument("--push", action="store_true", help="explicitly authorize one plain git push; refuses dirty/detached/no-upstream state")
+    mode.add_argument("--hook", action="store_true", help="read a Stop-hook JSON payload from stdin; heartbeat only, never pushes")
+    en.add_argument("--summary", help="one-line task-end summary (automatic hooks use a fixed heartbeat summary)")
 
     prb = sub.add_parser("probe")
     prb.add_argument("--to", required=True)
@@ -287,7 +294,8 @@ def main(argv: list[str] | None = None) -> int:
     mcp.add_argument("--host", default="127.0.0.1")
     mcp.add_argument("--port", type=int, default=8788)
 
-    args = p.parse_args(argv)
+    args = p.parse_args(raw_argv)
+    root_explicit = any(arg == "--root" or arg.startswith("--root=") for arg in raw_argv)
     root = Path(args.root).resolve()
     # Chats launch from project subfolders: for read verbs, walk up to the
     # nearest .convoy/id when the given root has none (never for writes).
@@ -296,6 +304,34 @@ def main(argv: list[str] | None = None) -> int:
         if found is not None:
             root = found
 
+    if args.cmd == "end":
+        from .end import end_task
+
+        payload = None
+        if args.hook:
+            try:
+                raw = sys.stdin.read()
+                parsed = json.loads(raw) if raw.strip() else None
+                payload = parsed if isinstance(parsed, dict) else {"hook_event_name": "invalid"}
+            except (OSError, json.JSONDecodeError):
+                payload = {"hook_event_name": "invalid"}
+        card = end_task(
+            root=root if root_explicit else None,
+            cwd=Path.cwd(),
+            summary=None if args.hook else args.summary,
+            push=bool(args.push),
+            hook_payload=payload,
+        )
+        if args.hook:
+            # Both Codex and Claude Stop hooks expect hook protocol JSON, not
+            # Convoy's result card. Heartbeat failures are advisory and must
+            # never trap the agent in a Stop loop.
+            if not card.get("ok") and card.get("error"):
+                print("convoy end heartbeat: " + str(card["error"]), file=sys.stderr)
+            print("{}")
+            return 0
+        print(json.dumps(card))
+        return 0 if card.get("ok") else 1
     if args.cmd == "whoami":
         me = identify(root)
         print(json.dumps(me))
