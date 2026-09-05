@@ -295,14 +295,14 @@ a {
 
 .hero-title {
   margin: 0.22rem 0 0;
-  font: 700 clamp(2.35rem, 16vw, 3.9rem) / 0.94 var(--mono);
+  font: 400 clamp(2.35rem, 16vw, 3.9rem) / 0.94 var(--mono);
   letter-spacing: -0.03em;
 }
 
 .hero-line {
   margin: 0.74rem 0 0;
   max-width: 24ch;
-  font: 700 clamp(1.45rem, 7vw, 1.88rem) / 1.05 var(--mono);
+  font: 400 clamp(1.45rem, 7vw, 1.88rem) / 1.05 var(--mono);
   letter-spacing: -0.022em;
 }
 
@@ -395,7 +395,7 @@ a {
   margin: 0;
   max-width: 16ch;
   color: var(--ink);
-  font: 700 clamp(2rem, 9.5vw, 4.7rem) / 0.95 var(--sans);
+  font: 400 clamp(2rem, 9.5vw, 4.7rem) / 0.95 var(--sans);
   letter-spacing: -0.03em;
 }
 
@@ -435,7 +435,7 @@ a {
 .harness-word {
   margin: auto 0 0;
   color: var(--ink);
-  font: 700 clamp(2rem, 12vw, 3.4rem) / 0.92 var(--sans);
+  font: 400 clamp(2rem, 12vw, 3.4rem) / 0.92 var(--sans);
   letter-spacing: -0.03em;
 }
 
@@ -448,7 +448,7 @@ a {
 
 h2 {
   margin: 0 0 0.85rem;
-  font: 700 clamp(1.1rem, 5vw, 1.45rem) / 1.1 var(--mono);
+  font: 400 clamp(1.1rem, 5vw, 1.45rem) / 1.1 var(--mono);
 }
 
 .wire-live {
@@ -654,7 +654,7 @@ h2 {
 .honesty-word {
   margin: auto 0 0;
   color: var(--ink);
-  font: 700 clamp(2rem, 12vw, 3.1rem) / 0.93 var(--sans);
+  font: 400 clamp(2rem, 12vw, 3.1rem) / 0.93 var(--sans);
   letter-spacing: -0.03em;
 }
 
