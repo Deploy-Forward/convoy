@@ -25,6 +25,8 @@ from .layer import SCHEMA_VERSION, conductor_stamp, feed_since, hook, parse_sinc
 from .rail import build_rail, root_for
 from .relaunch import relaunch
 from .lifecycle import join, pass_lead, seated_ack, swap
+from .focus import focus_seat
+from .widget import run_widget
 from .pane_host import close_managed_pane
 from .synapse import fake_runner, native_runner, send_many, send_one
 from .targeted_launch import active_pane_runner, launch_choices, launch_seat
@@ -161,6 +163,15 @@ def main(argv: list[str] | None = None) -> int:
     sw.add_argument("--handoff", required=True, help="fresh .convoy/handoff/<chair>-<ts>.md file written by the outgoing neuron")
     sw.add_argument("--as", dest="author", required=True, help="outgoing neuron's session_id (neuron-authored; conductor asks via stamp)")
 
+    fo = sub.add_parser("focus", help="ask the pane host to highlight one chair; focused:false with reason until a host adapter is evidenced")
+    fo.add_argument("--seat", required=True, help="chair session_id")
+    fo.add_argument("--target", help="host pane id (tmux select-pane -t); omitted -> focused:false")
+
+    wg = sub.add_parser("widget", help="always-on-top tkinter strip: one dot per thread from recent(), expand chairs, click -> focus")
+    wg.add_argument("--topmost", dest="topmost", action="store_true", default=True)
+    wg.add_argument("--no-topmost", dest="topmost", action="store_false")
+    wg.add_argument("--refresh", type=float, default=3.0, help="seconds between model rebuilds (default 3)")
+
     sd = sub.add_parser("seated")
     sd.add_argument("--seat", required=True)
     sd.add_argument("--token", required=True, help="token from the join/swap row (proof-of-life echo)")
@@ -256,7 +267,7 @@ def main(argv: list[str] | None = None) -> int:
     root = Path(args.root).resolve()
     # Chats launch from project subfolders: for read verbs, walk up to the
     # nearest .convoy/id when the given root has none (never for writes).
-    if args.cmd in ("graph", "threads", "panes", "resume", "seats", "feed", "context", "glance", "inbox") and not (root / ".convoy" / "id").is_file():
+    if args.cmd in ("graph", "threads", "panes", "resume", "seats", "feed", "context", "glance", "inbox", "focus") and not (root / ".convoy" / "id").is_file():
         found = find_root(root)
         if found is not None:
             root = found
@@ -412,6 +423,14 @@ def main(argv: list[str] | None = None) -> int:
         except ValueError as e:
             print(json.dumps({"ok": False, "error": str(e)}))
             return 1
+        print(json.dumps(card))
+        return 0 if card.get("ok") else 1
+    if args.cmd == "focus":
+        card = focus_seat(root, args.seat, target=getattr(args, "target", None))
+        print(json.dumps(card))
+        return 0 if card.get("ok") else 1
+    if args.cmd == "widget":
+        card = run_widget(topmost=bool(args.topmost), refresh=float(args.refresh or 3.0))
         print(json.dumps(card))
         return 0 if card.get("ok") else 1
     if args.cmd == "crew":
