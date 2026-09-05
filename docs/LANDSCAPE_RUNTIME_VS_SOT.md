@@ -364,7 +364,7 @@ See `CANON.md` and the terminology lock in `SPEC.md`.
 | Acceptance | Acceptance Testing (`a5236dab-…`) | **RED** | Softened §10; pack≠SoT GREEN; §16 GREEN; clear = live Gate 0 + host-render |
 | Unit | Unit Test | pending | |
 | Integration | Integration Test | pending | |
-| System | System Testing | pending | |
+| System | System Testing (`f5936e5a-…`) | **GREEN** (SPEC) / live wire **RED** ops | Persistence §4/§6/§14 honest; WT owns PTY; Worker≠origin; POST /mcp 405 this probe — tool count null |
 
 ## 19. Related artifacts
 
