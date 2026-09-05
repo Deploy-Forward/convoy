@@ -95,3 +95,36 @@ seat".
 
 Type and color as drawn: monospace throughout, blue `#2f4fd8`-ish accent,
 green CONNECTED, greys for hairlines; Tk fonts Consolas/Menlo fallback.
+
+## Slice 5 (added 2026-09-05T05:1xZ): stale chip + wake, per harness, evidenced
+
+Stale chip: per chair, from the tape only: `last_authored` (newest feed row
+with from/instance_id = chair), `last_drained` (newest consumed marker in
+its inbox), `waiting` (undrained rows), `idle_s` (now - max of the two),
+`body` (panes proves a live process | null). Chip states: `working`
+(authored or drained within N s, default 300), `idle` (body live, nothing
+in N s), `stale` (waiting > 0 and idle > N), `gone` (no body). Thresholds
+are flags, not constants. Rendered on every chair row and summed on the
+thread dot (a red ring when any chair is stale). Live case to reproduce:
+g1 2026-09-05 04:56-05:05Z, 3 rows waiting, body alive, hook silent.
+
+Wake (`nudge --seat <chair>`): a wake is a per-harness FACT to be tested,
+not assumed. Marco: "we haven't done enough pen-testing to count grok out;
+we can send keys directly to a specific pane". So slice 5b is an
+experiment matrix, run by g2 on its own grok pane and on a codex pane,
+evidence recorded in harness_effort.json style (command, observed, ts):
+  - codex: native queue (exists) - confirm it wakes an IDLE pane.
+  - grok: (1) keystroke into the pane: focus the exact pane in the host
+    (tmux `select-pane -t` + `send-keys`; Windows Terminal: find the pane's
+    HWND/window, `focus-pane`/`focus-tab` if addressable, then SendInput of
+    Enter or a no-op line) and observe whether the PreToolUse hook drains;
+    (2) ACP leader `session/prompt` when `grok leader list` shows one
+    (grok-lead's branch origin/feat/grok-acp-session-prompt); (3) anything
+    grok --help evidences. Record what woke it and what did not.
+  - claude: SessionStart/PreToolUse only, or a keystroke as above.
+Rules: nudge runs only on the user's own machine, behind the write gate
+and a consent card that names the pane and the exact keys; never on the
+public MCP; never a WM_CHAR into a pane Convoy cannot prove is that chair
+(panes via token/cwd); a nudge that lands returns `delivery: nudged`,
+never `delivered` (the ack proves that). Refuse when the target pane
+cannot be identified: a keystroke into the wrong pane is worse than idle.
