@@ -140,6 +140,26 @@ class WidgetApi:
         except (ValueError, OSError) as e:
             return {"ok": False, "delivery": "refused", "error": str(e)}
 
+    def tune(self, root: str, seat: str, model: Any = "__keep__", effort: Any = "__keep__") -> dict[str, Any]:
+        """Rewrite one chair's declared model/effort through the same `seat`
+        write the CLI uses (validated against the harness contract; a refused
+        value never lands). Everything else on the row is kept."""
+        from .convoy import list_seats, seat as write_seat
+        r = Path(root)
+        row = next((x for x in list_seats(r) if x.get("session_id") == seat), None)
+        if row is None:
+            return {"ok": False, "error": "unknown seat: " + seat}
+        new_model = row.get("model") if model == "__keep__" else (model or None)
+        new_effort = row.get("effort") if effort == "__keep__" else (effort or None)
+        try:
+            out = write_seat(r, str(row.get("to")), seat, worktree=row.get("worktree"), model=new_model,
+                             resume=row.get("resume"), title=row.get("title"), agent=row.get("agent"),
+                             effort=new_effort, where=row.get("where"))
+        except ValueError as e:
+            return {"ok": False, "error": str(e)}
+        return {"ok": True, "seat": out, "applied_to_live_pane": False,
+                "note": "the seat row is rewritten; a running pane keeps its own settings until its next launch"}
+
     def pin(self, on: bool) -> dict[str, Any]:
         self.pinned = bool(on)
         applied = self.on_pin(self.pinned) if self.on_pin else None
@@ -238,6 +258,10 @@ def make_handler(api: WidgetApi):
             if p == "/api/nudge":
                 return self._json(api.nudge(str(body.get("root") or "."), str(body.get("seat") or ""),
                                             dry_run=body.get("dry_run", True), consent=body.get("consent"), force=bool(body.get("force"))))
+            if p == "/api/tune":
+                return self._json(api.tune(str(body.get("root") or "."), str(body.get("seat") or ""),
+                                           model=body["model"] if "model" in body else "__keep__",
+                                           effort=body["effort"] if "effort" in body else "__keep__"))
             if p == "/api/pin":
                 return self._json(api.pin(bool(body.get("on"))))
             if p == "/api/plus":

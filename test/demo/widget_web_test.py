@@ -97,6 +97,18 @@ class Server(unittest.TestCase):
         self.assertFalse(r["ok"]); self.assertIn(r.get("delivery"), ("refused", None))
         self.assertNotIn("nudge_id", r)
 
+    def test_tune_rewrites_the_seat_through_the_contract(self):
+        from convoy.convoy import seat as write_seat, list_seats
+        write_seat(self.root, "grok", "grok-1", effort="low")
+        r = self.post("/api/tune", {"root": str(self.root), "seat": "grok-1", "effort": "high"})
+        self.assertTrue(r["ok"], r); self.assertFalse(r["applied_to_live_pane"])
+        row = next(x for x in list_seats(self.root) if x["session_id"] == "grok-1")
+        self.assertEqual(row["effort"], "high"); self.assertEqual(row["to"], "grok")
+        bad = self.post("/api/tune", {"root": str(self.root), "seat": "grok-1", "effort": "ultra"})
+        self.assertFalse(bad["ok"]); self.assertIn("effort", bad["error"])
+        self.assertEqual(next(x for x in list_seats(self.root) if x["session_id"] == "grok-1")["effort"], "high", "a refused value never lands")
+        self.assertFalse(self.post("/api/tune", {"root": str(self.root), "seat": "nobody", "effort": "high"})["ok"])
+
     def test_pin_and_unknown_paths(self):
         self.assertEqual(self.post("/api/pin", {"on": False})["on"], False)
         req = urllib.request.Request(self.url + "/api/nothing", data=b"{}", method="POST", headers={"Content-Type": "application/json"})
