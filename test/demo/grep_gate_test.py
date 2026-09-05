@@ -181,6 +181,11 @@ class SoTWriterGate(unittest.TestCase):
                 stripped = line.strip()
                 if stripped.startswith("#") or stripped.startswith('"""') or stripped.startswith("'''"):
                     continue
+                # labelled legacy fallback in docs/comments is allowed; product
+                # pointers (ask cards, CLI help, pack keys) are not.
+                low = stripped.lower()
+                if "legacy" in low or "old `" in stripped or "old '" in stripped:
+                    continue
                 if OLA_PATH.search(line):
                     hits.append(f"{path.name}:{i}:{stripped}")
         self.assertEqual(hits, [], "handoff belongs under .convoy/handoff/: " + " | ".join(hits[:12]))
