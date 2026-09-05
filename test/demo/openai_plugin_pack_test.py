@@ -38,7 +38,7 @@ class OpenAIPluginPackContract(unittest.TestCase):
         self.assertIn("can never push", skill)
         self.assertIn("allow_implicit_invocation: false", agent)
 
-    def test_end_skill_is_identical_in_plugin_package_cli_package_and_project(self):
+    def test_end_skill_is_identical_in_plugin_and_cli_distributions(self):
         packaged_paths = (
             REPO / "skills" / "convoy-end" / "SKILL.md",
             REPO / "src" / "convoy" / "harness_skills" / "convoy-end" / "SKILL.md",
@@ -48,9 +48,6 @@ class OpenAIPluginPackContract(unittest.TestCase):
         for path in packaged_paths:
             self.assertTrue(path.is_file(), str(path))
             self.assertEqual(path.read_bytes(), expected, str(path))
-        project = REPO / ".agents" / "skills" / "convoy-end" / "SKILL.md"
-        self.assertEqual(project.read_text(encoding="utf-8"), expected.decode("utf-8"))
-
     def test_remote_mcp_uses_official_http_shape(self):
         data = json.loads((PLUGIN / ".mcp.json").read_text(encoding="utf-8"))
         server = data["mcpServers"]["convoy"]

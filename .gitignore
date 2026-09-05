@@ -20,6 +20,7 @@ node_modules/
 .claude/
 .grok/
 .codex/
+.agents/skills/
 AGENTS.md
 CLAUDE.md
 

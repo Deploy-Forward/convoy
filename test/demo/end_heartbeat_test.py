@@ -84,6 +84,23 @@ class EndHeartbeat(unittest.TestCase):
         self.assertTrue(card["ok"])
         self.assertTrue(card["skipped"])
 
+    def test_claude_stop_without_turn_id_still_deduplicates_privately(self):
+        payload = {
+            "hook_event_name": "Stop",
+            "cwd": str(self.wt),
+            "session_id": "claude-private-session",
+            "last_assistant_message": "same private final answer",
+        }
+        first = end_task(root=self.root, hook_payload=payload)
+        second = end_task(root=self.root, hook_payload=payload)
+        self.assertTrue(first["ok"])
+        self.assertTrue(second["deduplicated"])
+        rows = [row for row in self._feed() if row.get("kind") == "heartbeat"]
+        self.assertEqual(len(rows), 1)
+        raw = json.dumps(rows[0])
+        self.assertNotIn("claude-private-session", raw)
+        self.assertNotIn("same private final answer", raw)
+
     def test_explicit_push_refuses_dirty_state_without_running_push(self):
         git = FakeGit(dirty=True)
         card = end_task(root=self.root, cwd=self.wt, push=True, git_runner=git)

@@ -28,10 +28,9 @@ convoy end [--summary "one line"] [--push]
 - If identity is ambiguous, the worktree is dirty, HEAD is detached, or no
   upstream exists, report the refusal and leave git unchanged.
 
-Codex's preferred native invocation is `$convoy-end --push`. Codex custom
-prompts are deprecated and use the namespaced spelling
-`/prompts:end --push`; there is no supported arbitrary `/end` extension point.
-Claude receives a project command at `.claude/commands/end.md`, so `/end
+Codex's native invocation is `$convoy-end --push`; there is no supported
+arbitrary `/end` extension point. Claude receives a project command at
+`.claude/commands/end.md`, so `/end
 --push` is available there after the command is installed/reloaded.
 
 The Codex and Claude `Stop` hooks use `convoy end --hook`. That automatic path
