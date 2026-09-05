@@ -178,6 +178,7 @@ def main(argv: list[str] | None = None) -> int:
     ng.add_argument("--target", help="tmux pane id for send-keys -t")
     ng.add_argument("--dry-run", action="store_true", help="identify only; never send, never consume consent")
     ng.add_argument("--consent", help="one-time nudge-pane consent returned by `convoy consent --grant`")
+    ng.add_argument("--walk", action="store_true", help="opt-in: when the WT title is not unique, Alt+Arrow-walk the recorded crew window, re-reading the title; type only into a pane a rule proves is this chair")
 
     sw = sub.add_parser("swap")
     sw.add_argument("--seat", required=True, help="chair session_id (identity survives the swap)")
@@ -537,6 +538,7 @@ def main(argv: list[str] | None = None) -> int:
             keys=args.keys,
             dry_run=args.dry_run,
             target=args.target,
+            walk=bool(getattr(args, "walk", False)),
         )
         print(json.dumps(card))
         return 0 if card.get("ok") else 1
