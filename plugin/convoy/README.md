@@ -111,7 +111,7 @@ them for two different reasons, and the wizard's Gate 0 tells them apart:
 - **redeploy** - the public deploy lags `main`, so a registered verb is not
   served yet. A redeploy fixes it.
 - **write-gated** - of the verbs the wizard needs, `repos`, `clone`, `onboard`,
-  `crew`, `consent`, and `await_seated` are hidden on an ungated process
+  `crew`, `consent`, `await_seated`, and `send` are hidden on an ungated process
   (onboard binds the thread and clones a URL; `clone` is the explicit git
   clone the sequence may call; crew mints worktrees, joins N chairs and may
   spawn the window; `repos` runs `gh repo list` as the MCP host's own login,

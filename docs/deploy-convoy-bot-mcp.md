@@ -27,9 +27,36 @@ The repository records the production variable and route in `wrangler.jsonc`.
 The tunnel UUID, connector credentials, origin checkout path, thread root and
 service-manager configuration do not belong in Git.
 
-## Current restart blocker
+## Current production state
 
-At the time this runbook was written, the tunnel was healthy and its connectors
+The Windows origin was recovered on 2026-09-04. The old listener was an
+orphaned foreground Python process: its parent no longer existed and no
+service or scheduled task owned it. The replacement was proven on a spare
+loopback port before cutover, then installed as the user-level scheduled task
+`ConvoyBotMcp` with restart-on-failure and an at-logon trigger.
+
+The production worktree is detached at merged commit `6b8670a`; its dedicated
+virtual environment is the task's interpreter. After cutover, both loopback
+and `https://convoy.bot/mcp` returned:
+
+```text
+serverInfo.version = 0.1.0+6b8670a
+tools/list count = 20
+onboard listed = false
+direct onboard call = write tool disabled
+GET /mcp = 200 (attach page)
+```
+
+This closes the stale-origin incident, not the authenticated cloud-product
+work. Keep the scheduled-task definition and machine-local root outside Git.
+For the next deploy, stage and smoke-test the new merged SHA on a spare port,
+update the task action to that pinned worktree/interpreter, start it, and prove
+loopback before proving the edge.
+
+## Historical restart blocker (closed 2026-09-04)
+
+At the time the first version of this runbook was written, the tunnel was
+healthy and its connectors
 were serving `127.0.0.1:8788`, but this repository and the Cursor Linux cloud VM
 had none of the following:
 

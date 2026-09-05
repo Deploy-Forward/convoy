@@ -285,6 +285,7 @@ class PublicWriteToolGate(unittest.TestCase):
         names = [t["name"] for t in self._rpc("tools/list", {})["result"]["tools"]]
         self.assertNotIn("stamp", names)
         self.assertNotIn("note", names)
+        self.assertNotIn("send", names)
         self.assertIn("feed", names)
         self.assertIn("roster", names)
 
@@ -293,6 +294,8 @@ class PublicWriteToolGate(unittest.TestCase):
         self.assertTrue(resp["result"]["isError"])
         self.assertIn("disabled", resp["result"]["structuredContent"]["error"])
         resp = self._rpc("tools/call", {"name": "note", "arguments": {"summary": "gated", "instance_id": "seat-x"}})
+        self.assertTrue(resp["result"]["isError"])
+        resp = self._rpc("tools/call", {"name": "send", "arguments": {"to": "codex", "body": "must not enqueue"}})
         self.assertTrue(resp["result"]["isError"])
         self.assertEqual(feed_since(self.root, "1970-01-01T00:00:00.000000Z"), [])
 
@@ -304,6 +307,7 @@ class PublicWriteToolGate(unittest.TestCase):
             names = [t["name"] for t in self._rpc("tools/list", {})["result"]["tools"]]
             self.assertIn("stamp", names)
             self.assertIn("note", names)
+            self.assertIn("send", names)
             resp = self._rpc("tools/call", {"name": "note", "arguments": {"summary": "gated open", "instance_id": "seat-x", "to": "grok-bot"}})
             self.assertFalse(resp["result"]["isError"])
         rows = feed_since(self.root, "1970-01-01T00:00:00.000000Z")
@@ -312,6 +316,32 @@ class PublicWriteToolGate(unittest.TestCase):
     def test_in_process_call_tool_is_not_gated(self):
         card = call_tool(self.root, "stamp", {"summary": "in-process conductor line"})
         self.assertTrue(card["ok"])
+
+    def test_public_tool_annotations_are_complete_and_read_only(self):
+        tools = self._rpc("tools/list", {})["result"]["tools"]
+        self.assertTrue(tools)
+        for tool in tools:
+            self.assertEqual(
+                set(tool.get("annotations", {})),
+                {"readOnlyHint", "destructiveHint", "openWorldHint"},
+                tool["name"],
+            )
+            self.assertTrue(tool["annotations"]["readOnlyHint"], tool["name"])
+            self.assertFalse(tool["annotations"]["destructiveHint"], tool["name"])
+            self.assertFalse(tool["annotations"]["openWorldHint"], tool["name"])
+
+    def test_gated_annotations_mark_actions_without_mislabeling_reads(self):
+        import os
+        from unittest import mock
+
+        with mock.patch.dict(os.environ, {"CONVOY_MCP_WRITE_TOOLS": "1"}):
+            tools = {t["name"]: t for t in self._rpc("tools/list", {})["result"]["tools"]}
+        for name in ("send", "bring_up", "install", "resume", "inbox"):
+            self.assertFalse(tools[name]["annotations"]["readOnlyHint"], name)
+        self.assertTrue(tools["send"]["annotations"]["destructiveHint"])
+        self.assertTrue(tools["repos"]["annotations"]["readOnlyHint"])
+        self.assertTrue(tools["await_seated"]["annotations"]["readOnlyHint"])
+        self.assertTrue(tools["feed"]["annotations"]["readOnlyHint"])
 
 
 class ServerBuildId(unittest.TestCase):

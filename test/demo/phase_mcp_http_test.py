@@ -39,6 +39,11 @@ def _tool_payload(resp):
 
 class PhaseMcpHttp(unittest.TestCase):
     def setUp(self):
+        # This phase exercises the complete MCP contract, including send.
+        # Anonymous/public behavior has dedicated gate and redaction suites.
+        self._write_gate = mock.patch.dict(os.environ, {"CONVOY_MCP_WRITE_TOOLS": "1"})
+        self._write_gate.start()
+        self.addCleanup(self._write_gate.stop)
         self.root = Path(tempfile.mkdtemp())
         (self.root / ".ola").mkdir()
         (self.root / ".ola" / "brief.md").write_text("brief-pointer")

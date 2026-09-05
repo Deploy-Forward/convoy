@@ -64,6 +64,8 @@ class NeuronIdentity(unittest.TestCase):
         self.assertTrue(codex_prompt.is_file())
         self.assertIn("Raw slash-command arguments", codex_prompt.read_text(encoding="utf-8"))
         self.assertEqual(card["codex_prompt"]["path"], str(codex_prompt))
+        self.assertTrue((self.wt / ".agents" / "skills" / "convoy-end" / "SKILL.md").is_file())
+        self.assertTrue((self.wt / ".claude" / "commands" / "end.md").is_file())
 
     def test_install_idempotent_and_preserves_agents_body(self):
         (self.wt / "AGENTS.md").write_text("# keep me\n\nuser rules stay\n", encoding="utf-8")

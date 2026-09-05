@@ -269,6 +269,7 @@ class LiveSeatInbox(unittest.TestCase):
         self.assertNotIn("permissions", claude_data)
         self.assertTrue((self.wt / ".grok" / "convoy-root").is_file())
         self.assertTrue((self.wt / ".claude" / "convoy-root").is_file())
+        self.assertTrue((self.wt / ".codex" / "convoy-root").is_file())
 
     def test_all_seven_harnesses_have_an_honest_kind(self):
         seven = ("grok", "claude", "codex", "cursor-agent", "agy", "hermes", "pi")
