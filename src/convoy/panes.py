@@ -318,7 +318,13 @@ def identify(root: Path, pid: int | None = None, procs: list[dict[str, Any]] | N
     (via "worktree"); else an ancestor harness exe plus cwd == worktree (via
     "cwd"); else null with an `ask`. Never a token in the result."""
     root = Path(root)
-    procs = procs if procs is not None else (_TEST_PROCS if _TEST_PROCS is not None else _safe_enumerate())
+    enum_error = None
+    if procs is not None:
+        pass
+    elif _TEST_PROCS is not None:
+        procs = _TEST_PROCS
+    else:
+        procs, enum_error = _safe_enumerate()
     me = pid if pid is not None else (_TEST_PID if _TEST_PID is not None else os.getpid())
     here = cwd if cwd is not None else os.getcwd()
     # Which thread does the cwd walk up to, and is it this root's thread? A
@@ -372,14 +378,17 @@ def identify(root: Path, pid: int | None = None, procs: list[dict[str, Any]] | N
            "ask": "no chair on this thread matches your body: join (" + convoy_root_command(root) +
                   " join --to <harness> --worktree " + str(here) + ") or seat this worktree, then retry"}
     out.update(ctx)   # a conflict ask replaces the join ask: fix the root first
+    if enum_error:
+        out["error"] = enum_error
+        out["ask"] = "process table unreadable (" + enum_error + "); retry whoami"
     return out
 
 
-def _safe_enumerate() -> list[dict[str, Any]]:
+def _safe_enumerate() -> tuple[list[dict[str, Any]], str | None]:
     try:
-        return enumerate_processes()
-    except (OSError, subprocess.SubprocessError, ValueError):
-        return []
+        return enumerate_processes(), None
+    except (OSError, subprocess.SubprocessError, ValueError) as e:
+        return [], type(e).__name__ + ": " + str(e)
 
 
 def chair_live(root: Path, session_id: str, procs: list[dict[str, Any]] | None = None) -> bool:

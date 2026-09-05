@@ -167,6 +167,12 @@ def _resolve_wt_bin(wt: str | None = None) -> str:
     return name or "wt"
 
 
+def pane_host_available() -> bool:
+    """True when a pane host (wt) is actually on PATH, not just a bare name."""
+    found = shutil.which("wt") or shutil.which("wt.exe")
+    return bool(found)
+
+
 def _pane_dedup_key(seat: dict[str, Any]) -> str:
     """worktree if set, else resume_key, else session_id, else to."""
     s = seat or {}

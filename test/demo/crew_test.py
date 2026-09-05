@@ -204,10 +204,16 @@ class CrewMintsJoinsAndLaunchesOnce(unittest.TestCase):
         self.assertFalse(card["launched"], card)
         self.assertIn("wt.exe: not found", card["error"])
         self.assertEqual(len(card["seats"]), 1)
+        self.assertTrue(card["partial"])
+        self.assertEqual(card["recovery"][0]["verb"], "launch --seat " + card["seats"][0]["session_id"])
         card = crew(self.root, [{"harness": "claude"}], runner=mock.Mock(side_effect=OSError("access denied")))
         self.assertFalse(card["ok"])
         self.assertFalse(card["launched"], card)
         self.assertIn("access denied", card["error"])
+        self.assertTrue(card["partial"])
+        self.assertEqual(len(card["recovery"]), 1)
+        self.assertEqual(card["recovery"][0]["verb"], "launch --seat " + card["seats"][0]["session_id"])
+        self.assertEqual(card["recovery"][0]["session_id"], card["seats"][0]["session_id"])
         # mint refused (checkout is not a git repo): joined nothing, launched nothing
         runner = mock.Mock(return_value={"ok": True, "pid": 3})
         card = crew(self.root, [{"harness": "codex"}], checkout=Path(tempfile.mkdtemp()), runner=runner)
@@ -215,6 +221,18 @@ class CrewMintsJoinsAndLaunchesOnce(unittest.TestCase):
         self.assertIn("mint refused", card["error"])
         self.assertFalse(card["launched"], card)
         runner.assert_not_called()
+
+    def test_missing_pane_host_refuses_before_mint(self):
+        minted = Recorder()
+        runner = mock.Mock(return_value={"ok": True, "pid": 1})
+        with mock.patch("convoy.bringup.shutil.which", return_value=None):
+            card = crew(self.root, [{"harness": "grok"}], runner=runner, mint_runner=minted)
+        self.assertFalse(card["ok"])
+        self.assertIn("pane host", card["error"])
+        self.assertEqual(minted.calls, [])
+        self.assertEqual(list_seats(self.root), [])
+        runner.assert_not_called()
+        self.assertFalse(card.get("partial"))
 
     def test_launch_false_writes_the_chairs_and_spawns_nothing(self):
         card = crew(self.root, [{"harness": "grok"}, {"harness": "claude"}])
