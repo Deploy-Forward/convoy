@@ -28,7 +28,9 @@ from .relaunch import relaunch
 from .lifecycle import join, pass_lead, seated_ack, swap
 from .focus import focus_seat
 from .widget import run_widget
+from .widget_service import auto_widget_service, convoy_home, ensure_widget_service
 from .nudge import nudge_seat
+from .wt_walk import record_crew_window
 from .pane_host import close_managed_pane
 from .synapse import fake_runner, native_runner, send_many, send_one
 from .targeted_launch import active_pane_runner, launch_choices, launch_seat
@@ -73,6 +75,7 @@ def main(argv: list[str] | None = None) -> int:
     rlx.add_argument("--timeout", type=float, default=0.0, help="seconds to wait for fresh seated acks; 0 is one snapshot")
     rlx.add_argument("--dry-run", action="store_true", help="show the windows and the per-chair timeline; spawn and write nothing")
     rlx.add_argument("--seat", action="append", help="relaunch only this chair (repeat); default every chair. Use it when some panes are still alive")
+    rlx.add_argument("--no-widget", action="store_true", help="do not start the widget service after bring-up")
 
     rl = sub.add_parser("rail", help="the strip under the panes: feed events since, seats connected, usage per harness (null is unknown, never 0), last stamp; reads only the thread, so any neuron sees the same rail")
     rl.add_argument("--since", default="10m", help="feed window (default 10m)")
@@ -160,6 +163,7 @@ def main(argv: list[str] | None = None) -> int:
     cw.add_argument("--checkout", help="git checkout to mint worktrees from (default: the root)")
     cw.add_argument("--thread", help="must match the bound thread")
     cw.add_argument("--launch", action="store_true", help="spawn the window once; default writes chairs and shows the argv")
+    cw.add_argument("--no-widget", action="store_true", help="do not start the widget service after --launch")
 
     aw = sub.add_parser("await-seated", help="observe the chairs' seated acks (connected | pending | stale) with the seconds waited")
     aw.add_argument("--seat", action="append", required=True, help="chair session_id (repeat)")
@@ -185,6 +189,12 @@ def main(argv: list[str] | None = None) -> int:
     ng.add_argument("--target", help="tmux pane id for send-keys -t")
     ng.add_argument("--dry-run", action="store_true", help="identify only; never send, never consume consent")
     ng.add_argument("--consent", help="one-time nudge-pane consent returned by `convoy consent --grant`")
+    ng.add_argument("--walk", action="store_true", help="opt-in: when the WT title is not unique, Alt+Arrow-walk the recorded crew window, re-reading the title; type only into a pane a rule proves is this chair")
+    ng.add_argument("--force", action="store_true", help="repeat a nudge whose last nudge_id has no ack from the chair yet (refused otherwise)")
+
+    cwr = sub.add_parser("crew-window", help="record THE Windows Terminal window of this crew as a kind=crew-window feed row (hwnd); the only writer nudge --walk reads")
+    cwr.add_argument("--hwnd", type=int, help="window handle of a visible Windows Terminal window")
+    cwr.add_argument("--foreground", action="store_true", help="record the window that has the foreground now (run it from inside the crew window)")
 
     sw = sub.add_parser("swap")
     sw.add_argument("--seat", required=True, help="chair session_id (identity survives the swap)")
@@ -202,6 +212,7 @@ def main(argv: list[str] | None = None) -> int:
     wg.add_argument("--topmost", dest="topmost", action="store_true", default=True)
     wg.add_argument("--no-topmost", dest="topmost", action="store_false")
     wg.add_argument("--refresh", type=float, default=3.0, help="seconds between model rebuilds (default 3)")
+    wg.add_argument("--service", action="store_true", help="start one detached widget per machine (pidfile $CONVOY_HOME/widget.pid); alive -> already:true, no second window")
 
     sd = sub.add_parser("seated")
     sd.add_argument("--seat", required=True)
@@ -362,6 +373,8 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.cmd == "relaunch":
         card = relaunch(root, thread=args.thread, runner=None if args.dry_run else live_runner, timeout=args.timeout, seats=args.seat)
+        if card.get("ok") and not args.dry_run:
+            card["widget_service"] = auto_widget_service(disabled=bool(args.no_widget))
         print(json.dumps(card))
         return 0 if card.get("ok") else 1
     if args.cmd == "rail":
@@ -520,6 +533,10 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(card))
         return 0 if card.get("ok") else 1
     if args.cmd == "widget":
+        if args.service:
+            card = ensure_widget_service(convoy_home())
+            print(json.dumps(card))
+            return 0 if card.get("ok") else 1
         card = run_widget(topmost=bool(args.topmost), refresh=float(args.refresh or 3.0))
         print(json.dumps(card))
         return 0 if card.get("ok") else 1
@@ -531,6 +548,8 @@ def main(argv: list[str] | None = None) -> int:
             return 1
         card = crew(root, seats, thread=args.thread, checkout=args.checkout,
                     runner=live_runner if args.launch else None)
+        if card.get("ok") and args.launch:
+            card["widget_service"] = auto_widget_service(disabled=bool(args.no_widget))
         print(json.dumps(card))
         return 0 if card.get("ok") else 1
     if args.cmd == "await-seated":
@@ -573,7 +592,13 @@ def main(argv: list[str] | None = None) -> int:
             keys=args.keys,
             dry_run=args.dry_run,
             target=args.target,
+            walk=bool(getattr(args, "walk", False)),
+            force=bool(getattr(args, "force", False)),
         )
+        print(json.dumps(card))
+        return 0 if card.get("ok") else 1
+    if args.cmd == "crew-window":
+        card = record_crew_window(root, hwnd=args.hwnd, foreground=bool(args.foreground))
         print(json.dumps(card))
         return 0 if card.get("ok") else 1
     if args.cmd == "seats":
