@@ -49,8 +49,9 @@ from .lifecycle import join as join_chair, seated_ack
 from .consent import grant_consent
 from .crew import await_seated, crew as crew_chairs
 from .targeted_launch import active_pane_runner, launch_choices, launch_seat
+from .focus import focus_seat
 from .graph_html import resume_neuron
-from .index import index_path, list_threads
+from .index import index_path, list_threads, prune_threads
 from .panes import bodies
 from .gitstate import git_state
 from .layer import SCHEMA_VERSION, conductor_stamp, feed_since, neuron_note, parse_since
@@ -108,7 +109,7 @@ HARNESSES = tuple((row["id"], str(row.get("name") or row["id"])) for row in harn
 # life; consent mints a one-time grant. await_seated only reads, but it holds
 # the request thread up to its timeout, which a public endpoint must not offer.
 _WRITE_TOOLS = frozenset({"stamp", "note", "seat", "join", "launch", "onboard", "clone", "mint", "repos",
-                          "crew", "seated", "consent", "await_seated"})
+                          "crew", "seated", "consent", "await_seated", "focus"})
 AWAIT_SEATED_MAX_S = 600.0
 
 
@@ -364,8 +365,8 @@ TOOLS: list[dict[str, Any]] = [
     },
     {
         "name": "threads",
-        "description": "Every Convoy thread this machine's index knows (convoy_id, thread, root, updated_at). present=false when the root is gone or its id changed; never a token.",
-        "inputSchema": _schema({}),
+        "description": "Every Convoy thread this machine's index knows (convoy_id, thread, root, updated_at). present=false when the root is gone or its id changed; never a token. prune=true drops temp-dir and absent roots and reports every dropped row (write-gated, like resume go=true).",
+        "inputSchema": _schema({"prune": {"type": "boolean", "default": False, "description": "drop temp-dir and absent roots from the machine index; reports every dropped row"}}),
     },
     {
         "name": "resume",
@@ -448,6 +449,15 @@ TOOLS: list[dict[str, Any]] = [
         "inputSchema": _schema(
             {"seat": {"type": "string", "description": "chair session_id from join"},
              "consent": {"type": "string"}},
+            required=["seat"],
+        ),
+    },
+    {
+        "name": "focus",
+        "description": "Ask the pane host to highlight one chair (write gate: this is a host action). tmux: select-pane -t when a target is supplied. Windows Terminal: focused=false with reason until a pane-target adapter is evidenced. Never a token.",
+        "inputSchema": _schema(
+            {"seat": {"type": "string", "description": "chair session_id"},
+             "target": {"type": "string", "description": "tmux pane id for select-pane -t"}},
             required=["seat"],
         ),
     },
@@ -714,6 +724,11 @@ def _call_tool(root: Path, name: str, arguments: dict[str, Any] | None) -> dict[
         except ValueError as e:
             return {"ok": False, "error": str(e)}
     if name == "threads":
+        if args.get("prune"):
+            if not _write_tools_enabled():
+                return {"ok": False, "dropped": [], "n_dropped": None, "kept": None,
+                        "error": "threads prune=true is behind the write gate on this process (set CONVOY_MCP_WRITE_TOOLS=1 on a gated/loopback deploy); dry list allowed"}
+            return prune_threads()
         return {"ok": True, "index": str(index_path()), "threads": list_threads()}
     if name == "panes":
         return bodies(root)
@@ -879,6 +894,13 @@ def _call_tool(root: Path, name: str, arguments: dict[str, Any] | None) -> dict[
             return launch_seat(root, sid, runner=active_pane_runner, consent=_opt_str(args, "consent"))
         except ValueError as e:
             return {"ok": False, "seat": sid, "spawned": False, "error": str(e)}
+    if name == "focus":
+        sid = (_opt_str(args, "seat") or "").strip()
+        if not sid:
+            return {"ok": False, "focused": False, "error": "focus requires seat"}
+        if not _write_tools_enabled():
+            return {"ok": False, "seat": sid, "focused": False, "error": _gate_text("focus")}
+        return focus_seat(root, sid, target=_opt_str(args, "target"))
     if name == "crew":
         seats = args.get("seats")
         if not isinstance(seats, list) or not seats:

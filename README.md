@@ -66,7 +66,7 @@ One line per verb; flags shown are the ones you will reach for (see
 
 Read (no writes to thread state):
 
-- `threads` — every Convoy thread this machine knows.
+- `threads [--prune]` — every Convoy thread this machine knows. `--prune` drops rows whose root is under the OS temp dir or is absent and reports every dropped row (never silent).
 - `panes` — every body of every neuron on this thread, from the OS process table; never a token.
 - `whoami` — which chair is this process? Walks process ancestry to the harness.
 - `graph [--neuron <chair>] [--html [--out <file>]]` — read-only ontology of the thread.
@@ -79,17 +79,20 @@ Read (no writes to thread state):
 - `resume --neuron <chair>` — dry: prints native argv + cwd, spawns nothing.
 - `choices` — installed harnesses, known worktrees, chairs, terminal adapter; no resume tokens.
 - `probe --to <harness>`, `id`, `terminals`.
+- `widget [--topmost/--no-topmost] [--refresh 3]` — always-on-top tkinter strip: one dot per thread from `recent()`, expand chairs, click → `focus`. Stdlib only.
+- `focus --seat <chair>` — ask the pane host to highlight that chair. `{focused: false, reason}` until a host adapter is evidenced (tmux `select-pane -t` is tested; Windows Terminal `wt focus-pane` is not evidenced on this machine).
 
 Write (thread state):
 
 - `init` — create the thread layer at `--root`.
 - `bind --thread <name>` — bind this root to a named thread.
+- `start [<repo>] [--to <harness> ...] [--thread <name>] [--cancel]` — thin alias: git URL → clone once then `onboard --github yes`; local path → `onboard --github no`; no repo → picker from `recent()` (title + root + last activity, never auto-picks newest); empty index → ask to start a new thread; `--cancel` leaves unbound. Already-live harness on the root (whoami/roster) → `attach`, never a duplicate `bring_up`.
 - `onboard --to <harness> [--to ...] [--thread <name>] [--checkout-root <path|git-url>] [--github yes|no]` — name installed harnesses and bind; a URL is cloned once under `$CONVOY_HOME/checkouts/<owner>/<repo>` (`.convoy/` and `thread.md` go into that clone's `.git/info/exclude`). Whoever launched first conducts: the first harness named on the first onboard becomes `lead`; a later onboard reports it and never steals it.
 - `seat --to <harness> --session-id <chair> [--worktree <path>] [--model M] [--resume <vendor-id>] [--title T] [--effort E]` — register a seated neuron.
 - `join --to <harness> [--worktree <path>] [--title T] [--as <chair>] [--launch] [--consent <id>]` — register one fresh chair.
 - `crew --seat <harness>[,model=M][,effort=E][,where=local|cloud][,title=T] [--seat ...] [--checkout <path>] [--launch]` — N neurons at once: validates every seat first, mints one worktree per local seat, joins every chair with a boot prompt, and (with `--launch`) brings them up in ONE window. Launched is not connected: the card's `seated` snapshot says `pending`.
 - `await-seated --seat <chair> [--seat ...] [--timeout <s>]` — observe the acks: per chair `connected` (its own `seated` row cites the minted token) | `pending` | `stale`, with the seconds waited.
-- `swap --seat <chair> --to <harness> --handoff <.ola/*handoff*> --as <chair>` — replace the occupant, keep the chair.
+- `swap --seat <chair> --to <harness> --handoff <.convoy/handoff/<chair>-<ts>.md> --as <chair>` — replace the occupant, keep the chair.
 - `seated --seat <chair> --token <token>` — proof-of-life echo from the new occupant.
 - `lead --to <chair> --as <you>` — pass lead to a chair.
 - `hook note "<text>" [--as-me] --to <chair>` — leave a note for a chair (or `grok-bot`).
@@ -201,7 +204,7 @@ Notes tied to code/tests:
 
 - `seat.session_id` and `seat.resume` are distinct: session key vs vendor resume token.
 - First-run seats can omit vendor resume; then no resume token is passed.
-- Live `send` is headless and never steals an active interactive neuron; refusal cards ask users to `bring_up` / open a pane or write `.ola/*handoff*`.
+- Live `send` is headless and never steals an active interactive neuron; refusal cards ask users to `bring_up` / open a pane or write `.convoy/handoff/<chair>-<ts>.md`.
 - `context.pack` overlays home-layer `convoy_id` + `thread_key` onto seat-worktree pointers when present.
 - `bring_up` / `open` are the bulk show commands; targeted `join --launch` is
   the explicit one-chair exception described below.
