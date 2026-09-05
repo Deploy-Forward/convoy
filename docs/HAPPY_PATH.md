@@ -91,6 +91,20 @@ its worktree with an inbox row that says when it left off and which
 `feed --since` to run, and it is `connected` again only when it acks after
 the relaunch. Old acks are an old life.
 
+## The widget
+
+`convoy widget` is an always-on-top tkinter strip over the terminal (stdlib
+only; `--no-topmost` turns that off). Dots come from `recent()` — one per
+present, non-temp thread, never auto-picked. Expanding a dot shows whether
+the repo is connected (a real git remote, and only when `github=yes`),
+usage per harness (`unknown` when the vendor gave null, never an invented
+0), and one row per chair (`harness | model | effort`) with the exact
+`seat`/`swap` command to tune it. Seated-ack chips stay connected/pending/stale;
+a tape chip (`working|idle|stale|gone`) is last_authored / last_drained /
+waiting / idle_s / body, with the idle threshold a flag. A live-body
+dot appears only when `panes` proves a process; a red ring on the thread
+dot means any chair is tape-stale. Clicking a row calls `focus --seat`.
+
 ## What "cloud" means here
 
 The thread is a directory under the bound root. A cloud thread is that same

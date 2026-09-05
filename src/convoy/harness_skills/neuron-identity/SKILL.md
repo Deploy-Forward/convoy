@@ -39,7 +39,7 @@ Before you write to the bus, know which chair you are. This works the same on gr
 
 ## Usage dying
 
-If the meter is limited or the session is dying: ASK the user to `bring_up` / open a pane, or write a `*handoff*` under `.ola/`. Do not steal a TUI. Do not mint a sibling session. Do not guess remaining quota; unknown is `null`.
+If the meter is limited or the session is dying: ASK the user to `bring_up` / open a pane, or write a handoff under `.convoy/handoff/<chair>-<ts>.md`. Do not steal a TUI. Do not mint a sibling session. Do not guess remaining quota; unknown is `null`.
 
 ## Never
 

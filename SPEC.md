@@ -39,7 +39,7 @@ One MCP endpoint. What is versioned is the feed contract, not the URL — a name
 - Kinds are additive. v2 defines:
   - `conductor` — ONE compact line stamped by the conductor (MCP tool `stamp`, CLI `python -m convoy stamp`). Front-matter shape: `agent` / `model` / `effort` real-or-null, optional `instance_id` (the conductor agent id) and `transcript` (a pointer to where the bubble lives, never its bytes). Summary clamps to one line of ≤ 500 chars; a clamp marks `truncated: true`. The Grok Bot bubble history is not a Convoy object; neurons never receive it.
   - `synapse` — unchanged.
-  - `refuse` — the feed row now carries the full `ask` card (`action: bring_up`, `handoff: .ola/*handoff*`, text), so a sibling pulling `feed --since` sees the remedy without having been the caller.
+  - `refuse` — the feed row now carries the full `ask` card (`action: bring_up`, `handoff: .convoy/handoff/<chair>-<ts>.md`, text), so a sibling pulling `feed --since` sees the remedy without having been the caller.
 - Pack stays pointers. Unknown stays JSON `null`. Neurons pull the thread (`feed --since`); nothing in v2 mints a sibling session or steals a TUI.
 
 ### Feed contract v2.1 (2026-09-01, additive — stress-test increment)
@@ -447,8 +447,8 @@ Packed pointers only:
 
 - `thread.md`
 - `role.md`
-- `.ola/brief.md`
-- newest handoff
+- `.convoy/brief.md`
+- newest handoff (`.convoy/handoff/…`)
 - `instance_id`
 - `worktree`
 - `branch`
@@ -1069,7 +1069,7 @@ This tree at `b29c79b` — the landed public checkout of `Deploy-Forward/convoy`
 | `src/convoy/mcp_http.py` | JSON-RPC POST `/mcp`. Tool availability is always discovered from live `tools/list` at runtime (never copied from docs). Live `send` routes to `native_runner` with `allow_interactive_resume=False`. Attach/read tools may be PARTIAL GREEN when bound; native `send` stays RED until a live vendor execution is proven on the public URL. |
 | `src/convoy/onboard.py` | Declared-harness onboarding: refuse wrappers, probe only named harnesses, optional thread bind, install hints, first-run PATH ungate. |
 | `src/convoy/registry.py` | Instance registry: `register`, `lookup`, `parse_session_id`, `parse_agents_jsonl`, `live_on_branch`. No printed `session_id` without a row. |
-| `src/convoy/synapse.py` | `fake_runner` (default), `native_runner` (`--live`: vendor binary on PATH, wrapper names refused, `cwd=worktree`), `send_one` / `send_many`. `ola_runner` is the **retired** ola-brain path — no longer reachable from the CLI or MCP; live mode is native on both. |
+| `src/convoy/synapse.py` | `fake_runner` (default), `native_runner` (`--live`: vendor binary on PATH, wrapper names refused, `cwd=worktree`), `send_one` / `send_many`. Live mode is native on both CLI and MCP. Wrapper names (`ola-brain`, side-chat, UltraCode-Shim) are refused as a harness. |
 | `src/convoy/usage.py` | `probe()`, `normalize_usage_remaining()`, `surface()`. Unknown remaining is JSON `null`; never invent `0`; grok remaining is always `null`. |
 | `test/run.py` + `test/demo/` | 22 test modules, 184 tests, all passing at `b29c79b` (2026-09-01). |
 | `pyproject.toml` | `convoy` 0.1.0, packages under `src`, requires-python >= 3.11. |
