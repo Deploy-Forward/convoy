@@ -79,6 +79,8 @@ Read (no writes to thread state):
 - `resume --neuron <chair>` — dry: prints native argv + cwd, spawns nothing.
 - `choices` — installed harnesses, known worktrees, chairs, terminal adapter; no resume tokens.
 - `probe --to <harness>`, `id`, `terminals`.
+- `widget [--topmost/--no-topmost] [--refresh 3]` — always-on-top tkinter strip: one dot per thread from `recent()`, expand chairs, click → `focus`. Stdlib only.
+- `focus --seat <chair>` — ask the pane host to highlight that chair. `{focused: false, reason}` until a host adapter is evidenced (tmux `select-pane -t` is tested; Windows Terminal `wt focus-pane` is not evidenced on this machine).
 
 Write (thread state):
 
