@@ -128,3 +128,9 @@ public MCP; never a WM_CHAR into a pane Convoy cannot prove is that chair
 (panes via token/cwd); a nudge that lands returns `delivery: nudged`,
 never `delivered` (the ack proves that). Refuse when the target pane
 cannot be identified: a keystroke into the wrong pane is worse than idle.
+
+Evidence 2026-09-05 (Fable, this machine, Windows Terminal): `wt focus-pane --help`
+shows `-t, --target INT:NONNEGATIVE REQUIRED  Focus the pane at the given index`,
+and `wt --help` lists `-w, --window TEXT` plus `move-focus`, `focus-tab`,
+`focus-pane`. So a pane IS addressable: `wt -w <window> focus-pane -t <index>`.
+Note: wt shows its help as a GUI dialog, never on stdout; probe it once, by hand.
