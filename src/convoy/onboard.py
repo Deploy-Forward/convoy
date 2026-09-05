@@ -75,7 +75,13 @@ def _resolve_root(root: Path, checkout_root: str | None,
         if not (dest / ".git").exists():
             card = clone(repo["url"], dest, runner=clone_runner)
             if not card.get("ok"):
-                raise ValueError(str(card.get("error") or "git clone failed"))
+                # Soft continue-local (design 2026-09-05, g2's failure test): a
+                # clone that fails (no gh auth, offline) binds THIS root instead
+                # of failing the onboard. The failure stays on the card, github
+                # is never recorded as yes, and no owner/repo is invented.
+                repo["error"] = str(card.get("error") or "git clone failed")
+                repo["continued_local"] = True
+                return Path(root).resolve(), False, repo
             repo["cloned"] = True
         return dest.resolve(), True, repo
     target = Path(checkout_root).expanduser().resolve()
@@ -222,7 +228,12 @@ def onboard(
             "path": path_card,
         }
     # A URL is a GitHub answer in itself; otherwise record only what was said.
-    if repo is not None or github is not None:
+    cloned = bool(repo and repo.get("cloned")) or bool(repo and not repo.get("continued_local") and repo.get("dest"))
+    if repo is not None and repo.get("continued_local"):
+        # never a GitHub yes on a clone that did not happen
+        if github is not None:
+            set_github(target_root, bool(github) and False)
+    elif repo is not None or github is not None:
         set_github(target_root, True if repo is not None else bool(github))
     if declared_checkout and convoy_id is None:
         convoy_id = ensure_id(target_root)

@@ -29,7 +29,7 @@ On the wire: call `tools/list`. The packaged registry is
 registry (`redeploy`) or hide write tools until `CONVOY_MCP_WRITE_TOOLS=1`
 (`write-gated`, including `stamp`, `note`, `seat`, `join`, `launch`,
 `onboard`, `clone`, `mint`, `repos`, `crew`, `seated`, `consent`,
-`await_seated`). Those registered verbs are served on a gated deploy; they
+`await_seated`, `nudge`). Those registered verbs are served on a gated deploy; they
 are not absent from the server. Never registered as MCP tools: `init`,
 `id`, `bind`, `attach`, `seats`, `swap`, `lead`, `whoami`, `hook` (incl.
 `hook note … --as-me`), `close`, `probe`. Render what `tools/list` returns
@@ -114,7 +114,7 @@ user's privileges. Never inject keystrokes into a TUI: use a non-interactive
 vendor flag when supported (for example Grok `--trust`); if a harness has no
 such flag, report `awaiting-user-consent` and require the user to decide.
 
-`join --launch` and `close --seat` may return
+`join --launch`, `close --seat`, and `nudge --seat` may return
 `state=awaiting-user-consent` with a scoped `consent_request`. When that occurs:
 
 1. If the install binding is active and the harness supports a non-interactive
@@ -127,6 +127,9 @@ such flag, report `awaiting-user-consent` and require the user to decide.
 `trust-worktree` permits repo-local configuration, hooks, MCP, and LSP code to
 run with the user's privileges. `close-chair` terminates that exact managed
 harness child and asks its pane host to exit; unsaved TUI input may be lost.
+`nudge-pane` SendInput/send-keys/queues into one proven pane; the prompt names
+the HWND/title (or tmux target) and the exact keys. Never grant it for a pane
+you cannot see. A nudge that lands is `delivery: nudged`, never `delivered`.
 
 Never type `y`, `n`, `Ctrl+D`, or another key into a harness TUI. An unmanaged
 legacy pane returns `manual-close-required`; ask the user to close it. A vendor

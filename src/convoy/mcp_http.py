@@ -47,6 +47,7 @@ from .graph import build_graph, neighborhood
 from .inbox import drain as drain_inbox, pending as pending_inbox
 from .lifecycle import join as join_chair, seated_ack
 from .consent import grant_consent
+from .nudge import nudge_seat
 from .crew import await_seated, crew as crew_chairs
 from .targeted_launch import active_pane_runner, launch_choices, launch_seat
 from .focus import focus_seat
@@ -109,7 +110,7 @@ HARNESSES = tuple((row["id"], str(row.get("name") or row["id"])) for row in harn
 # life; consent mints a one-time grant. await_seated only reads, but it holds
 # the request thread up to its timeout, which a public endpoint must not offer.
 _WRITE_TOOLS = frozenset({"stamp", "note", "seat", "join", "launch", "onboard", "clone", "mint", "repos",
-                          "crew", "seated", "consent", "await_seated", "focus"})
+                          "crew", "seated", "consent", "await_seated", "focus", "nudge"})
 AWAIT_SEATED_MAX_S = 600.0
 
 
@@ -489,6 +490,17 @@ TOOLS: list[dict[str, Any]] = [
         "name": "consent",
         "description": "Grant a prior consent request after the user explicitly approved it (write gate: mints a one-time, action-scoped grant). Pass the returned consent only to the exact pending command (launch).",
         "inputSchema": _schema({"grant": {"type": "string", "description": "request_id from the awaiting-user-consent card"}}, required=["grant"]),
+    },
+    {
+        "name": "nudge",
+        "description": "Wake one idle chair on the user's own machine (write gate: host SendInput/send-keys/queue). Requires a proven pane (panes body + unique WT title or tmux target) and a consent card that names that pane and the exact keys. delivery=nudged, never delivered. Refuses when the pane cannot be identified. Never on a public MCP.",
+        "inputSchema": _schema(
+            {"seat": {"type": "string"}, "keys": {"type": "string", "description": "exact keystroke the consent card names"},
+             "target": {"type": "string", "description": "tmux pane id"},
+             "dry_run": {"type": "boolean", "default": False},
+             "consent": {"type": "string"}},
+            required=["seat"],
+        ),
     },
     {
         "name": "await_seated",
@@ -935,6 +947,21 @@ def _call_tool(root: Path, name: str, arguments: dict[str, Any] | None) -> dict[
             return grant_consent(root, rid)
         except ValueError as e:
             return {"ok": False, "request_id": rid, "error": str(e)}
+    if name == "nudge":
+        sid = (_opt_str(args, "seat") or "").strip()
+        if not sid:
+            return {"ok": False, "identified": False, "delivered": False, "delivery": None,
+                    "error": "nudge requires seat"}
+        if not _write_tools_enabled():
+            return {"ok": False, "seat": sid, "identified": False, "delivered": False,
+                    "delivery": None, "error": _gate_text("nudge")}
+        return nudge_seat(
+            root, sid,
+            consent=_opt_str(args, "consent"),
+            keys=_opt_str(args, "keys"),
+            dry_run=_opt_bool(args, "dry_run", False),
+            target=_opt_str(args, "target"),
+        )
     if name == "await_seated":
         seats = args.get("seats")
         if not isinstance(seats, list) or not seats:
