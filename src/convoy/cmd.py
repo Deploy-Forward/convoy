@@ -43,6 +43,18 @@ def _source_dir() -> str:
     return _fwd(str(Path(__file__).resolve().parent.parent))
 
 
+def quiet_spawn_kwargs() -> dict:
+    """Never open a console for a helper child. A detached parent (the widget
+    service, DETACHED_PROCESS) has no console, so on Windows every child
+    (PowerShell pane scan, `codex exec /status`, `claude -p /usage`, git)
+    would get a brand-new visible console window: black panes all over the
+    screen, one per 3 s tick (live 2026-09-05 04:23-04:28). CREATE_NO_WINDOW
+    stops that; on other OSes there is nothing to add."""
+    if os.name == "nt":
+        return {"creationflags": getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)}
+    return {}
+
+
 def hook_shell() -> list[str] | None:
     """How a harness runs a `type: command` hook. Claude Code and Grok CLI
     hand the string to a POSIX shell (Git Bash on Windows) when one exists;
@@ -85,10 +97,10 @@ def _probe_command(command: str, hook_args: str, marker: str) -> bool:
         try:
             if shell:
                 r = subprocess.run(shell + [line], capture_output=True, text=True, env=env,
-                                   encoding="utf-8", errors="replace", timeout=25)
+                                   encoding="utf-8", errors="replace", timeout=25, **quiet_spawn_kwargs())
             else:
                 r = subprocess.run(line, shell=True, capture_output=True, text=True, env=env,
-                                   encoding="utf-8", errors="replace", timeout=25)
+                                   encoding="utf-8", errors="replace", timeout=25, **quiet_spawn_kwargs())
         except (OSError, subprocess.SubprocessError):
             continue
         if r.returncode == 0 and marker in (r.stdout or ""):

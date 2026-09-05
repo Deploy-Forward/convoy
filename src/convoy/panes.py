@@ -37,6 +37,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from .cmd import quiet_spawn_kwargs
 from typing import Any, Callable
 
 from .cmd import convoy_root_command
@@ -87,7 +88,8 @@ def _enumerate_windows() -> list[dict[str, Any]]:
         if attempt:
             time.sleep(1.0)
         proc = subprocess.run([shell, "-NoProfile", "-NonInteractive", "-Command", ps],
-                              capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=150)
+                              capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=150,
+                              **quiet_spawn_kwargs())
         if proc.returncode == 0 and proc.stdout.strip():
             out = proc.stdout
             last = None
@@ -126,7 +128,7 @@ def _enumerate_proc() -> list[dict[str, Any]]:
 
 def _enumerate_ps() -> list[dict[str, Any]]:
     out = subprocess.run(["ps", "-eww", "-o", "pid=,ppid=,args="], capture_output=True, text=True,
-                         encoding="utf-8", errors="replace", timeout=20, check=True).stdout
+                         encoding="utf-8", errors="replace", timeout=20, check=True, **quiet_spawn_kwargs()).stdout
     procs: list[dict[str, Any]] = []
     for line in out.splitlines():
         parts = line.strip().split(None, 2)
@@ -142,7 +144,7 @@ def _enumerate_ps() -> list[dict[str, Any]]:
 def _fill_cwd_lsof(procs: list[dict[str, Any]]) -> None:
     try:
         out = subprocess.run(["lsof", "-a", "-d", "cwd", "-Fpn"], capture_output=True, text=True,
-                             encoding="utf-8", errors="replace", timeout=20).stdout
+                             encoding="utf-8", errors="replace", timeout=20, **quiet_spawn_kwargs()).stdout
     except (OSError, subprocess.SubprocessError):
         return
     cur = None
