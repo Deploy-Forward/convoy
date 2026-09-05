@@ -2,6 +2,7 @@
  * Cloudflare edge split for convoy.bot:
  * - GET/HEAD /mcp and /mcp/ serve the MCP attach page.
  * - other /mcp and /mcp/* requests proxy to MCP_ORIGIN.
+ * - under assets.config.html_handling = "none", map / to /index.html explicitly.
  * - everything else is served from static assets.
  */
 
@@ -59,6 +60,11 @@ export default {
     }
     if (pathname === "/mcp" || pathname.startsWith("/mcp/")) {
       return handleMcpProxy(request, env);
+    }
+    if (pathname === "/" || pathname === "") {
+      const url = new URL(request.url);
+      url.pathname = "/index.html";
+      return env.ASSETS.fetch(new Request(url.toString(), request));
     }
     return env.ASSETS.fetch(request);
   },
