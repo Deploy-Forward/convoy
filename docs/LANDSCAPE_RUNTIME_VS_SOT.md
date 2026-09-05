@@ -1,7 +1,7 @@
 # Landscape: runtime vs SoT (Herdr comparison)
 
 **Repo:** `Deploy-Forward/convoy`  
-**Status:** positioning / honesty lock — **2026-09-04**  
+**Status:** positioning / honesty lock — **2026-09-04**; implementation map + pseudo-code — **2026-09-05**  
 **Authority:** this file is authoritative for **where Convoy sits in the agent-terminal landscape**. It does **not** override product locks in `SPEC.md` / `CANON.md`. If this file and `SPEC.md` disagree on verbs, seats, or feed contract, **`SPEC.md` wins**.  
 **Audience:** engineers deciding whether Convoy is a Herdr-class runtime, a mux, a manager app, or something else.
 
@@ -171,29 +171,164 @@ Locked shape (see also `SPEC.md`, `plugin/convoy/`):
 
 ---
 
-## 12. Gap / optional DoD — competing on Herdr’s sorting row
+## 12. Implementation map (this repository)
+
+Claims in this document must point at code or stay RED. Paths are relative to repo root on `main` / this PR tip.
+
+| Claim | Implementation | Tests / evidence |
+|---|---|---|
+| SoT under `.convoy/` | `src/convoy/convoy.py` (`read_id` L37, `ensure_id` L44, `seats.jsonl` L22, `seat` L111, `list_seats` L208, `attach` L437); `src/convoy/layer.py` (`FEED_NAME` L17, `hook` L49, `feed_since` L137) | `test/demo/temporal_hooks_test.py`, `phase7_attach_test.py`, `feed_v2_contract_test.py`, `feed_note_provenance_test.py` |
+| Bring-up does not own PTYs; WT/tmux does | `src/convoy/bringup.py` module docstring L1; `bring_up` L998 | `test/demo/phase7_bringup_test.py`, `consent_pane_host_test.py`, `panes_test.py` |
+| Synapse = native send; no-steal | `src/convoy/synapse.py` (`native_runner` L121, `fake_runner` L75, `allow_interactive_resume` L319) | `test/demo/phase_mcp_http_test.py`, `limited_send_ask_test.py` |
+| MCP orchestration, write gate | `src/convoy/mcp_http.py` (`_WRITE_TOOLS` / `CONVOY_MCP_WRITE_TOOLS` ~L90–92, `call_tool` L590, `McpHandler` L1075) | `test/demo/phase_mcp_http_test.py`, `mcp_wizard_verbs_test.py`, `wizard_e2e_gated_test.py` |
+| Glance / usage honesty | `src/convoy/glance.py`, `src/convoy/usage.py` (`probe` L151, `surface` L194) | `test/demo/glance_test.py`, `glance_public_redaction_test.py`, `phase5_usage_test.py` |
+| Tokens never leave seats on wire | `src/convoy/graph.py` L16; public redaction tests | `test/demo/public_wire_redaction_test.py`, `graph_test.py` |
+| Marketplace pack ≠ SoT | `plugin/convoy/` (skills + `.mcp.json`); SoT remains `.convoy/` on `--root` | `plugin/convoy/README.md`, `docs/e2e-dod.md` |
+
+---
+
+## 13. Pseudo-code (build shape)
+
+Marco lock: specs are a **build** — each step has pseudo-code, implementation pointer, and GREEN/RED DoD on live functions. Unknown stays `null`.
+
+### 13.1 Sorting-row evaluator
+
+```text
+fn what_survives(ui_closed):
+  sot = exists(root / ".convoy" / {"id","feed.jsonl","seats.jsonl"})
+  panes_alive = host_mux_still_has_neuron_ptys()   # WT/tmux/Herdr — NOT Convoy
+  vendor_alive = seat.resume.available == true      # vendor UUID still resumable
+  return {
+    sot_survives: sot,                 # Convoy GREEN when disk SoT present
+    agents_still_working: panes_alive AND vendor_alive,
+    herdr_equivalent: agents_still_working WITH zero_convoy_clients
+                       AND convoy_owns_pty == false  # today: always false
+  }
+```
+
+**DoD today:** `sot_survives` can be GREEN via unit + disk. `herdr_equivalent` is **RED** until §15.
+
+### 13.2 SoT read path (implementation)
+
+```text
+fn convoy_context(root):
+  # src/convoy/context.py + convoy.py
+  return {
+    convoy_id: read_id(root),           # convoy.py:37 — null if missing, never invent
+    thread_key: read_thread(root),
+    seats: list_seats(root),            # convoy.py:208
+    feed_window: feed_since(root, ts),  # layer.py:137
+  }
+```
+
+**DoD:** `test/demo/phase1_threaded_context_test.py` GREEN; missing id ⇒ JSON `null`, not a minted UUID.
+
+### 13.3 Seat + bring_up (mux owns PTY)
+
+```text
+fn bring_up_thread(root, convoy_id, thread):
+  # bringup.py:998
+  seats = list_seats(root, convoy_id)
+  assert one_chair_per_worktree(seats)          # C8 lock
+  window = host.open_isolated_window()          # WT `--window new` / mux equivalent
+  for seat in seats:
+    argv = vendor_resume_argv(seat)             # vendor UUID from seat — never Convoy seat id
+    host.split_pane(window, argv)               # PTY owned by host
+  return card(panes=..., convoy_id=..., nulls_ok=true)
+```
+
+**DoD:** `phase7_bringup_test.py` unit-GREEN. Live GREEN only on a machine with WT/tmux proof — cloud box without WT ≠ live bring-up GREEN.
+
+### 13.4 Synapse send (orchestration, not attach-PTY)
+
+```text
+fn synapse_send(root, to, body, live):
+  # synapse.py
+  allow_resume = not live                       # no-steal: live refuses interactive --resume steal
+  runner = native_runner if live else fake_runner
+  card = runner(to=to, body=body, ...)
+  append_feed(synapse_row(runner=runner_kind, argv0=..., to=to, ...))
+  return card
+```
+
+**DoD:** MCP/CLI paths pass `allow_interactive_resume=not live`. Live native send without runner provenance ⇒ not evidence of Herdr-class runtime.
+
+### 13.5 MCP tools/list fail-closed
+
+```text
+fn tools_list(process):
+  # mcp_http.py
+  tools = registered_public_tools()
+  if env.CONVOY_MCP_WRITE_TOOLS != "1":
+    tools = tools - WRITE_TOOLS                 # hidden, not listed-and-refusing
+  return tools
+
+fn wizard_gate0():
+  live = mcp.tools_list()                       # this run only — no cache
+  if required_verbs missing from live:
+    return RED(classify=redeploy|write-gated|not-registered)
+  return card_tool()                            # one host card; no frozen menu
+```
+
+**DoD:** `mcp_wizard_verbs_test.py` / Gate 0 classify. Public `https://convoy.bot/mcp` tool count is **live probe only** — never pin a number in this SPEC.
+
+### 13.6 Semantic state (partial today)
+
+```text
+fn neuron_state(seat):
+  # Today — NOT Herdr FSM
+  return {
+    harness: seat.to,
+    model: seat.model or null,
+    effort: seat.effort or null,
+    resume_available: seat.resume.available,   # bool only on wire
+    usage: usage.surface(harness),             # null if no probe — never invent 0
+    # blocked|working|done|idle: ABSENT
+  }
+```
+
+**DoD:** glance/usage tests GREEN for null honesty. Claiming `blocked|working|idle` without code ⇒ **RED prose**.
+
+---
+
+## 14. Gap / optional DoD — competing on Herdr’s sorting row
 
 If Convoy chooses to compete on **row 2** (work survives every client going away **as live agents**, not only as pointers), the gap is explicit:
 
-| Requirement | Definition of done (falsifiable) |
-|---|---|
-| Detachable PTY runtime **or** hard mux contract | Documented owner of neuron PTYs (Convoy server **or** tmux/WT with a tested detach path). Live demo: N neurons keep accepting work with **zero** Convoy UI clients attached. |
-| Semantic waits | First-class `blocked \| working \| idle` (or equivalent) with a wait API that does not require pane OCR or invented status. |
-| Direct attach | Attach a tty client to one seat without stealing an interactive resume against SPEC no-steal locks. |
-| Honesty | Feed/seats gain runner provenance sufficient to prove native vs fake (see feed v2.1) — already partially landed; extend for runtime ownership claims. |
+| Requirement | Pseudo-code sketch | Definition of done (falsifiable) |
+|---|---|---|
+| Detachable PTY runtime **or** hard mux contract | `runtime.own_pty(seat)` **or** `mux.contract.detach(seat)` documented + tested | Live demo: N neurons accept work with **zero** Convoy UI clients; owner of PTY named in SPEC |
+| Semantic waits | `wait_until(seat, in={blocked,working,idle})` without pane OCR | First-class state in SoT or runtime API; unit + live proof |
+| Direct attach | `attach_tty(seat) -> pty_client` without stealing interactive resume | Compatible with no-steal lock (`allow_interactive_resume`) |
+| Honesty | feed rows carry `runner` / `argv0` (feed v2.1) | Reader can distinguish native vs fake ACK |
 
 Until that DoD is GREEN on a live proof, landing and sales copy stay on the **SoT + MCP** claim.
 
 ---
 
-## 13. Landing one-liners
+## 15. Verification matrix (test domains)
+
+Marco: loop Unit / Integration / Acceptance / System Testing against this SPEC. Each domain signs GREEN/RED/null with evidence paths — never invent.
+
+| Domain | Questions | Primary tree |
+|---|---|---|
+| **Unit** | Do pseudo-code blocks match functions? Are DoDs falsifiable by `test/demo/*` without network? | `test/demo/*_test.py`, pure `src/convoy/*.py` |
+| **Integration** | Do MCP + CLI + seat/feed/bring_up paths compose as claimed? Write gate + no-steal hold across boundaries? | `phase_mcp_http_test.py`, `mcp_wizard_verbs_test.py`, `phase7_*`, `inbox_notify_test.py` |
+| **Acceptance** | Does public pitch (§10) match what a stranger gets from attach → skills → live card? Pack ≠ SoT clear? | `plugin/convoy/`, `docs/e2e-dod.md`, `README.md`, Gate 0 |
+| **System** | Persistence topology: Worker `/mcp` vs Python origin vs WT/tmux; quit-conductor vs quit-mux behavior | `docs/deploy-convoy-bot-mcp.md`, `workers-site.mjs`, `bringup.py`, live convoy.bot probe |
+
+Reviewers record findings under `docs/audits/` or as PR review comments on the landscape PR — cite file:line.
+
+---
+
+## 16. Landing one-liners
 
 - **Herdr:** runtime for agent terminals.
 - **Convoy:** source of truth and MCP for BYO agent harnesses on one thread — persistence of panes is still the mux / harness’s job.
 
 ---
 
-## 14. Glossary cross-ref
+## 17. Glossary cross-ref
 
 | Term | Meaning (product) |
 |---|---|
@@ -209,10 +344,12 @@ See `CANON.md` and the terminology lock in `SPEC.md`.
 
 ---
 
-## 15. Related artifacts
+## 18. Related artifacts
 
 - `SPEC.md` — product / feed / seat / MCP locks  
 - `CANON.md` — names  
 - `plugin/convoy/` — marketplace pack (skills + MCP), not the SoT  
 - `docs/deploy-convoy-bot-mcp.md` — public MCP origin topology  
+- `src/convoy/{convoy,layer,bringup,synapse,mcp_http,glance,usage,graph}.py` — implementation cited above  
+- `test/demo/` — falsifiable unit/integration evidence  
 
