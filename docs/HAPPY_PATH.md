@@ -97,10 +97,11 @@ present, non-temp thread, never auto-picked. Expanding a dot shows whether
 the repo is connected (a real git remote, and only when `github=yes`),
 usage per harness (`unknown` when the vendor gave null, never an invented
 0), and one row per chair (`harness | model | effort`) with the exact
-`seat`/`swap` command to tune it. State chips are the seated acks;
-a live-body dot appears only when `panes` proves a process. Clicking a
-row calls `focus --seat`, which is `focused: false` with a reason until a
-pane-host adapter is evidenced.
+`seat`/`swap` command to tune it. Seated-ack chips stay connected/pending/stale;
+a tape chip (`working|idle|stale|gone`) is last_authored / last_drained /
+waiting / idle_s / body, with the idle threshold a flag. A live-body
+dot appears only when `panes` proves a process; a red ring on the thread
+dot means any chair is tape-stale. Clicking a row calls `focus --seat`.
 
 ## What "cloud" means here
 
