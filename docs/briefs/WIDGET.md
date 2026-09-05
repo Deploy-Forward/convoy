@@ -186,3 +186,40 @@ slice 5b matrix, command / observed / ts (also `src/convoy/nudge.py` WAKE_EVIDEN
   identity; only the worktree folder name or an exact/prefix pane title
   counts. After the fix, g1/g2 refuse (prompt title); luna1/luna2 refuse
   (codex bodies unplaced, liveness unknown). That refuse is the product.
+
+## Reconciliation 2026-09-05 (wt-walk, branch convoy/wf2-wt-walk): both runs were right
+
+Two pieces of live evidence looked contradictory. g2 (06:03-06:17Z) refused every
+WT window whose title did not name the chair (worktree folder name or exact/prefix
+seat title) and never Alt+Arrows; Fable (05:57-06:00Z) proved Alt+Arrow plus a
+title re-read DOES reach an idle grok pane and that skipping when the title did
+not change is what prevents the double-fire. They are not in conflict: g2 is the
+identity rule, Fable is the walk. `src/convoy/panehost.py` (`WtWalkAdapter`)
+holds both, and `nudge --seat <chair> --walk` is the OPT-IN; the default nudge
+keeps g2's refusal byte for byte (tested: `test_default_nudge_still_refuses_without_walk`).
+
+Adapter contract (every OS call behind one injectable `os_`: enum_windows,
+title, take_foreground, send_keys, sleep; the real user32 port of
+`scripts/wt-nudge.ps1` exists only on `os.name == 'nt'` and is never built in
+tests):
+- exactly one candidate window (names the chair, or IS the crew window recorded
+  for this thread) or fail before any window action;
+- foreground taken via Alt tap + AttachThreadInput + SetForegroundWindow and
+  VERIFIED by GetForegroundWindow, or fail; nothing typed;
+- directions `none, Alt+Right, Alt+Left, Alt+Down, Alt+Up`; after each move the
+  title is re-read and the step is SKIPPED when unchanged (the 05:57:29Z
+  Alt+Left-did-not-move case, now `test_double_fire_scenario_types_exactly_once`);
+- type only when the title matches `idle_title_re` (`^grok$` for grok), does not
+  match `busy_re` (`Waiting for response|Running:|Thinking`), and
+  `pane_belongs_to(seat, title)` names a rule; the rule is recorded on the card:
+  `worktree` | `seat-title` | `crew-window+sole-idle` (the recorded crew window
+  AND exactly one idle chair of that harness per the widget chip);
+- one send carries text + Enter; card = `{ok, hwnd, pane_title_before,
+  pane_title_after, rule, error, steps[]}`; `delivery: nudged`, never `delivered`.
+
+What is NOT evidenced yet, stated plainly: `crew` does not record the WT hwnd it
+spawns (wt detaches; no hwnd comes back), so the `crew-window+sole-idle` rule
+reads a `kind=crew-window` feed row with `hwnd` and is null when none exists;
+`--walk` then refuses with that reason. Writing that row is the next slice, not
+this one. No live keystroke was fired for this reconciliation; the fakes in
+`test/demo/panehost_wt_test.py` replay the 05:57-06:00Z transitions.
