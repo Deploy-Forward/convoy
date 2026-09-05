@@ -25,6 +25,7 @@ from .layer import SCHEMA_VERSION, conductor_stamp, feed_since, hook, parse_sinc
 from .rail import build_rail, root_for
 from .relaunch import relaunch
 from .lifecycle import join, pass_lead, seated_ack, swap
+from .nudge import nudge_seat
 from .pane_host import close_managed_pane
 from .synapse import fake_runner, native_runner, send_many, send_one
 from .targeted_launch import active_pane_runner, launch_choices, launch_seat
@@ -152,6 +153,13 @@ def main(argv: list[str] | None = None) -> int:
     cl = sub.add_parser("close", help="request closure of one exact Convoy-managed pane")
     cl.add_argument("--seat", required=True)
     cl.add_argument("--consent", help="one-time close-chair consent")
+
+    ng = sub.add_parser("nudge", help="wake an idle chair on this machine: proven pane + consent + exact keys; delivery=nudged never delivered")
+    ng.add_argument("--seat", required=True)
+    ng.add_argument("--keys", help="exact keystroke the consent card names")
+    ng.add_argument("--target", help="tmux pane id for send-keys -t")
+    ng.add_argument("--dry-run", action="store_true", help="identify only; never send, never consume consent")
+    ng.add_argument("--consent", help="one-time nudge-pane consent returned by `convoy consent --grant`")
 
     sw = sub.add_parser("swap")
     sw.add_argument("--seat", required=True, help="chair session_id (identity survives the swap)")
@@ -454,6 +462,17 @@ def main(argv: list[str] | None = None) -> int:
         return 0 if card.get("ok") else 1
     if args.cmd == "close":
         card = close_managed_pane(root, args.seat, consent=args.consent)
+        print(json.dumps(card))
+        return 0 if card.get("ok") else 1
+    if args.cmd == "nudge":
+        card = nudge_seat(
+            root,
+            args.seat,
+            consent=args.consent,
+            keys=args.keys,
+            dry_run=args.dry_run,
+            target=args.target,
+        )
         print(json.dumps(card))
         return 0 if card.get("ok") else 1
     if args.cmd == "seats":

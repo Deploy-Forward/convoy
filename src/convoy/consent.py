@@ -10,7 +10,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-_ACTIONS = frozenset({"trust-worktree", "close-chair"})
+_ACTIONS = frozenset({"trust-worktree", "close-chair", "nudge-pane"})
 
 
 def _now() -> datetime:
@@ -30,15 +30,22 @@ def _scope(
     session_id: str | None,
     to: str | None,
     worktree: str | None,
+    keys: str | None = None,
+    pane: str | None = None,
 ) -> dict[str, Any]:
     wt = None
     if isinstance(worktree, str) and worktree.strip():
         wt = str(Path(worktree).resolve())
-    return {
+    out: dict[str, Any] = {
         "session_id": str(session_id or "").strip() or None,
         "to": str(to or "").strip().lower() or None,
         "worktree": wt,
     }
+    if keys is not None:
+        out["keys"] = str(keys)
+    if pane is not None:
+        out["pane"] = str(pane)
+    return out
 
 
 def _append(root: Path, row: dict[str, Any]) -> None:
@@ -72,6 +79,15 @@ def _prompt(action: str, scope: dict[str, Any]) -> str:
             str(scope.get("to") or "the harness") + "? Trust permits repo-local "
             "configuration, hooks, MCP, and LSP code to run with your privileges."
         )
+    if action == "nudge-pane":
+        return (
+            "Nudge Convoy chair " + str(scope.get("session_id"))
+            + " (" + str(scope.get("to") or "harness") + ") in pane "
+            + str(scope.get("pane") or "unidentified")
+            + " with keys " + repr(scope.get("keys"))
+            + "? A keystroke into the wrong pane is worse than idle. "
+            "Grant only if this names the pane you can see."
+        )
     return (
         "Close Convoy chair " + str(scope.get("session_id")) + "? This terminates "
         "its managed harness process and asks its pane host to exit; unsaved TUI "
@@ -86,17 +102,21 @@ def request_consent(
     session_id: str | None = None,
     to: str | None = None,
     worktree: str | None = None,
+    keys: str | None = None,
+    pane: str | None = None,
     ttl_minutes: int = 10,
 ) -> dict[str, Any]:
     """Create a request only. Granting must happen in a later user-approved turn."""
     verb = str(action or "").strip().lower()
     if verb not in _ACTIONS:
         raise ValueError("unsupported consent action: " + verb)
-    scope = _scope(session_id=session_id, to=to, worktree=worktree)
+    scope = _scope(session_id=session_id, to=to, worktree=worktree, keys=keys, pane=pane)
     if verb == "trust-worktree" and (not scope["to"] or not scope["worktree"]):
         raise ValueError("trust-worktree consent requires harness and worktree")
     if verb == "close-chair" and not scope["session_id"]:
         raise ValueError("close-chair consent requires seat")
+    if verb == "nudge-pane" and (not scope["session_id"] or not scope.get("keys") or not scope.get("pane")):
+        raise ValueError("nudge-pane consent requires seat, pane, and keys")
     created = _now()
     row = {
         "request_id": "cns_" + uuid.uuid4().hex,
@@ -167,6 +187,8 @@ def consume_consent(
     session_id: str | None = None,
     to: str | None = None,
     worktree: str | None = None,
+    keys: str | None = None,
+    pane: str | None = None,
 ) -> dict[str, Any]:
     """Validate exact action/scope and atomically consume a grant once."""
     raw_token = str(token or "").strip()
@@ -185,7 +207,7 @@ def consume_consent(
     if row.get("status") != "granted":
         raise ValueError("consent is not granted")
     _not_expired(row)
-    wanted_scope = _scope(session_id=session_id, to=to, worktree=worktree)
+    wanted_scope = _scope(session_id=session_id, to=to, worktree=worktree, keys=keys, pane=pane)
     if row.get("action") != action or row.get("scope") != wanted_scope:
         raise ValueError("consent scope mismatch")
 

@@ -147,3 +147,29 @@ SendKeys the message + Enter. Observed: g1 drained 4 rows within a minute of
 the keystroke; the second copy landed in g1 again because Alt+Left did not
 move focus from the right-most pane, so the title check is mandatory, not
 optional. This is the `nudge --seat` adapter for WT; tmux gets `send-keys -t`.
+
+Evidence 2026-09-05 06:03-06:07Z (g2-happy-path, this machine, Windows Terminal):
+slice 5b matrix, command / observed / ts (also `src/convoy/nudge.py` WAKE_EVIDENCE):
+- `grok --help` 06:03:21Z: no `queue`; has `leader`, `agent` stdio, `--resume`,
+  `-p`/`-c` (forbidden as a wake). `grok help queue`: unrecognized subcommand.
+- `grok leader list` 06:03:21Z: "No leader candidates found." `leader.sock` missing.
+  ACP `session/prompt` not attempted: a second `--no-leader` agent against a
+  pid-held TUI is a steal (`~/.grok/active_sessions.json` has g1 pid 59824 and
+  g2 pid 101288, cwd-matched).
+- WT titles 06:03:21Z: 3 `CASCADIA_HOSTING_WINDOW_CLASS` windows, all WT pid
+  99004. Unique worktree title: `convoy-wt-happy-wt-luna2`. g1/g2 titles are
+  the user prompt, not the worktree, not seat title `g2`; idle title `grok` is
+  generic and never unique with two grok chairs. Adapter never Alt+Arrows
+  (Fable's mis-delivery).
+- `codex queue --help` 06:03:21Z: `--thread <UUID or exact session name>
+  --message`. Fake UUID 06:07:27Z: rc 1, "no rollout found for thread id".
+  All four seats have `resume=null`, so live queue cannot be aimed.
+- This grok pane was working, not idle; no SendInput was fired. Occupant-side
+  wake remains `inbox --wait` (ead0b58). `nudge --seat` is the host-side verb:
+  write-gated, consent names pane+keys, `delivery: nudged` never `delivered`.
+- Live dry-run 06:17Z: `nudge --seat g2-happy-path --dry-run` first claimed
+  `identified: true` because the WT title contained the tool description
+  "Dry-run nudge identity for g2". Short seat titles are not substring
+  identity; only the worktree folder name or an exact/prefix pane title
+  counts. After the fix, g1/g2 refuse (prompt title); luna1/luna2 refuse
+  (codex bodies unplaced, liveness unknown). That refuse is the product.
