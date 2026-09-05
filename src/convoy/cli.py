@@ -20,6 +20,7 @@ from .identity import ensure_inbox_hooks, install_neuron_identity
 from .index import find_root, index_path, list_threads
 from .activity import neuron_activity
 from .panes import bodies, identify
+from .provenance import record_commit
 from .layer import SCHEMA_VERSION, conductor_stamp, feed_since, hook, parse_since
 from .rail import build_rail, root_for
 from .relaunch import relaunch
@@ -69,6 +70,13 @@ def main(argv: list[str] | None = None) -> int:
 
     rl = sub.add_parser("rail", help="the strip under the panes: feed events since, seats connected, usage per harness (null is unknown, never 0), last stamp; reads only the thread, so any neuron sees the same rail")
     rl.add_argument("--since", default="10m", help="feed window (default 10m)")
+
+    cm = sub.add_parser("committed", help="append one kind=commit provenance row for a Git revision")
+    author = cm.add_mutually_exclusive_group(required=True)
+    author.add_argument("--as-me", action="store_true", help="author = the chair whoami detects for this body")
+    author.add_argument("--as", dest="author", help="authoring chair session_id")
+    cm.add_argument("--rev", default="HEAD", help="commit-ish to record (default HEAD)")
+    cm.add_argument("--worktree", help="Git worktree to inspect (default cwd)")
 
     st = sub.add_parser("stamp")
     st.add_argument("summary")
@@ -294,6 +302,21 @@ def main(argv: list[str] | None = None) -> int:
             return 1
         print(json.dumps(card))
         return 0 if card.get("ok") else 1
+    if args.cmd == "committed":
+        chair = args.author
+        if args.as_me:
+            me = identify(root)
+            chair = me.get("chair")
+            if not chair:
+                print(json.dumps({"ok": False, "error": "refuse committed --as-me: no chair on this thread matches this body", "whoami": me}))
+                return 1
+        try:
+            card = record_commit(root, str(chair or ""), rev=args.rev, worktree=args.worktree or Path.cwd())
+        except ValueError as e:
+            print(json.dumps({"ok": False, "error": str(e)}))
+            return 1
+        print(json.dumps(card))
+        return 0
     if args.cmd == "stamp":
         try:
             row = conductor_stamp(
