@@ -247,6 +247,11 @@ class HappyPath(unittest.TestCase):
         self.assertTrue(by[sids[1]]["relaunch_note"].endswith(sids[1] + ".jsonl"))
         # old acks do not count: every chair is pending until it acks again
         self.assertEqual(sorted(live["seated"]["pending"]), sorted(sids))
+        # the relaunched pane boots WITH a prompt again: the join token rides it
+        for c in live["chairs"]:
+            self.assertTrue(c["boot_prompt_rearmed"]); self.assertTrue(c["token_found"])
+        argv = self.spawns[0]["argv"]
+        self.assertTrue(any("relaunched at" in a and tokens[sids[0]] in a for a in argv), argv[-3:])
         self.assertEqual(live["seated"]["after"], live["relaunched_at"])
         after = (self.root / ".convoy" / "inbox" / (sids[0] + ".jsonl")).read_text(encoding="utf-8")
         self.assertIn("Relaunched at", after.replace(inbox_before, "", 1))
