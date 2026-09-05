@@ -218,6 +218,62 @@ class HappyPath(unittest.TestCase):
         self.assertEqual(from_chair["seats"], rail["seats"])
         self.assertEqual(from_chair["last_stamp"], rail["last_stamp"])
 
+    def test_relaunch_after_the_panes_die_carries_the_timeline(self):
+        self.run_cli("onboard", "--to", "claude", "--to", "codex", "--to", "grok", "--thread", "demo",
+                     "--checkout-root", str(self.root), "--github", "no")
+        cw = self.run_cli("crew", "--seat", "codex", "--seat", "grok", "--thread", "demo", "--launch")
+        sids = [c["session_id"] for c in cw["seats"]]
+        tokens = self._join_tokens()
+        for sid in sids:
+            self.run_cli("seated", "--seat", sid, "--token", tokens[sid])
+        self.run_cli("send", "--to", sids[0], "draft tests")          # left undrained
+        self.run_cli("hook", "note", "half done", "--instance-id", sids[1])
+        self.spawns.clear()
+
+        # the laptop died here. Dry first: nothing spawned, nothing written.
+        dry = self.run_cli("relaunch", "--dry-run")
+        self.assertEqual(len(self.spawns), 0)
+        self.assertFalse(dry["launched"])
+        inbox_before = (self.root / ".convoy" / "inbox" / (sids[0] + ".jsonl")).read_text(encoding="utf-8")
+
+        live = self.run_cli("relaunch", "--thread", "demo")
+        self.assertTrue(live["launched"], live)
+        self.assertEqual(len(self.spawns), 1, "one window again")
+        by = {c["session_id"]: c for c in live["chairs"]}
+        self.assertEqual(by[sids[0]]["unread"], 1)
+        self.assertEqual(by[sids[0]]["worktree"], cw["seats"][0]["worktree"])
+        self.assertIsNotNone(by[sids[1]]["last_seen"])
+        self.assertTrue(by[sids[1]]["last_seen"] <= live["relaunched_at"])
+        self.assertTrue(by[sids[1]]["relaunch_note"].endswith(sids[1] + ".jsonl"))
+        # old acks do not count: every chair is pending until it acks again
+        self.assertEqual(sorted(live["seated"]["pending"]), sorted(sids))
+        self.assertEqual(live["seated"]["after"], live["relaunched_at"])
+        after = (self.root / ".convoy" / "inbox" / (sids[0] + ".jsonl")).read_text(encoding="utf-8")
+        self.assertIn("Relaunched at", after.replace(inbox_before, "", 1))
+        self.assertIn("feed --since " + by[sids[0]]["last_seen"], after)
+        # a fresh ack citing the SAME join token proves the chair is back
+        self.run_cli("seated", "--seat", sids[0], "--token", tokens[sids[0]])
+        again = self.run_cli("await-seated", "--seat", sids[0], "--timeout", "0")
+        self.assertEqual(again["connected"], [sids[0]])
+        kinds = [r["kind"] for r in self.run_cli("feed", "--since", "10m")["events"]]
+        self.assertIn("relaunch", kinds)
+
+    def test_one_torn_feed_line_never_takes_the_bus_down(self):
+        self.run_cli("onboard", "--to", "claude", "--thread", "demo", "--checkout-root", str(self.root), "--github", "no")
+        self.run_cli("stamp", "before")
+        with (self.root / ".convoy" / "feed.jsonl").open("ab") as f:
+            f.write(b'-happy-path"}\r\n')                       # a tail of a torn PowerShell >> append
+        self.run_cli("stamp", "after")
+        fd = self.run_cli("feed", "--since", "10m")
+        kinds = [r["kind"] for r in fd["events"]]
+        self.assertEqual(kinds.count("conductor"), 2, kinds)        # before, after: the tear cost nothing
+        bad = [r for r in fd["events"] if r["kind"] == "malformed"]
+        self.assertEqual(len(bad), 1)
+        self.assertIn("line", bad[0]["summary"])
+        self.assertIsNone(bad[0]["ts"])
+        rail = self.run_cli("rail")
+        self.assertEqual(rail["last_stamp"]["summary"], "after")
+
     def test_rail_on_an_unbound_root_says_so(self):
         card = self.run_cli("rail", expect=1)
         self.assertFalse(card["ok"])

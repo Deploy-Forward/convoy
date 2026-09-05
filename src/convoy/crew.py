@@ -146,7 +146,9 @@ def crew(
     return card
 
 
-def _seated_states(root: Path, session_ids: list[str]) -> list[dict[str, Any]]:
+def _seated_states(root: Path, session_ids: list[str], after: str | None = None) -> list[dict[str, Any]]:
+    """after: ISO ts; a seated row stamped BEFORE it is an old life of the
+    chair (pre-relaunch) and does not count. Connected must be proven again."""
     seats = {str(s.get("session_id") or ""): s for s in list_seats(root)}
     unknown = [sid for sid in session_ids if sid not in seats]
     if unknown:
@@ -162,6 +164,8 @@ def _seated_states(root: Path, session_ids: list[str]) -> list[dict[str, Any]]:
             if r.get("kind") in ("join", "swap"):
                 mint = r
             elif r.get("kind") == "seated":
+                if after and str(r.get("ts") or "") < after:
+                    continue
                 seated = r
         # connected: the ack cites the token THIS mint issued. seated_ack
         # itself accepts any non-empty token (lifecycle.py), so the comparison
@@ -192,6 +196,7 @@ def await_seated(
     interval: float = 1.0,
     clock: Callable[[], float] = time.monotonic,
     sleep: Callable[[float], Any] = time.sleep,
+    after: str | None = None,
 ) -> dict[str, Any]:
     """Poll kind=seated rows until every chair is connected or timeout passes.
     Returns per chair connected | pending | stale and the seconds waited on
@@ -201,7 +206,7 @@ def await_seated(
     step = max(0.0, float(interval))
     start = clock()
     while True:
-        chairs = _seated_states(Path(root), sids)
+        chairs = _seated_states(Path(root), sids, after=after)
         waited = max(0.0, clock() - start)
         if all(c["state"] == "connected" for c in chairs) or waited >= budget:
             break
@@ -211,6 +216,7 @@ def await_seated(
         "ok": bool(chairs) and not by_state["pending"] and not by_state["stale"],
         "waited_s": round(waited, 3),
         "timeout_s": budget,
+        "after": after,
         "chairs": chairs,
         **by_state,
     }
