@@ -160,6 +160,48 @@ class WidgetApi:
         return {"ok": True, "seat": out, "applied_to_live_pane": False,
                 "note": "the seat row is rewritten; a running pane keeps its own settings until its next launch"}
 
+    def send(self, root: str, seat: str, body: str, label: str | None = None) -> dict[str, Any]:
+        """Queue one message into a chair's inbox (delivery: queued, delivered:
+        false) through the same send the CLI runs. A ping is a send whose body
+        asks the chair to answer on the feed citing ping=<id>; the reply, in the
+        chair's own row, is the identification, never the queue row."""
+        import uuid
+        from .synapse import send_one
+        text = (body or "").strip()
+        if not text:
+            return {"ok": False, "error": "empty message"}
+        from .convoy import list_seats
+        if not any(x.get("session_id") == seat for x in list_seats(Path(root))):
+            return {"ok": False, "error": "unknown chair: " + seat + " (a widget message names a chair, never a harness)"}
+        ping_id = None
+        if label == "ping":
+            ping_id = uuid.uuid4().hex[:12]
+            text = ("ping " + ping_id + " from the convoy widget: reply on the feed with `hook note \"pong " + ping_id +
+                    " <your whoami chair> <harness> <cwd>\" --as-me --to grok-bot`. This is an identity check, not work.")
+        try:
+            card = send_one(Path(root), seat, text, label=label or "widget")
+        except (ValueError, OSError) as e:
+            return {"ok": False, "error": str(e)}
+        out = {"ok": bool(card.get("ok")), "delivery": card.get("delivery"), "delivered": False,
+               "error": card.get("error"), "session_id": card.get("session_id"), "ts": card.get("ts")}
+        if ping_id:
+            out["ping_id"] = ping_id
+        return out
+
+    def replies(self, root: str, seat: str, since: str, ping_id: str | None = None) -> dict[str, Any]:
+        """Rows the chair itself authored after `since`; with ping_id, only those citing it."""
+        from .layer import feed_since
+        rows = []
+        for r in feed_since(Path(root), since):
+            if r.get("from") != seat and r.get("instance_id") != seat:
+                continue
+            if r.get("kind") not in ("note", "seated", "commit", "refuse"):
+                continue
+            if ping_id and ping_id not in str(r.get("summary") or ""):
+                continue
+            rows.append({"ts": r.get("ts"), "kind": r.get("kind"), "summary": r.get("summary")})
+        return {"ok": True, "seat": seat, "since": since, "rows": rows, "answered": bool(rows)}
+
     def pin(self, on: bool) -> dict[str, Any]:
         self.pinned = bool(on)
         applied = self.on_pin(self.pinned) if self.on_pin else None
@@ -258,6 +300,10 @@ def make_handler(api: WidgetApi):
             if p == "/api/nudge":
                 return self._json(api.nudge(str(body.get("root") or "."), str(body.get("seat") or ""),
                                             dry_run=body.get("dry_run", True), consent=body.get("consent"), force=bool(body.get("force"))))
+            if p == "/api/send":
+                return self._json(api.send(str(body.get("root") or "."), str(body.get("seat") or ""), str(body.get("body") or ""), body.get("label")))
+            if p == "/api/replies":
+                return self._json(api.replies(str(body.get("root") or "."), str(body.get("seat") or ""), str(body.get("since") or "1970-01-01T00:00:00.000000Z"), body.get("ping_id")))
             if p == "/api/tune":
                 return self._json(api.tune(str(body.get("root") or "."), str(body.get("seat") or ""),
                                            model=body["model"] if "model" in body else "__keep__",

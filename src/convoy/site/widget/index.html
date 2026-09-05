@@ -76,15 +76,16 @@ section.card { background: var(--panel); border: 1px solid var(--hair); border-r
 .bar.probing i { background: linear-gradient(90deg, #e9ecf2, #cfd4dd, #e9ecf2); background-size: 200% 100%; width: 100%; animation: shimmer 1.4s linear infinite; }
 @keyframes shimmer { from { background-position: 200% 0 } to { background-position: -200% 0 } }
 .pct { text-align: right; color: var(--ink-2); }
+.why { grid-column: 1 / -1; font: 11px var(--mono); color: var(--ink-3); margin: -3px 0 4px 86px; }
 .pct.unknown { color: var(--ink-3); }
 .foot { font: 11px var(--mono); color: var(--ink-3); margin-top: 6px; }
 
 table { width: 100%; border-collapse: collapse; font: 12.5px var(--mono); table-layout: fixed; }
 th { text-align: left; font: 600 10px var(--mono); letter-spacing: .12em; color: var(--ink-3); padding: 4px 6px 8px; border-bottom: 1px solid var(--hair); }
-td { padding: 7px 6px; border-bottom: 1px solid var(--hair); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; vertical-align: middle; }
+td { padding: 7px 5px; border-bottom: 1px solid var(--hair); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; vertical-align: middle; }
 td.chipcell { overflow: visible; }
-tr.row.sel td { background: rgba(47,79,216,.10); box-shadow: inset 3px 0 0 var(--blue); }
-tr.row.sel td.seat { color: var(--blue-2); font-weight: 600; }
+tr.row.sel td { background: rgba(47,79,216,.08); }
+tr.row.sel td.seat { color: var(--blue-2); font-weight: 600; box-shadow: inset 3px 0 0 var(--blue); }
 tr:last-child td { border-bottom: 0; }
 tr.row { cursor: pointer; }
 tr.row:hover td { background: var(--panel-2); }
@@ -95,8 +96,9 @@ tr.lead td.seat::before { content: ""; position: absolute; left: 0; top: 6px; bo
 .dd:hover { border-color: var(--blue); }
 .dd.na { color: var(--ink-3); border-style: dashed; }
 .dd svg { width: 9px; height: 9px; flex: none; opacity: .7; }
-select.tune { appearance: none; -webkit-appearance: none; background: #fff url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10'><path d='M1.5 3.5 5 7l3.5-3.5' fill='none' stroke='%233f4552' stroke-width='1.6' stroke-linecap='round'/></svg>") no-repeat right 7px center / 9px 9px; border: 1px solid var(--hair-2); border-radius: 7px; padding: 2px 22px 2px 8px; font: 12px var(--mono); color: var(--ink); max-width: 100%; cursor: pointer; }
+select.tune { appearance: none; -webkit-appearance: none; min-width: 0; width: 100%; background: #fff url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10'><path d='M1.5 3.5 5 7l3.5-3.5' fill='none' stroke='%233f4552' stroke-width='1.6' stroke-linecap='round'/></svg>") no-repeat right 7px center / 9px 9px; border: 1px solid var(--hair-2); border-radius: 7px; padding: 2px 22px 2px 8px; font: 12px var(--mono); color: var(--ink); max-width: 100%; cursor: pointer; }
 select.tune:hover { border-color: var(--blue); }
+input.tune.compact { padding: 2px 6px; }
 select.tune:disabled { color: var(--ink-3); border-style: dashed; cursor: not-allowed; background-color: transparent; }
 input.tune { border: 1px solid var(--hair-2); border-radius: 7px; padding: 2px 8px; font: 12px var(--mono); color: var(--ink); width: 100%; box-sizing: border-box; background: #fff; }
 input.tune::placeholder { color: var(--ink-3); }
@@ -137,6 +139,14 @@ select.in { appearance: none; }
 .start .btns { display: flex; gap: 8px; justify-content: flex-end; margin-top: 8px; font: 12px var(--mono); }
 .start .btns span { padding: 4px 10px; border-radius: 7px; border: 1px solid var(--hair-2); cursor: pointer; }
 .start .btns .go { border-color: var(--blue); color: var(--blue); }
+.actions { display: none; margin-top: 8px; padding: 8px 10px; border: 1px solid var(--hair); border-radius: 10px; background: var(--panel-2); font: 12px var(--mono); }
+.actions.show { display: block; }
+.actions .row1 { display: grid; grid-template-columns: auto 1fr auto; gap: 8px; align-items: center; }
+.actions .btn { padding: 4px 10px; border-radius: 7px; border: 1px solid var(--hair-2); cursor: pointer; color: var(--ink); background: #fff; white-space: nowrap; }
+.actions .btn:hover { border-color: var(--blue); color: var(--blue-2); }
+.actions .reply { margin-top: 6px; color: var(--ink-2); white-space: pre-wrap; word-break: break-word; }
+.actions .reply.ok { color: var(--green); }
+.actions .meta { color: var(--ink-3); font-size: 11px; margin-top: 4px; }
 .empty { padding: 24px 14px; color: var(--ink-3); font: 12px var(--mono); text-align: center; }
 </style>
 </head>
