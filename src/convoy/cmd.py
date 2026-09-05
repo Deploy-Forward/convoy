@@ -17,6 +17,8 @@ from pathlib import Path
 
 INBOX_HOOK_ARGS = "inbox --hook-pretooluse"
 INBOX_HOOK_COMMAND = "convoy " + INBOX_HOOK_ARGS   # the bare console-script spelling
+END_HOOK_ARGS = "end --hook"
+END_HOOK_COMMAND = "convoy " + END_HOOK_ARGS
 INBOX_HOOK_INSTALL_HINT = (
     "install the convoy console script so `convoy` resolves in the hook shell: "
     "pipx install git+https://github.com/Deploy-Forward/convoy.git (or pip install .), "
@@ -63,16 +65,17 @@ def hook_shell() -> list[str] | None:
     return None
 
 
-def _probe_inbox_command(command: str) -> bool:
+def _probe_command(command: str, hook_args: str, marker: str) -> bool:
     """Does this command line, run the way a hook runs it, answer as the
     Python package? `<cmd minus args> inbox --help` must exit 0 and print the
     `--hook-pretooluse` usage. An unrelated shim (audit 2026-09-03: an Aether
     `convoy.cmd` that exits 0 with its own help) fails; so does a name Git
     Bash cannot see (`.cmd` shims, exit 127)."""
-    head = command.rsplit(INBOX_HOOK_ARGS, 1)[0].strip()
+    head = command.rsplit(hook_args, 1)[0].strip()
     if not head:
         return False
-    line = head + " inbox --help"
+    verb = hook_args.split()[0]
+    line = head + " " + verb + " --help"
     # The hook shell inherits NOTHING from this process: a PYTHONPATH set for
     # the caller made a dead `python -m convoy` look alive (live 2026-09-03,
     # and it overwrote the one working hook on the thread). Scrub it.
@@ -88,7 +91,7 @@ def _probe_inbox_command(command: str) -> bool:
                                    encoding="utf-8", errors="replace", timeout=25)
         except (OSError, subprocess.SubprocessError):
             continue
-        if r.returncode == 0 and "--hook-pretooluse" in (r.stdout or ""):
+        if r.returncode == 0 and marker in (r.stdout or ""):
             # Candidates we WRITE must pass the primary (bash) shell; a command
             # we merely KEEP may have been written for cmd.exe, so either
             # shell passing is proof it delivers for its harness.
@@ -96,6 +99,14 @@ def _probe_inbox_command(command: str) -> bool:
         if shell is None or not _PROBE_ANY_SHELL:
             break
     return False
+
+
+def _probe_inbox_command(command: str) -> bool:
+    return _probe_command(command, INBOX_HOOK_ARGS, "--hook-pretooluse")
+
+
+def _probe_end_command(command: str) -> bool:
+    return _probe_command(command, END_HOOK_ARGS, "--hook")
 
 
 # Writers probe in the primary hook shell only; keep-existing probes any shell.
@@ -111,7 +122,17 @@ def probe_existing_hook_command(command: str) -> bool:
         _PROBE_ANY_SHELL = False
 
 
+def probe_existing_end_hook_command(command: str) -> bool:
+    global _PROBE_ANY_SHELL
+    _PROBE_ANY_SHELL = True
+    try:
+        return _probe_end_command(command)
+    finally:
+        _PROBE_ANY_SHELL = False
+
+
 _RESOLVED: dict | None = None
+_END_RESOLVED: dict | None = None
 
 
 def resolve_inbox_hook_command(refresh: bool = False) -> dict:
@@ -147,6 +168,29 @@ def resolve_inbox_hook_command(refresh: bool = False) -> dict:
     return out
 
 
+def resolve_end_hook_command(refresh: bool = False) -> dict:
+    """Resolve and probe the portable Stop-heartbeat command."""
+    global _END_RESOLVED
+    if _END_RESOLVED is not None and not refresh:
+        return dict(_END_RESOLVED)
+    py = _quote(sys.executable or "python")
+    candidates = [
+        ("console-script", END_HOOK_COMMAND),
+        ("interpreter", py + " -m convoy " + END_HOOK_ARGS),
+        ("interpreter+src", py + " -c " + _quote(
+            "import sys; sys.path.insert(0, " + repr(_source_dir()) + "); "
+            "from convoy.cli import main; sys.exit(main(sys.argv[1:]))") + " " + END_HOOK_ARGS),
+    ]
+    out = {"command": None, "resolved_via": None,
+           "error": "no convoy command resolves in the hook shell; " + INBOX_HOOK_INSTALL_HINT}
+    for via, command in candidates:
+        if _probe_end_command(command):
+            out = {"command": command, "resolved_via": via, "error": None}
+            break
+    _END_RESOLVED = dict(out) if out["command"] else None
+    return out
+
+
 def convoy_command() -> str:
     exe = shutil.which("convoy")
     if exe:
@@ -168,6 +212,11 @@ def inbox_hook_command() -> str:
     """The canonical bare spelling, for docs and cards. Hook FILES get the
     probed result of resolve_inbox_hook_command() instead."""
     return INBOX_HOOK_COMMAND
+
+
+def end_hook_command() -> str:
+    """Canonical portable spelling used by Codex/Claude Stop hooks."""
+    return END_HOOK_COMMAND
 
 
 def command_bakes_interpreter(command: str) -> bool:

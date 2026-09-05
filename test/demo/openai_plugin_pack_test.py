@@ -17,6 +17,7 @@ class OpenAIPluginPackContract(unittest.TestCase):
         self.assertEqual(data["license"], "MIT")
         self.assertEqual(data["skills"], "./skills/")
         self.assertEqual(data["mcpServers"], "./.mcp.json")
+        self.assertNotIn("hooks", data, "hooks/hooks.json is auto-discovered; current validator rejects a manifest field")
         self.assertEqual(data["interface"]["category"], "Developer Tools")
         self.assertEqual(data["interface"]["capabilities"], ["Interactive", "Read"])
         self.assertLessEqual(len(data["interface"]["defaultPrompt"]), 3)
@@ -26,6 +27,29 @@ class OpenAIPluginPackContract(unittest.TestCase):
             asset = PLUGIN / data["interface"][field]
             self.assertTrue(asset.is_file(), field)
             self.assertTrue(asset.resolve().is_relative_to(PLUGIN.resolve()))
+
+    def test_stop_hook_and_explicit_end_skill_have_separate_authority(self):
+        hooks = json.loads((PLUGIN / "hooks" / "hooks.json").read_text(encoding="utf-8"))
+        command = hooks["hooks"]["Stop"][0]["hooks"][0]["command"]
+        self.assertEqual(command, "convoy end --hook")
+        skill = (PLUGIN / "skills" / "convoy-end" / "SKILL.md").read_text(encoding="utf-8")
+        agent = (PLUGIN / "skills" / "convoy-end" / "agents" / "openai.yaml").read_text(encoding="utf-8")
+        self.assertIn("That automatic path", skill)
+        self.assertIn("can never push", skill)
+        self.assertIn("allow_implicit_invocation: false", agent)
+
+    def test_end_skill_is_identical_in_plugin_package_cli_package_and_project(self):
+        packaged_paths = (
+            REPO / "skills" / "convoy-end" / "SKILL.md",
+            REPO / "src" / "convoy" / "harness_skills" / "convoy-end" / "SKILL.md",
+            PLUGIN / "skills" / "convoy-end" / "SKILL.md",
+        )
+        expected = packaged_paths[0].read_bytes()
+        for path in packaged_paths:
+            self.assertTrue(path.is_file(), str(path))
+            self.assertEqual(path.read_bytes(), expected, str(path))
+        project = REPO / ".agents" / "skills" / "convoy-end" / "SKILL.md"
+        self.assertEqual(project.read_text(encoding="utf-8"), expected.decode("utf-8"))
 
     def test_remote_mcp_uses_official_http_shape(self):
         data = json.loads((PLUGIN / ".mcp.json").read_text(encoding="utf-8"))

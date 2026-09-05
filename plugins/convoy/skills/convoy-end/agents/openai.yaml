@@ -1,0 +1,6 @@
+interface:
+  display_name: "End Convoy task"
+  short_description: "Record the final heartbeat and optionally push"
+  default_prompt: "End this Convoy task and record its final heartbeat."
+policy:
+  allow_implicit_invocation: false
