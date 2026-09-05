@@ -105,7 +105,7 @@ Read (no writes to thread state):
 - `resume --neuron <chair>` — dry: prints native argv + cwd, spawns nothing.
 - `choices` — installed harnesses, known worktrees, chairs, terminal adapter; no resume tokens.
 - `probe --to <harness>`, `id`, `terminals`.
-- `widget [--topmost/--no-topmost] [--refresh 3]` — always-on-top tkinter strip: one dot per thread from `recent()`, expand chairs, click → `focus`. Stdlib only.
+- `widget [--topmost/--no-topmost] [--refresh 3] [--service]` — always-on-top tkinter strip: one dot per thread from `recent()`, expand chairs, click → `focus`; a stale chair shows a `nudge` button (dry card first, keys typed only on confirm, then the feed is polled 60 s for the chair's own row — that row alone means delivered). `pin` toggles topmost; `x` hides to the tray where `pystray`+`PIL` import, else minimizes. `--service` starts one detached strip per machine behind `$CONVOY_HOME/widget.pid` (`already: true` when the pid is alive and its image is our interpreter; a reused pid respawns). `crew --launch` and `relaunch` start it unless `--no-widget`. Stdlib only.
 - `focus --seat <chair>` — ask the pane host to highlight that chair. `{focused: false, reason}` until a host adapter is evidenced (tmux `select-pane -t` is tested; Windows Terminal `wt focus-pane` is not evidenced on this machine).
 
 Write (thread state):
@@ -113,6 +113,7 @@ Write (thread state):
 - `init` — create the thread layer at `--root`.
 - `bind --thread <name>` — bind this root to a named thread.
 - `start [<repo>] [--to <harness> ...] [--thread <name>] [--cancel]` — thin alias: git URL → clone once then `onboard --github yes`; local path → `onboard --github no`; no repo → picker from `recent()` (title + root + last activity, never auto-picks newest); empty index → ask to start a new thread; `--cancel` leaves unbound. Already-live harness on the root (whoami/roster) → `attach`, never a duplicate `bring_up`.
+- Outside-harness join: a session started in no worktree runs `whoami` (chair null, an ask), `threads`, `start` (picker, never auto-picks), then `attach` + `join --to <harness>` on the chosen root and receives queued sends without stealing a pane. `docs/OUTSIDE_HARNESS_JOIN.md`.
 - `onboard --to <harness> [--to ...] [--thread <name>] [--checkout-root <path|git-url>] [--github yes|no]` — name installed harnesses and bind; a URL is cloned once under `$CONVOY_HOME/checkouts/<owner>/<repo>` (`.convoy/` and `thread.md` go into that clone's `.git/info/exclude`). Whoever launched first conducts: the first harness named on the first onboard becomes `lead`; a later onboard reports it and never steals it.
 - `seat --to <harness> --session-id <chair> [--worktree <path>] [--model M] [--resume <vendor-id>] [--title T] [--effort E]` — register a seated neuron.
 - `join --to <harness> [--worktree <path>] [--title T] [--as <chair>] [--launch] [--consent <id>]` — register one fresh chair.

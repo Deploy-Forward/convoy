@@ -258,6 +258,8 @@ def _chair_row(
         "last_row": last_rows.get(sid),
         "unread": unread,
         "focus": "focus --seat " + sid,
+        "nudge_available": chip == "stale",
+        "nudge": "nudge --seat " + sid + " --dry-run",
     }
 
 
@@ -358,6 +360,46 @@ def build_widget_model(
     return {"ok": True, "threads": threads, "now": now, "idle_s_flag": threshold}
 
 
+NUDGE_AWAIT_S = 60.0
+
+
+def nudge_delivered(root: Path | str, session_id: str, since_ts: str) -> str | None:
+    """The target's OWN feed row newer than the nudge, or None.
+
+    'delivered' flips only on that row (nudge.py never claims it). Pure read of
+    the feed; the widget polls this for NUDGE_AWAIT_S after a confirmed nudge.
+    """
+    authored, _ = _tape_index(Path(root))
+    ts = authored.get(session_id)
+    if isinstance(ts, str) and ts > since_ts:
+        return ts
+    return None
+
+
+def nudge_await_status(root: Path | str, session_id: str, since_ts: str, waited_s: float) -> dict[str, Any]:
+    """{delivered: bool, ts, done: bool, text} for one poll tick; done after NUDGE_AWAIT_S."""
+    ts = nudge_delivered(root, session_id, since_ts)
+    if ts:
+        return {"delivered": True, "ts": ts, "done": True, "text": "delivered: own row at " + ts}
+    if waited_s >= NUDGE_AWAIT_S:
+        return {"delivered": False, "ts": None, "done": True,
+                "text": "nudged; no own row in " + str(int(NUDGE_AWAIT_S)) + " s (not delivered)"}
+    return {"delivered": False, "ts": None, "done": False,
+            "text": "nudged; awaiting own row (" + str(int(waited_s)) + "/" + str(int(NUDGE_AWAIT_S)) + " s)"}
+
+
+def close_action(find_spec: Callable[[str], Any] | None = None) -> str:
+    """'tray' only where pystray AND PIL are importable (pystray needs a PIL image); else 'minimize'."""
+    import importlib.util
+    find = find_spec or importlib.util.find_spec
+    try:
+        if find("pystray") is not None and find("PIL") is not None:
+            return "tray"
+    except (ImportError, ValueError):
+        pass
+    return "minimize"
+
+
 def run_widget(
     roots: list[Path | str] | None = None,
     *,
@@ -375,12 +417,16 @@ def run_widget(
 
     import subprocess
     from .focus import focus_seat
+    from .nudge import nudge_seat
     from .start import start
 
     interval_ms = max(1, int(float(refresh) * 1000))
     selected = {"n": 1}
     usage_mode = {"v": "session"}
     pending_cmd = {"text": ""}
+    pinned = {"v": bool(topmost)}
+    # the nudge the human is confirming: dry card shown first, keys typed only on confirm
+    pending_nudge: dict[str, Any] = {}
     state: dict[str, Any] = {"model": build_widget_model(roots, probe_fn=probe_fn)}
 
     BLUE = "#2f4fd8"
@@ -443,6 +489,95 @@ def run_widget(
         _paint_confirm()
         status.config(text=text)
 
+    def _root() -> Path:
+        t = _thread()
+        return Path(str((t or {}).get("root") or "."))
+
+    def _nudge(sid: str) -> None:
+        """Stage 1: identify only (dry_run). Nothing is typed. The human confirms next."""
+        card = nudge_seat(_root(), sid, dry_run=True)
+        pending_nudge.clear()
+        pending_nudge.update(sid=sid, card=card, consent="", keys="")
+        pending_cmd["text"] = ""
+        _paint_confirm()
+        status.config(text=str(card.get("reason") or card.get("next") or card.get("error") or "nudge"))
+
+    def _nudge_confirm() -> None:
+        """Stage 2: the one keystroke, with the consent the human pasted. Never on a timer."""
+        sid = str(pending_nudge.get("sid") or "")
+        if not sid:
+            return
+        keys = str(pending_nudge.get("keys") or "").strip() or None
+        consent = str(pending_nudge.get("consent") or "").strip() or None
+        card = nudge_seat(_root(), sid, keys=keys, consent=consent)
+        pending_nudge["card"] = card
+        if card.get("request_id"):
+            # consent asked, not granted: show the grant command; the human runs it, pastes the token
+            status.config(text="grant: " + convoy_root_command(_root()) + " consent --grant " + str(card["request_id"]))
+        else:
+            status.config(text=str(card.get("delivery") or card.get("reason") or card.get("error") or "nudge"))
+            if card.get("delivery") == "nudged":
+                pending_nudge.clear()
+                _await_nudge(sid, utc_now(), 0.0)
+        _paint_confirm()
+
+    def _await_nudge(sid: str, since_ts: str, waited_s: float) -> None:
+        """Poll the feed for the target's own row for NUDGE_AWAIT_S; repaint the chip on each tick."""
+        st = nudge_await_status(_root(), sid, since_ts, waited_s)
+        status.config(text=st["text"])
+        state["model"] = build_widget_model(roots, probe_fn=probe_fn)
+        _paint()
+        if not st["done"] and loop:
+            win.after(interval_ms, lambda: _await_nudge(sid, since_ts, waited_s + interval_ms / 1000.0))
+
+    def _nudge_cancel() -> None:
+        pending_nudge.clear()
+        _paint_confirm()
+
+    def _toggle_pin() -> None:
+        pinned["v"] = not pinned["v"]
+        win.attributes("-topmost", pinned["v"])
+        _paint()
+
+    tray = {"icon": None}
+
+    def _tray_show(icon: Any = None, item: Any = None) -> None:
+        if tray["icon"] is not None:
+            try:
+                tray["icon"].stop()
+            except Exception:
+                pass
+            tray["icon"] = None
+        win.after(0, win.deiconify)
+
+    def _tray_quit(icon: Any = None, item: Any = None) -> None:
+        if tray["icon"] is not None:
+            try:
+                tray["icon"].stop()
+            except Exception:
+                pass
+        win.after(0, win.destroy)
+
+    def _on_close() -> None:
+        """x never kills the service: hide to the tray where pystray+PIL import, else minimize."""
+        if close_action() == "tray":
+            try:
+                import pystray
+                from PIL import Image, ImageDraw
+                img = Image.new("RGB", (16, 16), BG)
+                ImageDraw.Draw(img).ellipse((3, 3, 12, 12), fill=BLUE)
+                menu = pystray.Menu(pystray.MenuItem("show", _tray_show, default=True),
+                                    pystray.MenuItem("quit", _tray_quit))
+                tray["icon"] = pystray.Icon("convoy", img, "convoy", menu)
+                tray["icon"].run_detached()
+                win.withdraw()
+                return
+            except Exception:
+                tray["icon"] = None
+        win.iconify()
+
+    win.protocol("WM_DELETE_WINDOW", _on_close)
+
     def _run_cmd() -> None:
         text = pending_cmd.get("text") or ""
         if not text.strip():
@@ -460,6 +595,34 @@ def run_widget(
     def _paint_confirm() -> None:
         for child in list(confirm.winfo_children()):
             child.destroy()
+        if pending_nudge.get("sid"):
+            card = pending_nudge.get("card") or {}
+            head = "nudge " + str(pending_nudge["sid"]) + " · " + str(card.get("adapter") or "no adapter")
+            tk.Label(confirm, text=head, anchor="w", bg=BG, fg=RED, font=small).pack(fill="x")
+            detail = str(card.get("reason") or card.get("next") or card.get("error") or "")
+            if detail:
+                tk.Label(confirm, text=detail, anchor="w", bg=BG, fg=GREY, font=small, wraplength=520).pack(fill="x")
+            fields = tk.Frame(confirm, bg=BG)
+            fields.pack(fill="x")
+            keys_var = tk.StringVar(value=str(pending_nudge.get("keys") or ""))
+            consent_var = tk.StringVar(value=str(pending_nudge.get("consent") or ""))
+            tk.Label(fields, text="keys", bg=BG, fg=GREY, font=small).pack(side="left")
+            tk.Entry(fields, textvariable=keys_var, width=18, font=small).pack(side="left", padx=(2, 8))
+            tk.Label(fields, text="consent", bg=BG, fg=GREY, font=small).pack(side="left")
+            tk.Entry(fields, textvariable=consent_var, width=18, font=small).pack(side="left", padx=(2, 0))
+            row = tk.Frame(confirm, bg=BG)
+            row.pack(fill="x", pady=(2, 6))
+            can_send = bool(card.get("identified")) and card.get("adapter") != "grok-acp-unshipped"
+
+            def _confirm() -> None:
+                pending_nudge["keys"] = keys_var.get()
+                pending_nudge["consent"] = consent_var.get()
+                _nudge_confirm()
+
+            tk.Button(row, text="confirm nudge", command=_confirm, font=small,
+                      state="normal" if can_send else "disabled").pack(side="left")
+            tk.Button(row, text="cancel", command=_nudge_cancel, font=small).pack(side="left", padx=6)
+            return
         text = pending_cmd.get("text") or ""
         if not text:
             return
@@ -526,6 +689,9 @@ def run_widget(
                 ).pack()
         tk.Button(dots, text="+", relief="solid", fg=GREY, bg=BG, font=small,
                   command=_plus).pack(side="left", padx=(8, 0))
+        tk.Button(dots, text="pin" if pinned["v"] else "unpinned", relief="flat",
+                  fg=BLUE if pinned["v"] else GREY, bg=BG, font=small,
+                  command=_toggle_pin).pack(side="left", padx=(6, 0))
 
         t = _thread()
         if t is None:
@@ -638,6 +804,10 @@ def run_widget(
                 ent_e.pack(side="left")
                 ent_e.bind("<Return>", preview)
             tk.Label(row, text=str(c.get("chip") or ""), width=10, anchor="w", bg=BG, fg=GREY, font=small).pack(side="left")
+            if c.get("nudge_available") is True:
+                # the red ring is the invitation; the human clicks; never a timer
+                tk.Button(row, text="nudge", relief="solid", fg=RED, bg=BG, font=small,
+                          command=lambda s=sid: _nudge(s)).pack(side="left", padx=(4, 0))
         tk.Label(table, text=str(t.get("footer") or ""), anchor="w", bg=BG, fg=GREY, font=small).pack(fill="x", pady=(6, 0))
 
     def _select(n: int) -> None:
