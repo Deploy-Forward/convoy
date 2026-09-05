@@ -105,7 +105,7 @@ Read (no writes to thread state):
 - `resume --neuron <chair>` — dry: prints native argv + cwd, spawns nothing.
 - `choices` — installed harnesses, known worktrees, chairs, terminal adapter; no resume tokens.
 - `probe --to <harness>`, `id`, `terminals`.
-- `widget [--topmost/--no-topmost] [--refresh 3]` — always-on-top tkinter strip: one dot per thread from `recent()`, expand chairs, click → `focus`. Stdlib only.
+- `widget [--topmost/--no-topmost] [--refresh 3] [--service]` — always-on-top tkinter strip: one dot per thread from `recent()`, expand chairs, click → `focus`; a stale chair shows a `nudge` button (dry card first, keys typed only on confirm, then the feed is polled 60 s for the chair's own row — that row alone means delivered). `pin` toggles topmost; `x` hides to the tray where `pystray`+`PIL` import, else minimizes. `--service` starts one detached strip per machine behind `$CONVOY_HOME/widget.pid` (`already: true` when the pid is alive and its image is our interpreter; a reused pid respawns). `crew --launch` and `relaunch` start it unless `--no-widget`. Stdlib only.
 - `focus --seat <chair>` — ask the pane host to highlight that chair. `{focused: false, reason}` until a host adapter is evidenced (tmux `select-pane -t` is tested; Windows Terminal `wt focus-pane` is not evidenced on this machine).
 
 Write (thread state):
