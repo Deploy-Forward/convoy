@@ -104,6 +104,14 @@ a tape chip (`working|idle|stale|gone`) is last_authored / last_drained /
 waiting / idle_s / body, with the idle threshold a flag. A live-body
 dot appears only when `panes` proves a process; a red ring on the thread
 dot means any chair is tape-stale. Clicking a row calls `focus --seat`.
+## Idle wake
+
+An idle grok pane has no vendor push API. Occupant-side: `inbox --wait --seat`
+as a background command, plus the Stop gate while rows wait. Host-side:
+`nudge --seat` after `panes` plus a unique window title (or tmux target) prove
+the pane, and a consent card names that pane and the exact keys. Success is
+`delivery: nudged`; only the occupant's ack is `delivered`. A generic title
+(`grok`) is not identity.
 
 ## What "cloud" means here
 
