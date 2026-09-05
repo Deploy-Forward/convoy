@@ -9,7 +9,7 @@ from typing import Any
 POINTER_FILES = (
     ("thread", "thread.md"),
     ("role", "role.md"),
-    ("brief", ".ola/brief.md"),
+    ("brief", ".convoy/brief.md"),
 )
 
 def _pointer(path: Path) -> str | None:
@@ -24,10 +24,18 @@ def _one_line(path: Path) -> str | None:
     return text or None
 
 def newest_handoff(root: Path) -> str | None:
-    folder = Path(root) / ".ola"
-    if not folder.is_dir():
+    """Newest file under `.convoy/handoff/`. Labelled legacy fallback: an
+    old `.ola/*handoff*` is returned only when the new folder is empty."""
+    folder = Path(root) / ".convoy" / "handoff"
+    if folder.is_dir():
+        files = [p for p in folder.iterdir() if p.is_file()]
+        files.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+        if files:
+            return str(files[0])
+    legacy = Path(root) / ".ola"
+    if not legacy.is_dir():
         return None
-    cands = sorted(folder.glob("*handoff*"), key=lambda p: p.stat().st_mtime, reverse=True)
+    cands = sorted(legacy.glob("*handoff*"), key=lambda p: p.stat().st_mtime, reverse=True)
     files = [p for p in cands if p.is_file()]
     return str(files[0]) if files else None
 
@@ -36,6 +44,9 @@ def pack(root: Path, instance_id: str | None = None) -> dict[str, Any]:
     out: dict[str, Any] = {}
     for key, rel in POINTER_FILES:
         out[key] = _pointer(root / rel)
+    if out.get("brief") is None:
+        # labelled legacy fallback; new writes go to .convoy/brief.md
+        out["brief"] = _pointer(root / ".ola" / "brief.md")
     out["handoff"] = newest_handoff(root)
     out["instance_id"] = instance_id
     out["convoy_id"] = _one_line(root / ".convoy" / "id")
