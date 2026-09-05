@@ -115,9 +115,19 @@ class HookWritersUseResolvedCommand(unittest.TestCase):
         with mock.patch.object(cmd, "_probe_inbox_command", _probe(ok)):
             g = ensure_grok_inbox_hook(self.wt, root=self.root)
         self.assertTrue(g["ok"])
-        self.assertFalse(g["written"])
         self.assertEqual(g["kept_existing"], "C:/venv/python.exe -m convoy inbox --hook-pretooluse")
-        self.assertEqual(dest.read_text(encoding="utf-8"), prior)
+        # The COMMAND is kept. The EVENT SET is upgraded: a prior file that
+        # knew only PreToolUse gains the Stop gate (2026-09-05), same command.
+        self.assertTrue(g["written"])
+        self.assertTrue(g["upgraded_events"])
+        doc = json.loads(dest.read_text(encoding="utf-8"))
+        self.assertEqual(set(doc["hooks"]), {"PreToolUse", "Stop"})
+        for ev in ("PreToolUse", "Stop"):
+            self.assertEqual(doc["hooks"][ev][0]["hooks"][0]["command"], "C:/venv/python.exe -m convoy inbox --hook-pretooluse")
+        # Run again: nothing stale, nothing rewritten.
+        with mock.patch.object(cmd, "_probe_inbox_command", _probe(ok)):
+            again = ensure_grok_inbox_hook(self.wt, root=self.root)
+        self.assertFalse(again["written"])
 
 
 if __name__ == "__main__":

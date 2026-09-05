@@ -41,7 +41,9 @@ def _last_seen(rows: list[dict[str, Any]], sid: str) -> str | None:
 
 
 def relaunch(root: Path | str, *, thread: str | None = None, runner: Runner | None = None,
-             timeout: float = 0.0) -> dict[str, Any]:
+             timeout: float = 0.0, seats: list[str] | None = None) -> dict[str, Any]:
+    """seats: relaunch only these chairs (their panes died; the others are
+    alive and must not be duplicated). Default: every chair."""
     root = Path(root)
     cid = read_id(root)
     bound = read_thread(root)
@@ -54,6 +56,14 @@ def relaunch(root: Path | str, *, thread: str | None = None, runner: Runner | No
         card["error"] = "thread mismatch: root is bound to " + repr(bound) + ", not " + repr(thread)
         return card
     chairs = [s for s in list_seats(root, convoy_id=cid) if not is_conductor(s.get("to"))]
+    if seats:
+        want = [str(x) for x in seats]
+        known = {str(s.get("session_id")) for s in chairs}
+        unknown = [x for x in want if x not in known]
+        if unknown:
+            card["error"] = "unknown seat: " + ", ".join(unknown)
+            return card
+        chairs = [s for s in chairs if str(s.get("session_id")) in want]
     if not chairs:
         card["error"] = "no chairs on this thread: crew first"
         return card
