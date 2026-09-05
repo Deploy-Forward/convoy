@@ -7,6 +7,67 @@
 
 ---
 
+## 0. Preamble — Herdr, our value add, and the happy path
+
+### 0.1 How this relates to Herdr
+
+**Herdr** answers: *who owns the agent terminals when every UI disconnects?*  
+Its claim is a **PTY runtime**: a server holds the terminals; TUI / CLI / SSH are clients. Quit every client and the agents keep working.
+
+**Convoy** answers a different first question: *what is the durable shared memory between BYO harnesses on one thread?*  
+Its claim is a **SoT + MCP orchestration layer**: `.convoy/` (`convoy_id`, `feed`, `seats`, stamps) plus verbs that seat, send, and prove work — without merging vendor sessions or wrapping CLIs.
+
+| | Herdr | Convoy |
+|---|---|---|
+| Primary asset | live PTYs | thread SoT + MCP |
+| Survives UI close (agents working) | **yes** (server owns panes) | **only if** WT/tmux/vendor sessions still exist |
+| Survives UI close (memory / proof) | adjacent | **yes** — feed / seats / stamps on disk |
+| Value if Herdr (or tmux) is present | — | Convoy rides on top: identity, bus, cards, fail-closed tools |
+| Value if Herdr is absent | — | Still useful: shared thread + CLI/MCP; panes via existing mux |
+
+They are **complements**, not substitutes. Herdr (or plain tmux/WT) can be the runtime under Convoy’s SoT. Competing on Herdr’s sorting row without owning PTYs is an explicit **gap** (§14), not a slogan.
+
+### 0.2 Where Convoy’s value add is
+
+1. **One durable thread memory** any neuron can tap — feed, seats, stamps — so work is not trapped in one harness transcript.  
+2. **BYO harnesses, own meters** — claude / codex / grok stay logged-in CLIs; Convoy does not become UltraCode-Shim.  
+3. **Orchestration verbs with honesty** — onboard → crew → await-seated → send → feed/stamp; Gate 0 fail-closed; usage `null` when unknown.  
+4. **Conductor-shaped product** — Grok Bot (or a lead neuron) orchestrates; chips/cards stay compact.  
+5. **Pack for attach** — `plugin/convoy/` gets a host onto `https://convoy.bot/mcp`; pack ≠ product SoT.
+
+**Not** the value add (today): being the detachable PTY server; a Herdr-class `blocked|working|idle` wait API; a first-party “thread rail” TUI chrome (glance/CLI exist; the storyboard rail is UX target).
+
+### 0.3 How close we are to the Convoy Happy Path storyboard
+
+Storyboard intent: establish a `.convoy` thread, point at a repo, summon neurons, prove seated, delegate, prove via feed/stamp — agent-agnostic lead, shared memory, distributed meters.
+
+```text
+LAUNCH any harness → LEAD
+  → onboard --thread … (--to harnesses, optional --checkout-root)
+  → POINT AT WORK (GitHub url | local --github no)
+  → crew --seat … --launch   (one worktree / seat, one window)
+  → await-seated
+  → send --to …  (+ inbox drain)
+  → feed --since … / stamp …   = DoD
+```
+
+| Frame | Storyboard | Repo today | Closeness |
+|---|---|---|---|
+| 1 Launch / lead | Any logged-in harness leads | CLI/MCP assume a conductor or lead path; Grok Bot often conducts in product pitch | **near** — agent-agnostic lead is supported in spirit; “first terminal = lead” is operator convention more than a hard runtime lock |
+| 2 Connect thread | `convoy onboard --to … --thread demo` → cloud SoT | `onboard` exists (`cli.py`); SoT is **disk under `--root`**; public MCP = **one bound root**, not multi-tenant cloud threads | **partial** — verb GREEN on checkout; “cloud multi-thread” still RED on public wire |
+| 3 Point at work | `--checkout-root` git-url or local `--github no` | onboard/checkout paths in tree; clone under `$CONVOY_HOME/checkouts` documented | **near** |
+| 4 Summon neurons | `crew --seat … --launch` one window | `crew` + `bring_up` / `isolated_wt_argv` (WT owns PTYs) | **near** on Windows with WT; **null/RED** without a pane host |
+| 5 Prove seated | `await-seated` | `await_seated` in `crew.py` / CLI / MCP (write-gated where applicable) | **near** — launched ≠ connected is explicit in code |
+| 6 Delegate | `send` + compact card; inbox drain | `send` + inbox paths; live no-steal locks | **near** on CLI; public MCP send may be gated/lagging |
+| Proof / DoD | `feed --since` + `stamp` | `feed_since`, `conductor_stamp` / `stamp` CLI | **near** on local root; stamp write-gated on public MCP |
+| Thread rail UI | feed/seats/usage bars in one chrome | `glance` CLI/MCP; no first-party split-pane “rail” product | **aspirational** |
+| vs Herdr row 2 | 0 clients, agents still working | SoT survives; PTYs do not unless mux keeps them | **gap** — see §14 |
+
+**Bottom line:** the happy-path **command story is largely implemented on a machine with PATH harnesses + a pane host**. The **cloud / stranger / Herdr-persistence** layers are where distance remains: public one-root MCP, Gate 0/`card` Acceptance RED until origin matches main, and no Convoy-owned PTY runtime.
+
+
+---
+
 ## 1. Sorting row
 
 The field is sorted by one question:
