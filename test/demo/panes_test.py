@@ -12,6 +12,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 
@@ -182,6 +183,16 @@ class Whoami(unittest.TestCase):
         from convoy.panes import identify
         me = identify(self.root, pid=31, procs=self.procs, cwd="/w/g")
         self.assertEqual((me["chair"], me["via"]), ("g-t1", "cwd"))
+
+    def test_enumerate_error_is_on_the_card_not_pretend_no_chair(self):
+        from convoy.panes import identify
+        with mock.patch("convoy.panes.enumerate_processes", side_effect=OSError("access denied")):
+            me = identify(self.root, pid=30)
+        self.assertIsNone(me["chair"])
+        self.assertFalse(me["ok"])
+        self.assertIn("access denied", me["error"])
+        self.assertIn("unreadable", me["ask"])
+        self.assertNotIn("join", me["ask"])
 
     def test_unknown_body_is_null_and_may_not_author(self):
         from convoy.panes import identify
