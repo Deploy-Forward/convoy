@@ -147,3 +147,17 @@ SendKeys the message + Enter. Observed: g1 drained 4 rows within a minute of
 the keystroke; the second copy landed in g1 again because Alt+Left did not
 move focus from the right-most pane, so the title check is mandatory, not
 optional. This is the `nudge --seat` adapter for WT; tmux gets `send-keys -t`.
+
+DOUBLE-FIRE FAILURE, recorded (Marco, 2026-09-05): transport = SendKeys into a
+Windows Terminal pane, OUTSIDE Convoy (no inbox row, no token, no consumed
+marker). Fires: 05:57:08Z into the focused pane (g1); 05:57:29Z after Alt+Left,
+which did not move focus, so g1 again; 05:59:50Z after Alt+Right into g2. g1
+then reported at 06:10:33Z a "garbled relaunch prompt arrived in live g1 pane
+(pid 59824)": a fourth arrival with no matching send. Token: none (a keystroke
+carries none). Dedupe key: none existed. Consequence: the same neuron acted
+on the same prompt more than once and re-ran seated. Rule for `nudge --seat`:
+every nudge carries a nudge_id (uuid) in the typed text AND as a kind=nudge
+feed row {ts, instance_id: chair, nudge_id, transport, pane_title}; the
+neuron's ack cites nudge_id; a second nudge to a chair whose last nudge_id has
+no ack yet is refused unless --force; the pane-focus step must re-read the
+title AFTER the move and refuse when it did not change from the previous pane.
