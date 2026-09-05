@@ -41,7 +41,7 @@ Convoy is **not** a first-party PTY-owning agent runtime. It does **not** curren
 | Semantic agent state | blocked · working · done · idle | — | attention cues | process up / down | workspace status | **partial: seats + feed + glance; not a full blocked / wait FSM** |
 | Detach, reattach, SSH in | yes, any tty | yes | partial | — | remote projects | **resume via vendor UUID + `bring_up` / seats; not universal attach-any-tty** |
 | Direct attach to one agent | yes | — | — | — | — | **fire / send into a named seat; not Herdr-style “attach this PTY”** |
-| API agents drive themselves | read · send · wait · split · attach | terminal scripting | app APIs | MCP for processes | workflow APIs | **MCP orchestration (`roster` / `feed` / `context` / `send` / `card` / …) — not PTY control** |
+| API agents drive themselves | read · send · wait · split · attach | terminal scripting | app APIs | MCP for processes | workflow APIs | **MCP orchestration (`roster` / `feed` / `context` / `send` / …; `card` when Gate 0 GREEN) — not PTY control** |
 | Worktree and diff review | pairs with it | — | partial | — | their core | **pairs with it (GitHub gate, worktrees per chair); not the product** |
 | Clients on the same runtime | TUI · CLI · plain SSH, more coming | its own client | the app only | the app only | the app only | **Grok Bot + CLI + MCP clients; harness TUIs are the neurons** |
 
@@ -144,20 +144,33 @@ Solo supervises a dev stack: health, restarts, logs — **process** status.
 Convoy’s job is different: **interactive harness sessions** + **thread memory**, with honesty locks:
 
 - unknown usage stays JSON `null` (never invent `0`);
-- marketplace / wizard fail closed on live `tools/list` / `card`;
+- marketplace / wizard **must** fail closed on live `tools/list` / `card` (Gate 0); public wire may still be RED until origin matches main;
 - public write tools gated (`CONVOY_MCP_WRITE_TOOLS`).
 
 ---
 
 ## 10. Public product pitch (today)
 
-Locked shape (see also `SPEC.md`, `plugin/convoy/`):
+Locked **shape** (see also `SPEC.md`, `plugin/convoy/`). Live wire status is separate — see Acceptance bar below.
 
 1. Attach `https://convoy.bot/mcp` (one root on the public process; named threads are `--root` bindings).
-2. Skills orchestrate (`convoy`, optional `@convoy` wizard); host renders live MCP cards — not a frozen tool menu.
+2. Skills orchestrate (`convoy`, optional `@convoy` wizard). The **intended** host UX is one live MCP card from `tools/list` / `card` — never a frozen tool menu. **Acceptance DoD:** that card path is **RED** until Public Gate 0 is GREEN on a live probe (`docs/e2e-dod.md`; wizard skill Gate 0 in `plugin/convoy/skills/convoy-wizard/SKILL.md`). Host-render of the card on Grok Bot remains **unverified** in `plugin/convoy/README.md`. Soften any landing copy that implies the stranger path is already GREEN.
 3. Neurons are BYO harness sessions seated on the thread.
 4. Synapses are native send into seats (not transcript merges, not UltraCode-Shim wraps).
-5. Pack = skills + MCP manifests (+ logo); SoT = `.convoy/*` on the bound root.
+5. **Pack ≠ product SoT:** pack = `plugin/convoy/` (skills + MCP manifests + logo). Product SoT = `.convoy/*` on the bound `--root`. Prefer saying **“Exa-style pack layout”** for marketplace pin shape; reserve **SoT** for `.convoy/` / feed / seats / `convoy_id`. Avoid calling the xAI marketplace catalog “SoT” in the same breath as product SoT (`docs/e2e-dod.md` wording collision).
+
+### 10.1 Acceptance bar (2026-09-05)
+
+| Check | Score | Evidence |
+|---|---|---|
+| Pack shape matches attach → skills → Gate 0 → card | shape OK | `plugin/convoy/.mcp.json`, skills `convoy` / `convoy-wizard` |
+| Live Public Gate 0 (`card` + required verbs) | **RED** | `docs/e2e-dod.md`; live `POST https://convoy.bot/mcp` tools/list may 405 / lag origin — **never invent tool counts** |
+| Host card rendering on Grok Bot | **null / unverified** | `plugin/convoy/README.md` |
+| Marketplace listing | **RED** until xAI merge | pin PR separate from this landscape doc |
+| Pack ≠ `.convoy/` SoT | **GREEN** | §10.5 / §12 / README |
+| §16 Herdr landing honesty | **GREEN** | panes = mux/harness; no PTY-ownership overclaim |
+
+Domain review: Acceptance Testing agent on PR #59 (2026-09-05) — overall Acceptance **RED** until Gate 0 + host-render clear.
 
 ---
 
@@ -183,7 +196,7 @@ Claims in this document must point at code or stay RED. Paths are relative to re
 | MCP orchestration, write gate | `src/convoy/mcp_http.py` (`_WRITE_TOOLS` / `CONVOY_MCP_WRITE_TOOLS` ~L90–92, `call_tool` L590, `McpHandler` L1075) | `test/demo/phase_mcp_http_test.py`, `mcp_wizard_verbs_test.py`, `wizard_e2e_gated_test.py` |
 | Glance / usage honesty | `src/convoy/glance.py`, `src/convoy/usage.py` (`probe` L151, `surface` L194) | `test/demo/glance_test.py`, `glance_public_redaction_test.py`, `phase5_usage_test.py` |
 | Tokens never leave seats on wire | `src/convoy/graph.py` L16; public redaction tests | `test/demo/public_wire_redaction_test.py`, `graph_test.py` |
-| Marketplace pack ≠ SoT | `plugin/convoy/` (skills + `.mcp.json`); SoT remains `.convoy/` on `--root` | `plugin/convoy/README.md`, `docs/e2e-dod.md` |
+| Marketplace pack ≠ SoT | `plugin/convoy/` (skills + `.mcp.json`); SoT remains `.convoy/` on `--root` | `plugin/convoy/README.md`; prefer “Exa-style pack layout” over “xAI SoT” in `docs/e2e-dod.md` |
 
 ---
 
@@ -267,10 +280,10 @@ fn wizard_gate0():
   live = mcp.tools_list()                       # this run only — no cache
   if required_verbs missing from live:
     return RED(classify=redeploy|write-gated|not-registered)
-  return card_tool()                            # one host card; no frozen menu
+  return card_tool()                            # one host card when verb exists; else RED
 ```
 
-**DoD:** `mcp_wizard_verbs_test.py` / Gate 0 classify. Public `https://convoy.bot/mcp` tool count is **live probe only** — never pin a number in this SPEC.
+**DoD:** `mcp_wizard_verbs_test.py` / Gate 0 classify on a checkout. Public `https://convoy.bot/mcp` tool count is **live probe only** — never pin a number in this SPEC. Stranger Acceptance stays **RED** while live Gate 0 lacks `card` (or POST fails).
 
 ### 13.6 Semantic state (partial today)
 
@@ -344,7 +357,17 @@ See `CANON.md` and the terminology lock in `SPEC.md`.
 
 ---
 
-## 18. Related artifacts
+## 18. Domain review log
+
+| Domain | Agent | Score | Notes |
+|---|---|---|---|
+| Acceptance | Acceptance Testing (`a5236dab-…`) | **RED** | Softened §10; pack≠SoT GREEN; §16 GREEN; clear = live Gate 0 + host-render |
+| Unit | Unit Test | pending | |
+| Integration | Integration Test | pending | |
+| System | System Testing | pending | |
+
+## 19. Related artifacts
+
 
 - `SPEC.md` — product / feed / seat / MCP locks  
 - `CANON.md` — names  
