@@ -20,6 +20,7 @@ from .consent import consume_consent, request_consent
 from .convoy import list_seats
 from .harness_contract import canonical_harness_id
 from .panes import bodies as panes_bodies
+from .panehost import BUSY_RE, WtWalkAdapter
 from .synapse import try_codex_queue
 
 Runner = Callable[[list[str]], dict[str, Any]]
@@ -136,6 +137,8 @@ def _window_names_chair(text: str, worktree_name: str, seat_title: str) -> bool:
 def _pane_label(window: dict[str, Any] | None, tmux_target: str | None) -> str:
     if tmux_target:
         return "tmux:" + tmux_target
+    if window and window.get("walk"):
+        return "wt-walk HWND " + str(window.get("hwnd")) + " (crew window; Alt+Arrow walk, title re-read before typing)"
     if window:
         return "HWND " + str(window.get("hwnd")) + " title=" + str(window.get("title") or "")
     return "unidentified"
@@ -423,6 +426,59 @@ def _wt_send_keys(window: dict[str, Any], keys: str) -> dict[str, Any]:
     return {"ok": True, "hwnd": hwnd, "title": want}
 
 
+IdleChairsFn = Callable[[Path, str], list[str]]
+
+
+def _idle_title_re(harness: str) -> str:
+    """An idle TUI pane's WT title is the bare harness name (grok: 'grok')."""
+    return "^" + (harness or "grok") + "$"
+
+
+def crew_window_hwnd(root: Path) -> int | None:
+    """The WT window recorded for this thread (newest kind=crew-window row with
+    an hwnd). None when nothing was recorded: never guessed."""
+    from .layer import feed_since
+    hwnd = None
+    for row in feed_since(root, "1970-01-01T00:00:00Z"):
+        if row.get("kind") == "crew-window" and row.get("hwnd") is not None:
+            try:
+                hwnd = int(row["hwnd"])
+            except (TypeError, ValueError):
+                continue
+    return hwnd
+
+
+def idle_chairs(root: Path, harness: str) -> list[str]:
+    """Chairs of this harness whose widget chip reads 'idle' (widget.py, g1)."""
+    from .widget import build_widget_model
+    model = build_widget_model([root])
+    out: list[str] = []
+    for thread in model.get("threads") or []:
+        for chair in thread.get("chairs") or []:
+            if chair.get("chip") == "idle" and canonical_harness_id(chair.get("harness")) == canonical_harness_id(harness):
+                out.append(str(chair.get("session_id")))
+    return out
+
+
+def _arm_walk(root: Path, session_id: str, card: dict[str, Any], idle_chairs_fn: IdleChairsFn | None) -> None:
+    """Opt-in: replace g2's 'title not unique' refusal with a walk plan when a
+    crew window is recorded; still unidentified (with reason) when it is not."""
+    harness = str(card.get("harness") or "")
+    hwnd = crew_window_hwnd(root)
+    idle = (idle_chairs_fn or idle_chairs)(root, harness)
+    card["walk"] = {"crew_hwnd": hwnd, "idle_chairs": idle, "harness": harness}
+    if hwnd is None:
+        card["reason"] = str(card.get("reason") or "") + "; --walk: no crew-window row records an hwnd for this thread"
+        return
+    if len(idle) != 1 or idle[0] != str(session_id):
+        card["reason"] = str(card.get("reason") or "") + "; --walk: idle chairs of " + harness + " per widget chip = " + repr(idle) + ", need exactly this one"
+        return
+    card["identified"] = True
+    card["adapter"] = "wt-walk"
+    card["pane"] = {"hwnd": hwnd, "title": None, "walk": True}
+    card["reason"] = None
+
+
 def nudge_seat(
     root: Path | str,
     session_id: str,
@@ -437,8 +493,16 @@ def nudge_seat(
     queue_fn: QueueFn | None = None,
     leader_fn: LeaderFn | None = None,
     send_fn: SendFn | None = None,
+    walk: bool = False,
+    walk_adapter: WtWalkAdapter | None = None,
+    idle_chairs_fn: IdleChairsFn | None = None,
 ) -> dict[str, Any]:
-    """Identify, then (unless dry_run) consent, then wake. Never delivered=true."""
+    """Identify, then (unless dry_run) consent, then wake. Never delivered=true.
+
+    `walk=True` (CLI --walk) is the OPT-IN: when the WT title is not unique
+    (g2's refusal), hand the pane hunt to panehost.WtWalkAdapter, which
+    Alt+Arrows with a title re-read and types only into a pane a rule proves
+    is this chair. Default behaviour is unchanged."""
     root = Path(root)
     card = identify_target(
         root, session_id,
@@ -447,6 +511,9 @@ def nudge_seat(
     card["dry_run"] = bool(dry_run)
     if not card.get("ok"):
         return card
+    if walk and not card.get("identified") and card.get("host") == "windows-terminal" \
+            and "no unique title" in str(card.get("reason") or ""):
+        _arm_walk(root, session_id, card, idle_chairs_fn)
     if dry_run:
         card["next"] = "nudge --seat " + str(session_id) + " --keys <exact> --consent <grant>"
         return card
@@ -515,6 +582,24 @@ def nudge_seat(
         card["delivery"] = "nudged"
         card["delivered"] = False
         card["path"] = "codex-queue"
+        return card
+
+    if adapter == "wt-walk":
+        info = card.get("walk") or {}
+        harness = str(card.get("harness") or "")
+        result = (walk_adapter or WtWalkAdapter()).walk(
+            seat, keystroke,
+            idle_title_re=_idle_title_re(harness), busy_re=BUSY_RE,
+            crew_hwnd=info.get("crew_hwnd"), idle_chairs=info.get("idle_chairs") or [],
+        )
+        card["walk"] = {**info, **result}
+        if result.get("ok"):
+            card["delivery"] = "nudged"
+            card["delivered"] = False
+            card["pane"] = {"hwnd": result.get("hwnd"), "title": result.get("pane_title_after")}
+            return card
+        card["ok"] = False
+        card["reason"] = "wt-walk refused: " + str(result.get("error"))
         return card
 
     if adapter == "wt-sendinput":
