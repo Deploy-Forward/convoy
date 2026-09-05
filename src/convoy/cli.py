@@ -20,7 +20,7 @@ from .identity import ensure_inbox_hooks, install_neuron_identity
 from .index import find_root, index_path, list_threads
 from .activity import neuron_activity
 from .panes import bodies, identify
-from .provenance import record_commit
+from .provenance import build_provenance, record_commit
 from .layer import SCHEMA_VERSION, conductor_stamp, feed_since, hook, parse_since
 from .rail import build_rail, root_for
 from .relaunch import relaunch
@@ -77,6 +77,9 @@ def main(argv: list[str] | None = None) -> int:
     author.add_argument("--as", dest="author", help="authoring chair session_id")
     cm.add_argument("--rev", default="HEAD", help="commit-ish to record (default HEAD)")
     cm.add_argument("--worktree", help="Git worktree to inspect (default cwd)")
+
+    pv = sub.add_parser("provenance", help="read per-chair commit provenance from seats plus feed rows")
+    pv.add_argument("--since", help="optional feed window: 10m | 2h | 1d | 45s, or an ISO UTC timestamp")
 
     st = sub.add_parser("stamp")
     st.add_argument("summary")
@@ -252,7 +255,7 @@ def main(argv: list[str] | None = None) -> int:
     root = Path(args.root).resolve()
     # Chats launch from project subfolders: for read verbs, walk up to the
     # nearest .convoy/id when the given root has none (never for writes).
-    if args.cmd in ("graph", "threads", "panes", "resume", "seats", "feed", "context", "glance", "inbox") and not (root / ".convoy" / "id").is_file():
+    if args.cmd in ("graph", "threads", "panes", "resume", "seats", "feed", "context", "glance", "inbox", "provenance") and not (root / ".convoy" / "id").is_file():
         found = find_root(root)
         if found is not None:
             root = found
@@ -317,6 +320,14 @@ def main(argv: list[str] | None = None) -> int:
             return 1
         print(json.dumps(card))
         return 0
+    if args.cmd == "provenance":
+        try:
+            card = build_provenance(root, since=args.since)
+        except ValueError as e:
+            print(json.dumps({"ok": False, "error": str(e)}))
+            return 1
+        print(json.dumps(card))
+        return 0 if card.get("ok") else 1
     if args.cmd == "stamp":
         try:
             row = conductor_stamp(

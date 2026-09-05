@@ -12,7 +12,8 @@ from pathlib import Path
 from typing import Any
 
 from .convoy import list_seats
-from .layer import feed_path, hook
+from .convoy import read_id
+from .layer import feed_path, hook, parse_since
 
 
 COMMIT_ROW_KEYS = (
@@ -71,6 +72,87 @@ def _feed_rows(root: Path | str) -> list[dict[str, Any]]:
 
 def _known_chair(root: Path | str, chair: str) -> bool:
     return any(row.get("session_id") == chair for row in list_seats(Path(root)))
+
+
+def commit_rows(root: Path | str, *, since: str | None = None) -> list[dict[str, Any]]:
+    """Return valid commit rows, optionally inside a Convoy time window."""
+    since_iso = parse_since(since) if since is not None else None
+    rows = [row for row in _feed_rows(root) if row.get("kind") == "commit"]
+    if since_iso is not None:
+        rows = [row for row in rows if str(row.get("ts") or "") >= since_iso]
+    return rows
+
+
+def build_provenance(root: Path | str, *, since: str | None = None) -> dict[str, Any]:
+    """Fold seats plus commit rows into one read-only per-chair view."""
+    root_path = Path(root)
+    cid = read_id(root_path)
+    if cid is None:
+        return {
+            "ok": False,
+            "convoy_id": None,
+            "since": since,
+            "provenance": [],
+            "error": "no thread at " + str(root_path),
+        }
+
+    chairs: dict[str, dict[str, Any]] = {}
+    touched: dict[str, set[str]] = {}
+    for seat in list_seats(root_path, convoy_id=cid):
+        chair = str(seat.get("session_id") or "").strip()
+        if not chair:
+            continue
+        worktree = str(seat.get("worktree") or "").strip() or None
+        chairs[chair] = {
+            "chair": chair,
+            "harness": str(seat.get("to") or "").strip() or None,
+            "worktree": worktree,
+            "branch": None,
+            "sha": None,
+            "last_commit_ts": None,
+            "commits": 0,
+            "files_touched": [],
+        }
+        touched[chair] = set()
+
+    for row in commit_rows(root_path, since=since):
+        chair = str(row.get("instance_id") or row.get("from") or "").strip()
+        if not chair:
+            continue
+        if chair not in chairs:
+            chairs[chair] = {
+                "chair": chair,
+                "harness": None,
+                "worktree": str(row.get("worktree") or "").strip() or None,
+                "branch": None,
+                "sha": None,
+                "last_commit_ts": None,
+                "commits": 0,
+                "files_touched": [],
+            }
+            touched[chair] = set()
+        card = chairs[chair]
+        card["commits"] += 1
+        ts = str(row.get("ts") or "") or None
+        if card["last_commit_ts"] is None or (ts is not None and ts >= card["last_commit_ts"]):
+            card["last_commit_ts"] = ts
+            card["branch"] = str(row.get("branch") or "").strip() or None
+            card["sha"] = str(row.get("sha") or "").strip() or None
+            row_worktree = str(row.get("worktree") or "").strip() or None
+            if row_worktree is not None:
+                card["worktree"] = row_worktree
+        files = row.get("files")
+        if isinstance(files, list):
+            touched[chair].update(str(path) for path in files if isinstance(path, str) and path)
+
+    for chair, card in chairs.items():
+        card["files_touched"] = sorted(touched[chair])
+    return {
+        "ok": True,
+        "convoy_id": cid,
+        "since": since,
+        "provenance": [chairs[chair] for chair in sorted(chairs)],
+    }
 
 
 def record_commit(
