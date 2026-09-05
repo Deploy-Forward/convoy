@@ -49,7 +49,7 @@ from .consent import grant_consent
 from .crew import await_seated, crew as crew_chairs
 from .targeted_launch import active_pane_runner, launch_choices, launch_seat
 from .graph_html import resume_neuron
-from .index import index_path, list_threads
+from .index import index_path, list_threads, prune_threads
 from .panes import bodies
 from .gitstate import git_state
 from .layer import SCHEMA_VERSION, conductor_stamp, feed_since, neuron_note, parse_since
@@ -356,8 +356,8 @@ TOOLS: list[dict[str, Any]] = [
     },
     {
         "name": "threads",
-        "description": "Every Convoy thread this machine's index knows (convoy_id, thread, root, updated_at). present=false when the root is gone or its id changed; never a token.",
-        "inputSchema": _schema({}),
+        "description": "Every Convoy thread this machine's index knows (convoy_id, thread, root, updated_at). present=false when the root is gone or its id changed; never a token. prune=true drops temp-dir and absent roots and reports every dropped row (write-gated, like resume go=true).",
+        "inputSchema": _schema({"prune": {"type": "boolean", "default": False, "description": "drop temp-dir and absent roots from the machine index; reports every dropped row"}}),
     },
     {
         "name": "resume",
@@ -706,6 +706,11 @@ def _call_tool(root: Path, name: str, arguments: dict[str, Any] | None) -> dict[
         except ValueError as e:
             return {"ok": False, "error": str(e)}
     if name == "threads":
+        if args.get("prune"):
+            if not _write_tools_enabled():
+                return {"ok": False, "dropped": [], "n_dropped": None, "kept": None,
+                        "error": "threads prune=true is behind the write gate on this process (set CONVOY_MCP_WRITE_TOOLS=1 on a gated/loopback deploy); dry list allowed"}
+            return prune_threads()
         return {"ok": True, "index": str(index_path()), "threads": list_threads()}
     if name == "panes":
         return bodies(root)
