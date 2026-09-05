@@ -5,7 +5,10 @@
   "compatibility_date": "2026-09-01",
   "assets": {
     "directory": "src/convoy/site",
-    "binding": "ASSETS"
+    "binding": "ASSETS",
+    "config": {
+      "html_handling": "none"
+    }
   },
   "vars": {
     // A Worker Route fetch to the same hostname continues to the proxied DNS
