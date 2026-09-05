@@ -42,8 +42,14 @@
 
   function chairRow(c) {
     const cls = ["row", c.lead ? "lead" : "", c.session_id === state.selectedSeat ? "sel" : ""].join(" ");
-    const model = c.model ? `<span class="dd">${esc(c.model)}${chev}</span>` : (c.models ? `<span class="dd">${esc(c.models[0] || "")}${chev}</span>` : `<span class="dd na">model${chev}</span>`);
-    const effort = c.effort ? `<span class="dd">${esc(c.effort)}${chev}</span>` : (c.effort_keys && c.effort_keys.length ? `<span class="dd na">effort${chev}</span>` : `<span class="dd na">n/a</span>`);
+    // model: the vendor's catalog when it has one, else a free field; effort: the harness's own keys, else n/a
+    const model = c.models && c.models.length
+      ? `<select class="tune" data-tune="model" data-seat="${esc(c.session_id)}">${(c.model && !c.models.includes(c.model)) ? `<option selected>${esc(c.model)}</option>` : ""}${c.models.map((m) => `<option ${m === c.model ? "selected" : ""}>${esc(m)}</option>`).join("")}</select>`
+      : `<input class="tune" data-tune="model" data-seat="${esc(c.session_id)}" value="${esc(c.model || "")}" placeholder="model" title="no catalog for ${esc(c.harness || "")}: typed through as-is">`;
+    const keys = c.effort_keys || [];
+    const effort = keys.length
+      ? `<select class="tune" data-tune="effort" data-seat="${esc(c.session_id)}"><option value="" ${c.effort ? "" : "selected"}>effort</option>${keys.map((k) => `<option ${k === c.effort ? "selected" : ""}>${esc(k)}</option>`).join("")}</select>${c.effort_applied === false ? `<span title="declared; this harness has no effort flag" style="color:var(--ink-3)"> ·</span>` : ""}`
+      : `<select class="tune" disabled title="no effort vocabulary for ${esc(c.harness || "")}"><option>n/a</option></select>`;
     const chip = c.chip || (c.body === false ? "gone" : "unknown");
     const nudge = c.nudge_available ? `<span class="nudge" data-nudge="${esc(c.session_id)}">NUDGE</span>` : "";
     const wait = c.waiting ? ` · ${c.waiting}w` : "";
@@ -97,7 +103,16 @@
     render();
   }
 
+  document.addEventListener("change", async (e) => {
+    const el = e.target.closest("[data-tune]"); if (!el) return;
+    const t = thread(); const body = { root: t.root, seat: el.dataset.seat }; body[el.dataset.tune] = el.value || null;
+    $("status").textContent = "applying " + el.dataset.tune + " for " + el.dataset.seat + "…";
+    const r = await api("/api/tune", body);
+    $("status").textContent = r.ok ? `${el.dataset.seat}: ${el.dataset.tune} = ${el.value || "unset"} (seat rewritten; a live pane picks it up on its next launch)` : ("refused: " + (r.error || JSON.stringify(r)));
+    setTimeout(refresh, 300);
+  });
   document.addEventListener("click", async (e) => {
+    if (e.target.closest(".tune") || e.target.closest("select") || e.target.closest("input")) return;
     const dot = e.target.closest(".dot"); if (dot) { state.selected = +dot.dataset.n; render(); return; }
     const seg = e.target.closest("[data-usage]"); if (seg) { state.usage = seg.dataset.usage; render(); return; }
     const nd = e.target.closest("[data-nudge]"); if (nd) { e.stopPropagation(); await nudgeDry(nd.dataset.nudge); return; }
@@ -111,7 +126,7 @@
     if (e.target.closest("#plus")) { await openStart(); return; }
     if (e.target.id === "start-cancel") { $("start").classList.remove("show"); return; }
     if (e.target.id === "start-go") { await submitStart(); return; }
-    const pick = e.target.closest("[data-pick]"); if (pick) { $("s-repo").value = pick.dataset.pick; return; }
+    const pick = e.target.closest("[data-pick]"); if (pick) { $("s-repo").value = pick.dataset.pick; if (pick.dataset.thread) $("s-thread").value = pick.dataset.thread; return; }
     if (e.target.id === "s-add") { addSeatRow(); return; }
     const rm = e.target.closest("[data-rm]"); if (rm) { rm.closest(".seat-row").remove(); return; }
     if (e.target.closest("#tag")) { e.preventDefault(); await api("/api/open", { url: "https://convoy.bot" }); return; }
@@ -146,7 +161,7 @@
       <div class="eyebrow"><span>New thread</span><span class="right">${installed.length} harness${installed.length === 1 ? "" : "es"} installed</span></div>
       <div class="frow"><span class="lbl">GitHub?</span><span class="seg" id="s-gh"><span class="on" data-gh="yes">yes</span><span data-gh="no">no</span></span></div>
       <div class="frow"><span class="lbl">repo</span><input id="s-repo" class="in" placeholder="https://github.com/owner/repo.git or a local path"></div>
-      ${recent.length ? `<div class="frow"><span class="lbl">recent</span><div class="picks">${recent.map((r) => `<span class="pick" data-pick="${esc(r.root)}" title="${esc(r.root)}">${esc(r.thread || r.convoy_id || r.root)}</span>`).join("")}</div></div>` : ""}
+      ${recent.length ? `<div class="frow"><span class="lbl">recent</span><div class="picks">${recent.map((r) => `<span class="pick" data-pick="${esc(r.root)}" data-thread="${esc(r.thread || "")}" title="${esc(r.root)}">${esc(r.thread || r.convoy_id || r.root)}</span>`).join("")}</div></div>` : ""}
       <div class="frow"><span class="lbl">thread</span><input id="s-thread" class="in" placeholder="thread key (e.g. demo)"></div>
       <div class="frow"><span class="lbl">harnesses</span><div class="hxs">${harnessOpts || "<small>none installed on this host</small>"}</div></div>
       <div class="frow"><span class="lbl">neurons</span><div id="s-seats" class="seats"></div></div>
@@ -158,7 +173,7 @@
   function seatRowHtml() {
     const rows = (cardCache && cardCache.rows) || [];
     const opts = rows.filter((x) => x.installed).map((x) => `<option value="${esc(x.harness)}">${esc(x.harness)}</option>`).join("");
-    return `<div class="seat-row"><select class="in sel-h">${opts}</select><input class="in sel-m" placeholder="model"><select class="in sel-e"><option value="">effort</option></select><select class="in sel-w"><option value="local">local</option></select><span class="pick" data-rm="1">×</span></div>`;
+    return `<div class="seat-row"><select class="in sel-h">${opts}</select><input class="in sel-t" placeholder="title (unique)"><input class="in sel-m" placeholder="model"><select class="in sel-e"><option value="">effort</option></select><select class="in sel-w"><option value="local">local</option></select><span class="pick" data-rm="1">×</span></div>`;
   }
   function addSeatRow() {
     const box = $("s-seats"); const div = document.createElement("div"); div.innerHTML = seatRowHtml(); const row = div.firstElementChild; box.appendChild(row);
@@ -169,12 +184,13 @@
       const w = row.querySelector(".sel-w"); const where = r.where || ["local"]; w.innerHTML = where.map((x) => `<option>${esc(x)}</option>`).join("");
       const m = row.querySelector(".sel-m"); m.placeholder = r.models && r.models.length ? "model: " + r.models.join(", ") : "model (free field: no catalog)";
     };
-    row.querySelector(".sel-h").addEventListener("change", sync); sync();
+    const title = () => { const h = row.querySelector(".sel-h").value; const taken = new Set(((thread() || {}).chairs || []).map((c) => c.seat_label || c.session_id)); let n = 1; while (taken.has(h + "-" + n) || [...document.querySelectorAll("#s-seats .sel-t")].some((i) => i !== row.querySelector(".sel-t") && i.value === h + "-" + n)) n++; row.querySelector(".sel-t").value = h + "-" + n; };
+    row.querySelector(".sel-h").addEventListener("change", () => { sync(); title(); }); sync(); title();
   }
   document.addEventListener("click", (e) => { const g = e.target.closest("[data-gh]"); if (g) { g.parentElement.querySelectorAll("span").forEach((x) => x.classList.remove("on")); g.classList.add("on"); } });
   async function submitStart() {
     const gh = $("s-gh").querySelector(".on").dataset.gh === "yes";
-    const seats = [...document.querySelectorAll("#s-seats .seat-row")].map((r) => ({ harness: r.querySelector(".sel-h").value, model: r.querySelector(".sel-m").value || null, effort: r.querySelector(".sel-e").value || null, where: r.querySelector(".sel-w").value || "local" }));
+    const seats = [...document.querySelectorAll("#s-seats .seat-row")].map((r) => ({ harness: r.querySelector(".sel-h").value, title: r.querySelector(".sel-t").value || null, model: r.querySelector(".sel-m").value || null, effort: r.querySelector(".sel-e").value || null, where: r.querySelector(".sel-w").value || "local" }));
     const harnesses = [...document.querySelectorAll(".hxs input:checked")].map((i) => i.value);
     const body = { repo: $("s-repo").value || null, thread: $("s-thread").value || null, github: gh, harnesses: harnesses.length ? harnesses : [...new Set(seats.map((s) => s.harness))], seats, launch: true };
     $("s-out").textContent = "onboarding…";
