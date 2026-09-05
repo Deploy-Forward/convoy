@@ -1,7 +1,7 @@
 /**
  * Cloudflare edge split for convoy.bot:
  * - GET/HEAD /mcp and /mcp/ serve the MCP attach page.
- * - other /mcp and /mcp/* requests pass through to zone origin.
+ * - other /mcp and /mcp/* requests proxy to MCP_ORIGIN.
  * - everything else is served from static assets.
  */
 
@@ -23,6 +23,29 @@ async function handleMcpAttachPage(request, env) {
   return env.ASSETS.fetch(assetRequest);
 }
 
+/**
+ * Proxy non-GET /mcp* traffic to www because apex convoy.bot is served by
+ * Assets on this route; targeting www reaches the same tunnel origin without
+ * re-entering the apex Worker route path.
+ *
+ * @param {Request} request
+ * @param {Env} env
+ * @returns {Promise<Response>}
+ */
+async function handleMcpProxy(request, env) {
+  let upstream;
+  try {
+    upstream = new URL(env.MCP_ORIGIN);
+  } catch (_err) {
+    return new Response("MCP_ORIGIN is not a valid URL", { status: 500 });
+  }
+
+  const incoming = new URL(request.url);
+  const target = new URL(incoming.pathname + incoming.search, upstream);
+  const upstreamRequest = new Request(target.toString(), request);
+  return fetch(upstreamRequest);
+}
+
 export default {
   /**
    * @param {Request} request
@@ -35,7 +58,7 @@ export default {
       return handleMcpAttachPage(request, env);
     }
     if (pathname === "/mcp" || pathname.startsWith("/mcp/")) {
-      return fetch(request);
+      return handleMcpProxy(request, env);
     }
     return env.ASSETS.fetch(request);
   },
