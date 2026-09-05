@@ -13,6 +13,8 @@ Convoy lets you stay in one thread and send work to other harnesses (Grok, Claud
 
 That sentence is the product. Everything below is how it is actually true, or honestly not true yet.
 
+Landscape / Herdr comparison (positioning only; does not override locks below): [docs/LANDSCAPE_RUNTIME_VS_SOT.md](docs/LANDSCAPE_RUNTIME_VS_SOT.md).
+
 Bring your own harness. Do not bring your own API key into Claude Code. Named refuse: UltraCode-Shim (OnlyTerp). We do not wrap Grok as `claude-grok-4-6`. We do not proxy `cli-chat-proxy.grok.com`.
 
 ---
