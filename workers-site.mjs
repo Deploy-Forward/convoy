@@ -29,6 +29,18 @@ async function handleMcpProxy(request, env) {
   return fetch(upstreamRequest);
 }
 
+/**
+ * @param {Request} request
+ * @param {Env} env
+ * @returns {Promise<Response>}
+ */
+async function handleMcpAttachPage(request, env) {
+  const pageUrl = new URL(request.url);
+  pageUrl.pathname = "/mcp.html";
+  const assetRequest = new Request(pageUrl.toString(), request);
+  return env.ASSETS.fetch(assetRequest);
+}
+
 export default {
   /**
    * @param {Request} request
@@ -37,6 +49,9 @@ export default {
    */
   async fetch(request, env) {
     const { pathname } = new URL(request.url);
+    if ((pathname === "/mcp" || pathname === "/mcp/") && (request.method === "GET" || request.method === "HEAD")) {
+      return handleMcpAttachPage(request, env);
+    }
     if (pathname === "/mcp" || pathname.startsWith("/mcp/")) {
       return handleMcpProxy(request, env);
     }
