@@ -134,3 +134,16 @@ shows `-t, --target INT:NONNEGATIVE REQUIRED  Focus the pane at the given index`
 and `wt --help` lists `-w, --window TEXT` plus `move-focus`, `focus-tab`,
 `focus-pane`. So a pane IS addressable: `wt -w <window> focus-pane -t <index>`.
 Note: wt shows its help as a GUI dialog, never on stdout; probe it once, by hand.
+
+Evidence 2026-09-05 05:57-06:00Z (Fable, live, Windows Terminal, grok panes):
+a keystroke into a specific pane DOES wake an idle grok TUI. Method that
+worked: find the WT window by class CASCADIA_HOSTING_WINDOW_CLASS + title;
+take the foreground with an Alt tap (keybd_event VK_MENU) + AttachThreadInput
++ SetForegroundWindow (a bare SetForegroundWindow from a background process is
+refused); move pane focus with Alt+Arrow (WT default move-focus); VERIFY by
+the window title, which is the focused pane's title (a busy grok pane reads
+"Waiting for response..." / "Running: <tool>", an idle one reads "grok");
+SendKeys the message + Enter. Observed: g1 drained 4 rows within a minute of
+the keystroke; the second copy landed in g1 again because Alt+Left did not
+move focus from the right-most pane, so the title check is mandatory, not
+optional. This is the `nudge --seat` adapter for WT; tmux gets `send-keys -t`.
