@@ -21,6 +21,7 @@ from urllib.parse import urlparse
 
 from .bringup import bring_up, ensure_interactive_path, hide_windows, live_applier, live_runner, terminals
 from .rail import build_rail
+from .provenance import build_provenance
 from .card import CARD_OUTPUT_SCHEMA, build_card
 from .harness_contract import (
     canonical_harness_id,
@@ -267,6 +268,13 @@ TOOLS: list[dict[str, Any]] = [
         "description": "Read-only: the thread rail, the strip under the panes. Feed events in the window, seats connected | pending | stale from the seated acks, usage remaining per harness (null is unknown, never 0), last conductor stamp, lead. Reads only the bound thread, so every neuron and this chat see one rail. Never a token.",
         "inputSchema": _schema({
             "since": {"type": "string", "description": "feed window: 10m | 2h | 1d | 45s, or an ISO UTC lower bound. Default 10m."},
+        }),
+    },
+    {
+        "name": "provenance",
+        "description": "Read-only: per-chair Git provenance folded from seats.jsonl and kind=commit feed rows. Unknown fields stay null; chairs without commit rows report commits 0.",
+        "inputSchema": _schema({
+            "since": {"type": "string", "description": "optional feed window: 10m | 2h | 1d | 45s, or an ISO UTC timestamp"},
         }),
     },
     {
@@ -730,6 +738,11 @@ def _call_tool(root: Path, name: str, arguments: dict[str, Any] | None) -> dict[
     if name == "rail":
         try:
             return build_rail(root, since=_opt_str(args, "since") or "10m", probe_fn=probe)
+        except ValueError as e:
+            return {"ok": False, "error": str(e)}
+    if name == "provenance":
+        try:
+            return build_provenance(root, since=_opt_str(args, "since"))
         except ValueError as e:
             return {"ok": False, "error": str(e)}
     if name == "stamp":
