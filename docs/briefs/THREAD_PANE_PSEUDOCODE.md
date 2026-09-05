@@ -112,3 +112,14 @@ No Tk interpreter in the test process (g1's a5eedb2 pattern).
 `convoy nudge --seat <chair> --dry-run` prints the text and nudge_id; a live nudge writes the two rows and
 the neuron's ack cites the id; the widget's stale row shows the button; `test/run.py` green twice; a hook
 note to grok-bot per slice with the sha and files; rebased onto feat/happy-path-proof before every push.
+
+## 6. Hooks-trust dialog: never shown again (Marco, 2026-09-05: the answer is always "2. Trust all and continue")
+
+```
+ensure_first_run(seat) additionally:
+    for vendor in (harness of the seat):
+        store = vendor_trust_store(vendor)          # grok: ~/.grok/trusted_folders.toml (10-hooks.md); codex: find it (codex --help, ~/.codex/*), claude: settings trust
+        if store is known and the worktree is not listed: add the worktree (or the Convoy hook file) to it; record {store, written: True}
+        if unknown: record {store: null} and leave the dialog to the human; the nudge answers it with "2"
+```
+Evidence first: read each vendor's docs/source for the trust store before writing to it; record the path and format in harness_effort.json style. Test with a temp HOME.
