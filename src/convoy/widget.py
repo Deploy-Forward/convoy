@@ -114,7 +114,10 @@ def _usage_block(harness: str, surfaced: dict[str, Any]) -> dict[str, Any]:
     elif surfaced.get("error"):
         reason = "probe failed: " + str(surfaced.get("error"))
     elif surfaced.get("usage_remaining") is None and surfaced.get("session_pct") is None:
-        reason = "vendor returned no number"
+        reason = "the vendor shows usage only inside its own TUI (/status); no headless number"
+    elif surfaced.get("source") == "codex rollout snapshot":
+        age = int(surfaced.get("age_s") or 0)
+        reason = "from codex's last session rollout, " + (str(age // 3600) + " h" if age >= 3600 else str(age // 60) + " min") + " old"
     return {
         **surfaced,
         "reason": reason,
