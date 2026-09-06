@@ -265,6 +265,17 @@ def _chair_row(
     chip = chip_state(body=bool(live), waiting=unread, idle_s=idle, threshold_s=threshold_s)
     catalog = model_catalog(harness)
     effort = effort_contract(harness)
+    # live: a process tied to the chair by token or cwd. gone: the chair's pane
+    # host recorded a consented close. no-body: neither, which on Windows is
+    # what an alive codex pane looks like (it exposes neither token nor cwd).
+    from .pane_host import _read_state as _pane_state
+    _ps = _pane_state(root, sid) or {}
+    if body:
+        body_state = "live"
+    elif str(_ps.get("launch_state") or "").startswith("closed") or _ps.get("closed_at"):
+        body_state = "gone"
+    else:
+        body_state = "no-body"
     return {
         "session_id": sid,
         "seat_label": "lead" if is_lead else sid,
@@ -288,6 +299,7 @@ def _chair_row(
         "branch": branch,
         "last_row": last_rows.get(sid),
         "unread": unread,
+        "body_state": body_state,
         "focus": "focus --seat " + sid,
         "nudge_available": chip == "stale",
         "nudge": "nudge --seat " + sid + " --dry-run",

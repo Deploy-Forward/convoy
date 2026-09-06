@@ -228,6 +228,25 @@ class WidgetApi:
             rows.append({"ts": r.get("ts"), "kind": r.get("kind"), "summary": r.get("summary")})
         return {"ok": True, "seat": seat, "since": since, "rows": rows, "answered": bool(rows)}
 
+    def feed(self, root: str, since: str = "10m", limit: int = 40) -> dict[str, Any]:
+        """Recent rows for the history zone: notes, stamps, synapses, seated,
+        commits, relaunch. Tokens never leave the tape."""
+        from .layer import feed_since
+        try:
+            rows = feed_since(Path(root), since)
+        except ValueError as e:
+            return {"ok": False, "error": str(e), "rows": []}
+        keep = ("note", "conductor", "synapse", "seated", "commit", "relaunch", "refuse", "nudge", "join")
+        out = []
+        for r in rows[::-1]:
+            if r.get("kind") not in keep:
+                continue
+            out.append({"ts": r.get("ts"), "kind": r.get("kind"), "who": r.get("from") or r.get("instance_id"),
+                        "to": r.get("to"), "summary": r.get("summary"), "delivery": r.get("delivery")})
+            if len(out) >= int(limit):
+                break
+        return {"ok": True, "since": since, "rows": out}
+
     def pin(self, on: bool) -> dict[str, Any]:
         self.pinned = bool(on)
         applied = self.on_pin(self.pinned) if self.on_pin else None
@@ -330,6 +349,8 @@ def make_handler(api: WidgetApi):
                 return self._json(api.send(str(body.get("root") or "."), str(body.get("seat") or ""), str(body.get("body") or ""), body.get("label")))
             if p == "/api/replies":
                 return self._json(api.replies(str(body.get("root") or "."), str(body.get("seat") or ""), str(body.get("since") or "1970-01-01T00:00:00.000000Z"), body.get("ping_id")))
+            if p == "/api/feed":
+                return self._json(api.feed(str(body.get("root") or "."), str(body.get("since") or "10m"), int(body.get("limit") or 40)))
             if p == "/api/tune":
                 return self._json(api.tune(str(body.get("root") or "."), str(body.get("seat") or ""),
                                            model=body["model"] if "model" in body else "__keep__",
