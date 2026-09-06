@@ -82,6 +82,8 @@ class WidgetApi:
         self.refresh_s = float(refresh_s)
         self.on_pin = on_pin
         self.pinned = True
+        self.raise_fn: Callable[[int], dict[str, Any]] | None = None
+        self.identify_kwargs: dict[str, Any] = {}
         self._lock = threading.Lock()
         self._cached: dict[str, Any] | None = None
         self._built_at = float("-inf")
@@ -127,11 +129,35 @@ class WidgetApi:
         return dict(cached)
 
     def focus(self, root: str, seat: str) -> dict[str, Any]:
+        """Elevate the chair's pane. First the host adapter (focus_seat: tmux
+        select-pane, WT evidence-gated). If that has no adapter, identify the
+        window the way nudge does (a WT title that names the chair or its
+        worktree; never a guess) and raise THAT window to the foreground.
+        focused stays false with the reason otherwise."""
         from .focus import focus_seat
+        from .nudge import identify_target
         try:
-            return focus_seat(Path(root), seat)
+            card = focus_seat(Path(root), seat)
         except (ValueError, OSError) as e:
-            return {"ok": False, "focused": False, "reason": str(e)}
+            card = {"ok": False, "seat": seat, "focused": False, "reason": str(e)}
+        if card.get("focused"):
+            return card
+        try:
+            ident = identify_target(Path(root), seat, **self.identify_kwargs)
+        except (ValueError, OSError) as e:
+            card["identify"] = {"identified": False, "reason": str(e)}
+            return card
+        pane = ident.get("pane") or {}
+        card["identify"] = {"identified": bool(ident.get("identified")), "reason": ident.get("reason"), "host": ident.get("host"), "pane": pane}
+        if ident.get("identified") and pane.get("hwnd"):
+            raised = (self.raise_fn or raise_window)(int(pane["hwnd"]))
+            card["focused"] = bool(raised.get("ok"))
+            card["method"] = "raise-window"
+            card["pane_title"] = pane.get("title")
+            card["reason"] = None if raised.get("ok") else raised.get("error")
+        elif not card.get("reason"):
+            card["reason"] = ident.get("reason") or "pane not identified"
+        return card
 
     def nudge(self, root: str, seat: str, dry_run: bool = True, consent: str | None = None, force: bool = False) -> dict[str, Any]:
         from .nudge import nudge_seat
@@ -139,6 +165,68 @@ class WidgetApi:
             return nudge_seat(Path(root), seat, dry_run=bool(dry_run), consent=consent, force=bool(force))
         except (ValueError, OSError) as e:
             return {"ok": False, "delivery": "refused", "error": str(e)}
+
+    def tune(self, root: str, seat: str, model: Any = "__keep__", effort: Any = "__keep__") -> dict[str, Any]:
+        """Rewrite one chair's declared model/effort through the same `seat`
+        write the CLI uses (validated against the harness contract; a refused
+        value never lands). Everything else on the row is kept."""
+        from .convoy import list_seats, seat as write_seat
+        r = Path(root)
+        row = next((x for x in list_seats(r) if x.get("session_id") == seat), None)
+        if row is None:
+            return {"ok": False, "error": "unknown seat: " + seat}
+        new_model = row.get("model") if model == "__keep__" else (model or None)
+        new_effort = row.get("effort") if effort == "__keep__" else (effort or None)
+        try:
+            out = write_seat(r, str(row.get("to")), seat, worktree=row.get("worktree"), model=new_model,
+                             resume=row.get("resume"), title=row.get("title"), agent=row.get("agent"),
+                             effort=new_effort, where=row.get("where"))
+        except ValueError as e:
+            return {"ok": False, "error": str(e)}
+        return {"ok": True, "seat": out, "applied_to_live_pane": False,
+                "note": "the seat row is rewritten; a running pane keeps its own settings until its next launch"}
+
+    def send(self, root: str, seat: str, body: str, label: str | None = None) -> dict[str, Any]:
+        """Queue one message into a chair's inbox (delivery: queued, delivered:
+        false) through the same send the CLI runs. A ping is a send whose body
+        asks the chair to answer on the feed citing ping=<id>; the reply, in the
+        chair's own row, is the identification, never the queue row."""
+        import uuid
+        from .synapse import send_one
+        text = (body or "").strip()
+        if not text:
+            return {"ok": False, "error": "empty message"}
+        from .convoy import list_seats
+        if not any(x.get("session_id") == seat for x in list_seats(Path(root))):
+            return {"ok": False, "error": "unknown chair: " + seat + " (a widget message names a chair, never a harness)"}
+        ping_id = None
+        if label == "ping":
+            ping_id = uuid.uuid4().hex[:12]
+            text = ("ping " + ping_id + " from the convoy widget: reply on the feed with `hook note \"pong " + ping_id +
+                    " <your whoami chair> <harness> <cwd>\" --as-me --to grok-bot`. This is an identity check, not work.")
+        try:
+            card = send_one(Path(root), seat, text, label=label or "widget")
+        except (ValueError, OSError) as e:
+            return {"ok": False, "error": str(e)}
+        out = {"ok": bool(card.get("ok")), "delivery": card.get("delivery"), "delivered": False,
+               "error": card.get("error"), "session_id": card.get("session_id"), "ts": card.get("ts")}
+        if ping_id:
+            out["ping_id"] = ping_id
+        return out
+
+    def replies(self, root: str, seat: str, since: str, ping_id: str | None = None) -> dict[str, Any]:
+        """Rows the chair itself authored after `since`; with ping_id, only those citing it."""
+        from .layer import feed_since
+        rows = []
+        for r in feed_since(Path(root), since):
+            if r.get("from") != seat and r.get("instance_id") != seat:
+                continue
+            if r.get("kind") not in ("note", "seated", "commit", "refuse"):
+                continue
+            if ping_id and ping_id not in str(r.get("summary") or ""):
+                continue
+            rows.append({"ts": r.get("ts"), "kind": r.get("kind"), "summary": r.get("summary")})
+        return {"ok": True, "seat": seat, "since": since, "rows": rows, "answered": bool(rows)}
 
     def pin(self, on: bool) -> dict[str, Any]:
         self.pinned = bool(on)
@@ -238,6 +326,14 @@ def make_handler(api: WidgetApi):
             if p == "/api/nudge":
                 return self._json(api.nudge(str(body.get("root") or "."), str(body.get("seat") or ""),
                                             dry_run=body.get("dry_run", True), consent=body.get("consent"), force=bool(body.get("force"))))
+            if p == "/api/send":
+                return self._json(api.send(str(body.get("root") or "."), str(body.get("seat") or ""), str(body.get("body") or ""), body.get("label")))
+            if p == "/api/replies":
+                return self._json(api.replies(str(body.get("root") or "."), str(body.get("seat") or ""), str(body.get("since") or "1970-01-01T00:00:00.000000Z"), body.get("ping_id")))
+            if p == "/api/tune":
+                return self._json(api.tune(str(body.get("root") or "."), str(body.get("seat") or ""),
+                                           model=body["model"] if "model" in body else "__keep__",
+                                           effort=body["effort"] if "effort" in body else "__keep__"))
             if p == "/api/pin":
                 return self._json(api.pin(bool(body.get("on"))))
             if p == "/api/plus":
@@ -262,6 +358,33 @@ def serve(api: WidgetApi, host: str = "127.0.0.1", port: int = 0) -> ThreadingHT
     httpd = ThreadingHTTPServer((host, port), make_handler(api))
     threading.Thread(target=httpd.serve_forever, daemon=True).start()
     return httpd
+
+
+def raise_window(hwnd: int) -> dict[str, Any]:
+    """Bring one top-level window to the foreground (Windows). An Alt tap +
+    AttachThreadInput is what lets a background process take the foreground;
+    a bare SetForegroundWindow is refused (live 2026-09-05)."""
+    if os.name != "nt":
+        return {"ok": False, "error": "raise-window: windows only"}
+    try:
+        import ctypes
+        from ctypes import wintypes
+        user32 = ctypes.windll.user32
+        kernel32 = ctypes.windll.kernel32
+        h = wintypes.HWND(int(hwnd))
+        if not user32.IsWindow(h):
+            return {"ok": False, "error": "hwnd is not a window"}
+        user32.keybd_event(0x12, 0, 0, 0); user32.keybd_event(0x12, 0, 2, 0)
+        pid = wintypes.DWORD(0)
+        tid = user32.GetWindowThreadProcessId(h, ctypes.byref(pid))
+        me = kernel32.GetCurrentThreadId()
+        user32.AttachThreadInput(me, tid, True)
+        user32.ShowWindow(h, 9)
+        ok = bool(user32.SetForegroundWindow(h))
+        user32.AttachThreadInput(me, tid, False)
+        return {"ok": ok, "hwnd": int(hwnd), "error": None if ok else "SetForegroundWindow refused"}
+    except Exception as e:  # pragma: no cover - platform specific
+        return {"ok": False, "error": type(e).__name__ + ": " + str(e)}
 
 
 def _apply_windows_glass(title: str) -> dict[str, Any]:

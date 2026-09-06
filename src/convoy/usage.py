@@ -41,6 +41,7 @@ def _run(cmd: list[str], timeout: int = 15) -> tuple[int, str]:
                 ["taskkill", "/F", "/T", "/PID", str(p.pid)],
                 capture_output=True,
                 timeout=5,
+                **quiet_spawn_kwargs(),   # a probe timeout popped a 'taskkill' console every minute (live 2026-09-05)
             )
         else:
             p.kill()
@@ -131,6 +132,28 @@ def _parse_claude_progress(data: Any, text: str) -> tuple[int | None, int | None
     return session_pct, week_pct
 
 
+_RESET = re.compile(r"(?:Current session|Current week[^:\n]*)?:?[^\n]*?\bResets?\s+(in|at)\s+([^\n)]+?)\s*\)?\s*$", re.I | re.M)
+
+
+def parse_resets(text: str) -> dict[str, str | None]:
+    """{'session': 'in 3h 53m', 'week': 'in 3d 20h'} from the vendor's own
+    lines, verbatim; None when the text does not say. Never computed."""
+    out: dict[str, str | None] = {"session": None, "week": None}
+    for line in (text or "").splitlines():
+        m = re.search(r"\bResets?\s+((?:in|at)\s+[^)\n]+)", line, re.I)
+        if not m:
+            continue
+        when = m.group(1).strip()
+        low = line.lower()
+        if "week" in low and out["week"] is None:
+            out["week"] = when
+        elif "session" in low and out["session"] is None:
+            out["session"] = when
+        elif out["session"] is None:
+            out["session"] = when
+    return out
+
+
 def _parse_claude(raw: str) -> tuple[Any, bool]:
     text = raw or ""
     data = _jsonish(text)
@@ -175,6 +198,14 @@ def probe(harness: str, runner: ProbeFn | None = None) -> dict[str, Any]:
         remaining, limited = _parse_claude(raw)
         return {"usage_remaining": remaining, "limited": limited, "raw": raw or None, "exit_code": code}
     if name == "codex":
+        # codex's /status is an in-TUI command ("stdin is not a terminal"
+        # headless) and `codex exec /status` times out here, but codex writes
+        # its rate limits into every session rollout it runs: read the newest
+        # snapshot and say how old it is (live 2026-09-06, Marco: "check codex
+        # status ... these reveal what's left").
+        snap = codex_rollout_rate_limits()
+        if snap is not None:
+            return snap
         bin = shutil.which("codex") or "codex"
         code, raw = _run([bin, "exec", "/status"], timeout=15)
         low = (raw or "").lower()
@@ -191,6 +222,83 @@ def probe(harness: str, runner: ProbeFn | None = None) -> dict[str, Any]:
                 "exit_code": code, "probe_timed_out": timed_out,
                 "quota": None if timed_out else ("exhausted" if limited else "available")}
     return {"usage_remaining": None, "limited": False, "raw": None}
+
+
+def _find_rate_limits(node: Any, depth: int = 0) -> dict[str, Any] | None:
+    """The first dict under key 'rate_limits' that has a 'primary' window,
+    wherever codex nested it (payload.rate_limits, payload.info..., ...)."""
+    if depth > 6 or not isinstance(node, dict):
+        return None
+    rl = node.get("rate_limits")
+    if isinstance(rl, dict) and "primary" in rl:
+        return rl
+    for v in node.values():
+        if isinstance(v, dict):
+            found = _find_rate_limits(v, depth + 1)
+            if found is not None:
+                return found
+    return None
+
+
+def codex_rollout_rate_limits(home: "Path | None" = None, now: float | None = None) -> dict[str, Any] | None:
+    """The last `rate_limits` snapshot codex wrote into its newest session
+    rollout (~/.codex/sessions/**/rollout-*.jsonl): primary = the session
+    window (used_percent, window_minutes, resets_at epoch), secondary = the
+    weekly window. Returns None when there is no rollout or no snapshot; the
+    number is the vendor's, stamped with the snapshot's age so a stale
+    figure is never mistaken for a live one."""
+    import glob
+    import time as _t
+    from datetime import datetime, timezone
+    from pathlib import Path as _P
+    base = _P(home) if home is not None else _P(os.environ.get("CODEX_HOME") or (_P.home() / ".codex"))
+    files = sorted(glob.glob(str(base / "sessions" / "**" / "rollout-*.jsonl"), recursive=True), key=os.path.getmtime, reverse=True)
+    for path in files[:400]:   # newest first; the newest rollout may carry no snapshot yet
+        last = None
+        try:
+            with open(path, encoding="utf-8", errors="replace") as fh:
+                for line in fh:
+                    if '"rate_limits"' not in line:
+                        continue
+                    try:
+                        row = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    node = _find_rate_limits(row)
+                    if isinstance(node, dict) and "primary" in node:
+                        last = (row.get("timestamp") or row.get("ts"), node)
+        except OSError:
+            continue
+        if last is None:
+            continue
+        ts, rl = last
+        prim = rl.get("primary") or {}
+        sec = rl.get("secondary") or {}
+        def pct(v: Any) -> int | None:
+            try:
+                x = int(round(float(v)))
+            except (TypeError, ValueError):
+                return None
+            return x if 0 <= x <= 100 else None
+        def at(v: Any) -> str | None:
+            try:
+                return datetime.fromtimestamp(float(v), timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+            except (TypeError, ValueError, OSError):
+                return None
+        session_pct, week_pct = pct(prim.get("used_percent")), pct(sec.get("used_percent"))
+        if session_pct is None and week_pct is None:
+            continue   # a snapshot without a number is not a number: keep looking, older is still the vendor's
+        as_of = ts or datetime.fromtimestamp(os.path.getmtime(path), timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        age_s = max(0.0, (now if now is not None else _t.time()) - os.path.getmtime(path))
+        resets = {"session": ("at " + at(prim.get("resets_at"))) if at(prim.get("resets_at")) else None,
+                  "week": ("at " + at(sec.get("resets_at"))) if at(sec.get("resets_at")) else None}
+        limited = (session_pct is not None and session_pct >= 100) or (week_pct is not None and week_pct >= 100)
+        return {"usage_remaining": {"session_pct": session_pct, "week_pct": week_pct} if session_pct is not None else None,
+                "session_pct": session_pct, "week_pct": week_pct, "resets": resets, "limited": limited,
+                "raw": None, "source": "codex rollout snapshot", "as_of": as_of, "age_s": round(age_s),
+                "window_minutes": {"session": prim.get("window_minutes"), "week": sec.get("window_minutes")},
+                "quota": "exhausted" if limited else "available"}
+    return None
 
 
 def surface(harness: str, probed: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -212,6 +320,18 @@ def surface(harness: str, probed: dict[str, Any] | None = None) -> dict[str, Any
         out["session_pct"] = session_pct
     if week_pct is not None:
         out["week_pct"] = week_pct
+    resets = parse_resets(text)
+    if isinstance(p.get("resets"), dict):
+        resets = {"session": p["resets"].get("session") or resets["session"], "week": p["resets"].get("week") or resets["week"]}
+    if resets["session"] or resets["week"]:
+        out["resets"] = resets
+    for k in ("source", "as_of", "age_s"):
+        if p.get(k) is not None:
+            out[k] = p[k]
+    if p.get("probe_timed_out"):
+        out["probe_timed_out"] = True
+    if p.get("error"):
+        out["error"] = p.get("error")
     if name == "grok":
         out["usage_remaining"] = None
     return out

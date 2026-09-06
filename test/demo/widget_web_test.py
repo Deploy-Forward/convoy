@@ -97,6 +97,58 @@ class Server(unittest.TestCase):
         self.assertFalse(r["ok"]); self.assertIn(r.get("delivery"), ("refused", None))
         self.assertNotIn("nudge_id", r)
 
+    def test_tune_rewrites_the_seat_through_the_contract(self):
+        from convoy.convoy import seat as write_seat, list_seats
+        write_seat(self.root, "grok", "grok-1", effort="low")
+        r = self.post("/api/tune", {"root": str(self.root), "seat": "grok-1", "effort": "high"})
+        self.assertTrue(r["ok"], r); self.assertFalse(r["applied_to_live_pane"])
+        row = next(x for x in list_seats(self.root) if x["session_id"] == "grok-1")
+        self.assertEqual(row["effort"], "high"); self.assertEqual(row["to"], "grok")
+        bad = self.post("/api/tune", {"root": str(self.root), "seat": "grok-1", "effort": "ultra"})
+        self.assertFalse(bad["ok"]); self.assertIn("effort", bad["error"])
+        self.assertEqual(next(x for x in list_seats(self.root) if x["session_id"] == "grok-1")["effort"], "high", "a refused value never lands")
+        self.assertFalse(self.post("/api/tune", {"root": str(self.root), "seat": "nobody", "effort": "high"})["ok"])
+
+    def test_ping_queues_and_only_the_chairs_own_row_answers(self):
+        from convoy.convoy import seat as write_seat
+        from convoy.layer import hook
+        write_seat(self.root, "grok", "grok-1")
+        r = self.post("/api/send", {"root": str(self.root), "seat": "grok-1", "body": "ping", "label": "ping"})
+        self.assertTrue(r["ok"], r); self.assertEqual(r["delivery"], "queued"); self.assertFalse(r["delivered"])
+        pid = r["ping_id"]; self.assertEqual(len(pid), 12)
+        since = "1970-01-01T00:00:00.000000Z"
+        self.assertFalse(self.post("/api/replies", {"root": str(self.root), "seat": "grok-1", "since": since, "ping_id": pid})["answered"])
+        hook(self.root, "note", "pong " + pid + " grok-1 grok C:/wt", instance_id="grok-1", to="grok-bot")
+        hook(self.root, "note", "unrelated", instance_id="grok-1")
+        rep = self.post("/api/replies", {"root": str(self.root), "seat": "grok-1", "since": since, "ping_id": pid})
+        self.assertTrue(rep["answered"]); self.assertEqual(len(rep["rows"]), 1); self.assertIn("pong " + pid, rep["rows"][0]["summary"])
+        # another chair citing the id does not identify grok-1
+        hook(self.root, "note", "pong " + pid + " impostor", instance_id="codex-9")
+        rep = self.post("/api/replies", {"root": str(self.root), "seat": "grok-1", "since": since, "ping_id": pid})
+        self.assertEqual(len(rep["rows"]), 1)
+        self.assertFalse(self.post("/api/send", {"root": str(self.root), "seat": "grok-1", "body": "   "})["ok"])
+        self.assertFalse(self.post("/api/send", {"root": str(self.root), "seat": "nobody", "body": "hi"})["ok"])
+
+    def test_focus_raises_the_identified_window_and_never_a_guess(self):
+        from convoy.convoy import seat as write_seat
+        write_seat(self.root, "grok", "grok-1", worktree=str(self.root / "wt-grok-1"))
+        raised = []
+        self.api.raise_fn = lambda hwnd: (raised.append(hwnd) or {"ok": True, "hwnd": hwnd})
+        # not identified: a generic title names nothing -> nothing raised, reason on the card
+        self.api.identify_kwargs = {"panes_fn": lambda root: {"chairs": [{"session_id": "grok-1", "live": True, "bodies": [{"pid": 4242}]}]},
+                                    "windows_fn": lambda: [{"hwnd": 11, "title": "grok", "pid": 99}]}
+        with mock.patch("convoy.widget_web.os.name", "nt"):
+            r = self.post("/api/focus", {"root": str(self.root), "seat": "grok-1"})
+        self.assertFalse(r["focused"]); self.assertEqual(raised, []); self.assertTrue(r.get("reason") or r["identify"]["reason"])
+        # identified: the title names the worktree -> that hwnd is raised
+        self.api.identify_kwargs["windows_fn"] = lambda: [{"hwnd": 12, "title": "wt-grok-1 - grok", "pid": 99}]
+        with mock.patch("convoy.widget_web.os.name", "nt"):
+            r = self.post("/api/focus", {"root": str(self.root), "seat": "grok-1"})
+        if r["identify"]["identified"]:
+            self.assertTrue(r["focused"]); self.assertEqual(raised, [12]); self.assertEqual(r["method"], "raise-window")
+        else:
+            self.assertEqual(raised, [], "an unidentified pane is never raised")
+
     def test_pin_and_unknown_paths(self):
         self.assertEqual(self.post("/api/pin", {"on": False})["on"], False)
         req = urllib.request.Request(self.url + "/api/nothing", data=b"{}", method="POST", headers={"Content-Type": "application/json"})
