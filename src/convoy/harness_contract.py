@@ -112,12 +112,41 @@ def _accepted_efforts(eff: dict[str, Any]) -> list[str] | None:
 
 def _applied_flag(eff: dict[str, Any]) -> str | None:
     """The flag Convoy puts on argv, or None. A flag is applied only when the
-    contract carries it WITH an evidence string quoting a live --help; codex
-    has a config key and no evidence, so it is recorded, not applied."""
+    contract carries it WITH an evidence string quoting a live --help. A
+    harness whose effort is a CONFIG KEY (codex `-c model_reasoning_effort=`)
+    is applied through cli_config_flag + vendor_key, also only with evidence."""
+    if not (isinstance(eff.get("evidence"), str) and eff["evidence"].strip()):
+        return None
     flag = eff.get("cli_flag")
-    if isinstance(flag, str) and flag.strip() and isinstance(eff.get("evidence"), str) and eff["evidence"].strip():
+    if isinstance(flag, str) and flag.strip():
         return flag.strip()
+    cflag, key = eff.get("cli_config_flag"), eff.get("vendor_key")
+    if isinstance(cflag, str) and cflag.strip() and isinstance(key, str) and key.strip():
+        return cflag.strip() + " " + key.strip() + "="
     return None
+
+
+def model_flag(harness_id: str) -> dict[str, Any]:
+    """{flag, evidence}: the harness's own model flag, applied only when the
+    contract quotes a live --help for it. None means Convoy passes no model
+    and the vendor's config default wins (live 2026-09-06: a relaunched codex
+    seat declared gpt-5.6/high booted as gpt-6-astra medium for that reason)."""
+    wanted = canonical_harness_id(harness_id)
+    for row in harness_entries():
+        if row["id"] == wanted:
+            flag, ev = row.get("model_flag"), row.get("model_flag_evidence")
+            ok = isinstance(flag, str) and flag.strip() and isinstance(ev, str) and ev.strip()
+            return {"flag": flag.strip() if ok else None, "evidence": ev}
+    return {"flag": None, "evidence": None}
+
+
+def model_argv(harness_id: str, model: Any) -> list[str]:
+    """[flag, model] when the seat declares a model and the harness has an
+    evidenced flag; [] otherwise. Never a remembered name."""
+    if not (isinstance(model, str) and model.strip()):
+        return []
+    flag = model_flag(harness_id)["flag"]
+    return [flag, model.strip()] if flag else []
 
 
 def effort_contract(harness_id: str) -> dict[str, Any]:
@@ -159,9 +188,17 @@ def effort_argv(harness_id: str, effort: Any) -> list[str]:
     flag = _applied_flag(eff)
     text = str(effort).strip().lower() if isinstance(effort, str) else ""
     accepted = _accepted_efforts(eff)
-    if flag and text and accepted is not None and text in accepted:
+    if not (flag and text and accepted is not None and text in accepted):
+        return []
+    if eff.get("cli_flag"):
         return [flag, text]
-    return []
+    # config-key harness: Convoy's key rides as the vendor's own value, and a
+    # key with no vendor value (codex more-reasoning) is recorded, not applied
+    vmap = eff.get("vendor_map") if isinstance(eff.get("vendor_map"), dict) else {}
+    vendor = vmap.get(text)
+    if not isinstance(vendor, str) or not vendor.strip():
+        return []
+    return [str(eff["cli_config_flag"]), str(eff["vendor_key"]) + "=" + vendor.strip()]
 
 
 def effort_applied(harness_id: str, effort: Any) -> bool | None:
