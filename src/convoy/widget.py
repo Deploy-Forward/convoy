@@ -96,19 +96,20 @@ def _usage_block(harness: str, surfaced: dict[str, Any]) -> dict[str, Any]:
     week = max(0, min(100, week)) if week is not None else None
     footnote = None
     if str(harness).strip().lower() == "grok":
-        raw = surfaced.get("raw")
-        if isinstance(raw, str) and raw.strip():
-            footnote = raw.strip().splitlines()[0][:160]
-        else:
-            footnote = "grok reports no meter"
+        footnote = "weekly cap only; session usage is tokens and cost, not a limit" if surfaced.get("source") else "no billing row yet"
     # why a bar is unknown, in the vendor's own terms: never a bare "unknown"
     # when the probe told us more (Marco 2026-09-05: "if we can see threads
     # we can see usage").
     reason = None
     if surfaced.get("probing"):
         reason = "probing the vendor…"
+    elif str(harness).strip().lower() == "grok" and surfaced.get("source") == "grok billing log":
+        age = int(surfaced.get("age_s") or 0)
+        reason = ("weekly cap" + (" (" + str(surfaced.get("tier")) + ")" if surfaced.get("tier") else "") +
+                  " from grok's billing log, " + (str(age // 3600) + " h" if age >= 3600 else str(age // 60) + " min") +
+                  " old; grok has no session cap")
     elif str(harness).strip().lower() == "grok":
-        reason = "grok exposes no usage meter"
+        reason = "no billing row in grok's log yet (open a grok pane; it fetches on start)"
     elif surfaced.get("probe_timed_out"):
         reason = "vendor probe timed out; retrying every minute"
     elif surfaced.get("error"):
