@@ -191,6 +191,15 @@ def probe(harness: str, runner: ProbeFn | None = None) -> dict[str, Any]:
             "raw": None,
         }
     if name == "grok":
+        # grok's TUI "Usage limit" tab is a billing fetch the shell logs into
+        # ~/.grok/logs/unified.jsonl ("billing: fetched credits config",
+        # ctx.config.creditUsagePercent + currentPeriod, grok-build
+        # xai-grok-shell/src/extensions/billing.rs). Read the newest one.
+        # grok has a WEEKLY cap only; its session tab is tokens and cost, not
+        # a limit, so the session bar stays unknown with that reason.
+        snap = grok_unified_billing()
+        if snap is not None:
+            return snap
         return {"usage_remaining": None, "limited": False, "raw": None}
     if name == "claude":
         bin = shutil.which("claude") or "claude"
@@ -241,20 +250,44 @@ def _find_rate_limits(node: Any, depth: int = 0) -> dict[str, Any] | None:
 
 
 def codex_rollout_rate_limits(home: "Path | None" = None, now: float | None = None) -> dict[str, Any] | None:
-    """The last `rate_limits` snapshot codex wrote into its newest session
-    rollout (~/.codex/sessions/**/rollout-*.jsonl): primary = the session
-    window (used_percent, window_minutes, resets_at epoch), secondary = the
-    weekly window. Returns None when there is no rollout or no snapshot; the
-    number is the vendor's, stamped with the snapshot's age so a stale
-    figure is never mistaken for a live one."""
+    """codex writes a `rate_limits` snapshot into every session rollout
+    (~/.codex/sessions/**/rollout-*.jsonl): primary = the 5 h window,
+    secondary = the weekly window, each with used_percent and resets_at. Its
+    /status is TUI-only and codex itself warns its limits may be stale, so:
+
+    - snapshots are grouped by their weekly resets_at (to the minute): two
+      different reset instants on one machine are two codex LOGINS (live
+      2026-09-06: Marco's Business login resets 09-12 07:46Z at 86% left while
+      the login the codex chairs used resets 09-12 05:04Z at 0% left);
+    - the freshest snapshot by ITS OWN timestamp is the headline, and every
+      other login seen in the last 7 days rides along in `logins`;
+    - every number carries its own timestamp and age. Nothing is derived.
+    Returns None when no rollout carries a number."""
     import glob
     import time as _t
     from datetime import datetime, timezone
     from pathlib import Path as _P
     base = _P(home) if home is not None else _P(os.environ.get("CODEX_HOME") or (_P.home() / ".codex"))
     files = sorted(glob.glob(str(base / "sessions" / "**" / "rollout-*.jsonl"), recursive=True), key=os.path.getmtime, reverse=True)
-    for path in files[:400]:   # newest first; the newest rollout may carry no snapshot yet
-        last = None
+    t_now = now if now is not None else _t.time()
+
+    def pct(v: Any) -> int | None:
+        try:
+            x = int(round(float(v)))
+        except (TypeError, ValueError):
+            return None
+        return x if 0 <= x <= 100 else None
+
+    def at(v: Any) -> str | None:
+        try:
+            return datetime.fromtimestamp(float(v), timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        except (TypeError, ValueError, OSError):
+            return None
+
+    seen: list[dict[str, Any]] = []
+    for path in files[:400]:
+        if t_now - os.path.getmtime(path) > 14 * 86400:
+            break
         try:
             with open(path, encoding="utf-8", errors="replace") as fh:
                 for line in fh:
@@ -264,48 +297,112 @@ def codex_rollout_rate_limits(home: "Path | None" = None, now: float | None = No
                         row = json.loads(line)
                     except json.JSONDecodeError:
                         continue
-                    node = _find_rate_limits(row)
-                    if isinstance(node, dict) and "primary" in node:
-                        last = (row.get("timestamp") or row.get("ts"), node)
+                    rl = _find_rate_limits(row)
+                    if not rl:
+                        continue
+                    prim = rl.get("primary") or {}
+                    sec = rl.get("secondary") or {}
+                    sp, wp = pct(prim.get("used_percent")), pct(sec.get("used_percent"))
+                    if sp is None and wp is None:
+                        continue
+                    ts = str(row.get("timestamp") or row.get("ts") or "")
+                    try:
+                        snap_t = datetime.fromisoformat(ts.replace("Z", "+00:00")).timestamp()
+                    except ValueError:
+                        snap_t = os.path.getmtime(path)
+                        ts = datetime.fromtimestamp(snap_t, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+                    try:
+                        family = int(float(sec.get("resets_at") or 0)) // 60
+                    except (TypeError, ValueError):
+                        family = 0
+                    seen.append({"t": snap_t, "ts": ts, "family": family, "session_pct": sp, "week_pct": wp,
+                                 "resets": {"session": ("at " + at(prim.get("resets_at"))) if at(prim.get("resets_at")) else None,
+                                            "week": ("at " + at(sec.get("resets_at"))) if at(sec.get("resets_at")) else None},
+                                 "window_minutes": {"session": prim.get("window_minutes"), "week": sec.get("window_minutes")},
+                                 "rollout": os.path.basename(path)})
         except OSError:
             continue
-        if last is None:
-            continue
-        ts, rl = last
-        prim = rl.get("primary") or {}
-        sec = rl.get("secondary") or {}
-        def pct(v: Any) -> int | None:
-            try:
-                x = int(round(float(v)))
-            except (TypeError, ValueError):
-                return None
-            return x if 0 <= x <= 100 else None
-        def at(v: Any) -> str | None:
-            try:
-                return datetime.fromtimestamp(float(v), timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-            except (TypeError, ValueError, OSError):
-                return None
-        session_pct, week_pct = pct(prim.get("used_percent")), pct(sec.get("used_percent"))
-        if session_pct is None and week_pct is None:
-            continue   # a snapshot without a number is not a number: keep looking, older is still the vendor's
-        as_of = ts or datetime.fromtimestamp(os.path.getmtime(path), timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-        age_s = max(0.0, (now if now is not None else _t.time()) - os.path.getmtime(path))
-        resets = {"session": ("at " + at(prim.get("resets_at"))) if at(prim.get("resets_at")) else None,
-                  "week": ("at " + at(sec.get("resets_at"))) if at(sec.get("resets_at")) else None}
-        limited = (session_pct is not None and session_pct >= 100) or (week_pct is not None and week_pct >= 100)
-        return {"usage_remaining": {"session_pct": session_pct, "week_pct": week_pct} if session_pct is not None else None,
-                "session_pct": session_pct, "week_pct": week_pct, "resets": resets, "limited": limited,
-                "raw": None, "source": "codex rollout snapshot", "as_of": as_of, "age_s": round(age_s),
-                "window_minutes": {"session": prim.get("window_minutes"), "week": sec.get("window_minutes")},
+    if not seen:
+        return None
+    seen.sort(key=lambda x: x["t"], reverse=True)
+    freshest_by_family: dict[int, dict[str, Any]] = {}
+    for x in seen:
+        freshest_by_family.setdefault(x["family"], x)
+    head = seen[0]
+
+    def card(x: dict[str, Any]) -> dict[str, Any]:
+        limited = (x["session_pct"] is not None and x["session_pct"] >= 100) or (x["week_pct"] is not None and x["week_pct"] >= 100)
+        return {"usage_remaining": {"session_pct": x["session_pct"], "week_pct": x["week_pct"]} if x["session_pct"] is not None else None,
+                "session_pct": x["session_pct"], "week_pct": x["week_pct"], "resets": x["resets"], "limited": limited,
+                "raw": None, "source": "codex rollout snapshot", "as_of": x["ts"], "age_s": round(max(0.0, t_now - x["t"])),
+                "rollout": x["rollout"], "window_minutes": x["window_minutes"],
                 "quota": "exhausted" if limited else "available"}
-    return None
+
+    out = card(head)
+    others = [card(x) for fam, x in freshest_by_family.items() if fam != head["family"] and t_now - x["t"] <= 7 * 86400]
+    out["logins"] = [{k: v for k, v in o.items() if k in ("session_pct", "week_pct", "resets", "limited", "as_of", "age_s")} for o in others]
+    return out
+
+
+def grok_unified_billing(home: "Path | None" = None, now: float | None = None) -> dict[str, Any] | None:
+    """The newest `billing: fetched credits config` row in grok's unified log:
+    creditUsagePercent (weekly, used) and currentPeriod.end (the reset), the
+    subscription tier, stamped with the row's own ts and its age. None when
+    the log or the row is absent. The number is the vendor's, never derived."""
+    import time as _t
+    from datetime import datetime, timezone
+    from pathlib import Path as _P
+    base = _P(home) if home is not None else _P(os.environ.get("GROK_HOME") or (_P.home() / ".grok"))
+    path = base / "logs" / "unified.jsonl"
+    if not path.is_file():
+        return None
+    last: dict[str, Any] | None = None
+    try:
+        with open(path, encoding="utf-8", errors="replace") as fh:
+            for line in fh:
+                if "billing: fetched credits config" not in line:
+                    continue
+                try:
+                    row = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                cfg = ((row.get("ctx") or {}).get("config")) or {}
+                if isinstance(cfg, dict) and cfg.get("creditUsagePercent") is not None:
+                    last = row
+    except OSError:
+        return None
+    if last is None:
+        return None
+    ctx = last.get("ctx") or {}
+    cfg = ctx.get("config") or {}
+    try:
+        used = int(round(float(cfg.get("creditUsagePercent"))))
+    except (TypeError, ValueError):
+        return None
+    used = max(0, min(100, used))
+    period = cfg.get("currentPeriod") or {}
+    end = period.get("end") or cfg.get("billingPeriodEnd")
+    ts = str(last.get("ts") or "")
+    age = None
+    try:
+        when = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+        age = max(0.0, (now if now is not None else _t.time()) - when.timestamp())
+    except ValueError:
+        pass
+    ptype = str(period.get("type") or "")
+    window = "week" if "WEEK" in ptype.upper() or not ptype else "period"
+    return {"usage_remaining": {"week_pct": used}, "session_pct": None, "week_pct": used,
+            "resets": {"session": None, "week": ("at " + str(end)[:16].replace("T", " ") + "Z") if end else None},
+            "limited": used >= 100, "raw": None, "source": "grok billing log", "as_of": ts or None,
+            "age_s": round(age) if age is not None else None, "tier": ctx.get("subscriptionTier"),
+            "window": window, "session_cap": False, "quota": "exhausted" if used >= 100 else "available"}
 
 
 def surface(harness: str, probed: dict[str, Any] | None = None) -> dict[str, Any]:
     """Compact per-harness usage for seats/chips. Never invent 0. Grok has no meter."""
     name = (harness or "").strip().lower()
     p = probed if probed is not None else probe(harness)
-    if name == "grok":
+    if name == "grok" and not p.get("source"):
         return {"usage_remaining": None, "limited": False}
     out: dict[str, Any] = {
         "limited": bool(p.get("limited")),
@@ -316,6 +413,10 @@ def surface(harness: str, probed: dict[str, Any] | None = None) -> dict[str, Any
         raw = p.get("usage_remaining")
     text = raw if isinstance(raw, str) else json.dumps(raw) if raw is not None else ""
     session_pct, week_pct = _parse_claude_progress(out["usage_remaining"], text)
+    if session_pct is None and isinstance(p.get("session_pct"), int):
+        session_pct = p["session_pct"]
+    if week_pct is None and isinstance(p.get("week_pct"), int):
+        week_pct = p["week_pct"]
     if session_pct is not None:
         out["session_pct"] = session_pct
     if week_pct is not None:
@@ -325,15 +426,18 @@ def surface(harness: str, probed: dict[str, Any] | None = None) -> dict[str, Any
         resets = {"session": p["resets"].get("session") or resets["session"], "week": p["resets"].get("week") or resets["week"]}
     if resets["session"] or resets["week"]:
         out["resets"] = resets
-    for k in ("source", "as_of", "age_s"):
+    for k in ("source", "as_of", "age_s", "logins"):
         if p.get(k) is not None:
             out[k] = p[k]
     if p.get("probe_timed_out"):
         out["probe_timed_out"] = True
     if p.get("error"):
         out["error"] = p.get("error")
-    if name == "grok":
+    if name == "grok" and not p.get("source"):
         out["usage_remaining"] = None
+    for k in ("tier", "session_cap", "window"):
+        if p.get(k) is not None:
+            out[k] = p[k]
     return out
 
 

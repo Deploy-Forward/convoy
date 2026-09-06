@@ -299,6 +299,7 @@ def grok_inbox_hook_document(command: str | None = None) -> dict[str, Any]:
     return {
         "hooks": {
             "PreToolUse": [entry],
+            "PostToolUse": [entry],   # the pane stamps its own vendor usage (kind=usage) after tool calls
             "Stop": [entry],
         }
     }
@@ -312,6 +313,7 @@ def claude_inbox_hook_document(command: str | None = None) -> dict[str, Any]:
     return {
         "hooks": {
             "PreToolUse": [entry],
+            "PostToolUse": [entry],
             "UserPromptSubmit": [entry],
         }
     }

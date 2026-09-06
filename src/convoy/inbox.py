@@ -334,6 +334,45 @@ def _hook_event_from_stdin() -> str:
     return event
 
 
+USAGE_ROW_MIN_S = 300.0
+
+
+def last_usage_row(root: Path, session_id: str) -> dict[str, Any] | None:
+    from .layer import feed_since
+    last = None
+    for r in feed_since(root, "1970-01-01T00:00:00.000000Z"):
+        if r.get("kind") == "usage" and r.get("instance_id") == session_id:
+            last = r
+    return last
+
+
+def stamp_usage_row(root: Path, session_id: str, harness: str, *, probe_fn=None, now: str | None = None) -> dict[str, Any] | None:
+    """One kind=usage row for this chair from its vendor's own reading, at
+    most every USAGE_ROW_MIN_S. Returns the row, or None when skipped."""
+    from datetime import datetime, timezone
+    from .layer import hook, utc_now
+    from .usage import probe, surface
+    stamp = now or utc_now()
+    prev = last_usage_row(root, session_id)
+    if prev is not None:
+        try:
+            a = datetime.fromisoformat(str(prev.get("stamped_at") or prev.get("ts")).replace("Z", "+00:00"))
+            b = datetime.fromisoformat(stamp.replace("Z", "+00:00"))
+            if (b - a).total_seconds() < USAGE_ROW_MIN_S:
+                return None
+        except ValueError:
+            pass
+    got = (probe_fn or probe)(harness)
+    view = surface(harness, got)
+    extra = {"harness": harness, "stamped_at": stamp,
+             "session_pct": view.get("session_pct"), "week_pct": view.get("week_pct"),
+             "resets": view.get("resets"), "limited": bool(view.get("limited")),
+             "source": got.get("source"), "as_of": got.get("as_of"), "tier": got.get("tier")}
+    text = harness + " usage: " + (str(100 - view["session_pct"]) + "% left 5h" if isinstance(view.get("session_pct"), int) else "session unknown") + \
+           ", " + (str(100 - view["week_pct"]) + "% left week" if isinstance(view.get("week_pct"), int) else "week unknown")
+    return hook(root, "usage", text, instance_id=session_id, author=session_id, extra=extra)
+
+
 def hook_pretooluse(cwd: str | Path | None = None) -> dict[str, Any]:
     """Drain this worktree's inbox into a PreToolUse/UserPromptSubmit card.
 
@@ -359,8 +398,18 @@ def hook_pretooluse(cwd: str | Path | None = None) -> dict[str, Any]:
         }
     seat = matches[0] if matches else None
     sid = str((seat or {}).get("session_id") or "").strip()
-    messages = drain(root, sid) if sid else []
     event = _hook_event_from_stdin()
+    if event == "PostToolUse" and sid:
+        # Marco 2026-09-06: a user may log in with another account when usage
+        # is low, so the meter is per PANE, not per machine. After a tool
+        # call the pane stamps its OWN vendor reading (the snapshot its login
+        # produced) as kind=usage, at most every USAGE_ROW_MIN_S. The widget
+        # reads it per chair. Never a number the vendor did not give.
+        try:
+            stamp_usage_row(root, sid, str((seat or {}).get("to") or ""))
+        except Exception:  # a usage stamp must never break a hook
+            pass
+    messages = drain(root, sid) if sid else []
     if not messages:
         # An empty object is the only universally safe no-op. A top-level
         # "decision" is the LEGACY approve|block field: Claude Code rejects

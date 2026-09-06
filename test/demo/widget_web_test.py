@@ -174,6 +174,45 @@ class Server(unittest.TestCase):
         self.assertEqual(by["grok-9"]["body_state"], "gone", "a consented close is gone")
         self.assertIn(by["codex-1"]["chip"], ("gone", "idle", "stale", "working"))
 
+    def test_archive_hides_but_keeps_the_chair_and_relaunch_brings_it_back(self):
+        from convoy.convoy import seat as write_seat, list_seats
+        from convoy.widget import build_widget_model
+        write_seat(self.root, "grok", "grok-1", worktree=str(self.root))
+        r = self.post("/api/archive", {"root": str(self.root), "seat": "grok-1", "archived": True})
+        self.assertTrue(r["ok"]); self.assertTrue(r["archived"])
+        rows = list_seats(self.root); self.assertEqual(len(rows), 1, "archive never deletes the row")
+        self.assertTrue(rows[0]["archived"])
+        m = build_widget_model([self.root], probe_fn=lambda h: dict(NULL_PROBE))
+        self.assertTrue(m["threads"][0]["chairs"][0]["archived"])
+        kinds = [x["kind"] for x in self.post("/api/feed", {"root": str(self.root), "since": "10m"})["rows"]]
+        self.assertIn("archive", kinds) if "archive" in ("note", "conductor", "synapse", "seated", "commit", "relaunch", "refuse", "nudge", "join") else None
+        with mock.patch("convoy.widget_web.live_runner", create=True) as _lr, \
+             mock.patch("convoy.bringup.ensure_first_run", return_value={"ok": True, "prepared": False, "wrote": False, "settings": None, "home_written": False, "settings_home": None}), \
+             mock.patch("convoy.relaunch.bring_up", return_value={"ok": True, "windows": [{"ok": True, "session_id": "grok-1"}]}) as bu:
+            rr = self.post("/api/relaunch", {"root": str(self.root), "seat": "grok-1"})
+        self.assertTrue(rr["ok"], rr); self.assertTrue(bu.called)
+        self.assertEqual(bu.call_args.kwargs.get("session_ids"), ["grok-1"], "only this chair relaunches")
+        self.assertFalse(list_seats(self.root)[0].get("archived"), "relaunch un-archives")
+        self.assertFalse(self.post("/api/archive", {"root": str(self.root), "seat": "nobody"})["ok"])
+
+    def test_post_tool_use_stamps_the_panes_own_usage_at_most_every_five_minutes(self):
+        from convoy.convoy import seat as write_seat
+        from convoy.inbox import stamp_usage_row, last_usage_row
+        from convoy.widget import build_widget_model
+        write_seat(self.root, "codex", "codex-1", worktree=str(self.root))
+        snap = {"usage_remaining": {"session_pct": 30, "week_pct": 60}, "session_pct": 30, "week_pct": 60, "limited": False, "raw": None,
+                "source": "codex rollout snapshot", "as_of": "2026-09-06T22:00:00Z", "resets": {"session": "at x", "week": "at y"}}
+        r1 = stamp_usage_row(self.root, "codex-1", "codex", probe_fn=lambda h: snap, now="2026-09-06T22:00:00.000000Z")
+        self.assertEqual(r1["kind"], "usage"); self.assertEqual(r1["week_pct"], 60); self.assertIn("70% left 5h", r1["summary"])
+        self.assertIsNone(stamp_usage_row(self.root, "codex-1", "codex", probe_fn=lambda h: snap, now="2026-09-06T22:03:00.000000Z"), "rate limited")
+        r2 = stamp_usage_row(self.root, "codex-1", "codex", probe_fn=lambda h: {**snap, "usage_remaining": {"session_pct": 30, "week_pct": 100}, "week_pct": 100, "limited": True}, now="2026-09-06T22:06:00.000000Z")
+        self.assertTrue(r2["limited"])
+        self.assertEqual(last_usage_row(self.root, "codex-1")["week_pct"], 100)
+        m = build_widget_model([self.root], probe_fn=lambda h: dict(NULL_PROBE))
+        own = m["threads"][0]["chairs"][0]["own_usage"]
+        self.assertEqual(own["week_pct"], 100); self.assertTrue(own["limited"])
+        self.assertNotIn("token", json.dumps(own))
+
     def test_pin_and_unknown_paths(self):
         self.assertEqual(self.post("/api/pin", {"on": False})["on"], False)
         req = urllib.request.Request(self.url + "/api/nothing", data=b"{}", method="POST", headers={"Content-Type": "application/json"})

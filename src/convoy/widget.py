@@ -96,19 +96,20 @@ def _usage_block(harness: str, surfaced: dict[str, Any]) -> dict[str, Any]:
     week = max(0, min(100, week)) if week is not None else None
     footnote = None
     if str(harness).strip().lower() == "grok":
-        raw = surfaced.get("raw")
-        if isinstance(raw, str) and raw.strip():
-            footnote = raw.strip().splitlines()[0][:160]
-        else:
-            footnote = "grok reports no meter"
+        footnote = "weekly cap only; session usage is tokens and cost, not a limit" if surfaced.get("source") else "no billing row yet"
     # why a bar is unknown, in the vendor's own terms: never a bare "unknown"
     # when the probe told us more (Marco 2026-09-05: "if we can see threads
     # we can see usage").
     reason = None
     if surfaced.get("probing"):
         reason = "probing the vendor…"
+    elif str(harness).strip().lower() == "grok" and surfaced.get("source") == "grok billing log":
+        age = int(surfaced.get("age_s") or 0)
+        reason = ("weekly cap" + (" (" + str(surfaced.get("tier")) + ")" if surfaced.get("tier") else "") +
+                  " from grok's billing log, " + (str(age // 3600) + " h" if age >= 3600 else str(age // 60) + " min") +
+                  " old; grok has no session cap")
     elif str(harness).strip().lower() == "grok":
-        reason = "grok exposes no usage meter"
+        reason = "no billing row in grok's log yet (open a grok pane; it fetches on start)"
     elif surfaced.get("probe_timed_out"):
         reason = "vendor probe timed out; retrying every minute"
     elif surfaced.get("error"):
@@ -300,6 +301,8 @@ def _chair_row(
         "last_row": last_rows.get(sid),
         "unread": unread,
         "body_state": body_state,
+        "archived": bool(seat.get("archived")),
+        "own_usage": _own_usage(root, sid),
         "focus": "focus --seat " + sid,
         "nudge_available": chip == "stale",
         "nudge": "nudge --seat " + sid + " --dry-run",
@@ -369,6 +372,16 @@ def _thread_card(
         "last_stamp": rail.get("last_stamp"),
         "seats": rail.get("seats"),
     }
+
+
+def _own_usage(root: Path, sid: str) -> dict[str, Any] | None:
+    """The chair's own kind=usage row (its login's reading), or None."""
+    from .inbox import last_usage_row
+    r = last_usage_row(Path(root), sid)
+    if not r:
+        return None
+    return {"ts": r.get("ts"), "session_pct": r.get("session_pct"), "week_pct": r.get("week_pct"),
+            "resets": r.get("resets"), "limited": bool(r.get("limited")), "source": r.get("source"), "tier": r.get("tier")}
 
 
 def build_widget_model(

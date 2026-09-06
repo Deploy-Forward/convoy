@@ -153,8 +153,8 @@ class HookWritersUseResolvedCommand(unittest.TestCase):
         self.assertTrue(g["written"])
         self.assertTrue(g["upgraded_events"])
         doc = json.loads(dest.read_text(encoding="utf-8"))
-        self.assertEqual(set(doc["hooks"]), {"PreToolUse", "Stop"})
-        for ev in ("PreToolUse", "Stop"):
+        self.assertEqual(set(doc["hooks"]), {"PreToolUse", "PostToolUse", "Stop"})
+        for ev in ("PreToolUse", "PostToolUse", "Stop"):
             self.assertEqual(doc["hooks"][ev][0]["hooks"][0]["command"], "C:/venv/python.exe -m convoy inbox --hook-pretooluse")
         # Run again: nothing stale, nothing rewritten.
         with mock.patch.object(cmd, "_probe_inbox_command", _probe(ok)):
