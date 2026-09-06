@@ -191,6 +191,15 @@ def probe(harness: str, runner: ProbeFn | None = None) -> dict[str, Any]:
             "raw": None,
         }
     if name == "grok":
+        # grok's TUI "Usage limit" tab is a billing fetch the shell logs into
+        # ~/.grok/logs/unified.jsonl ("billing: fetched credits config",
+        # ctx.config.creditUsagePercent + currentPeriod, grok-build
+        # xai-grok-shell/src/extensions/billing.rs). Read the newest one.
+        # grok has a WEEKLY cap only; its session tab is tokens and cost, not
+        # a limit, so the session bar stays unknown with that reason.
+        snap = grok_unified_billing()
+        if snap is not None:
+            return snap
         return {"usage_remaining": None, "limited": False, "raw": None}
     if name == "claude":
         bin = shutil.which("claude") or "claude"
@@ -301,11 +310,65 @@ def codex_rollout_rate_limits(home: "Path | None" = None, now: float | None = No
     return None
 
 
+def grok_unified_billing(home: "Path | None" = None, now: float | None = None) -> dict[str, Any] | None:
+    """The newest `billing: fetched credits config` row in grok's unified log:
+    creditUsagePercent (weekly, used) and currentPeriod.end (the reset), the
+    subscription tier, stamped with the row's own ts and its age. None when
+    the log or the row is absent. The number is the vendor's, never derived."""
+    import time as _t
+    from datetime import datetime, timezone
+    from pathlib import Path as _P
+    base = _P(home) if home is not None else _P(os.environ.get("GROK_HOME") or (_P.home() / ".grok"))
+    path = base / "logs" / "unified.jsonl"
+    if not path.is_file():
+        return None
+    last: dict[str, Any] | None = None
+    try:
+        with open(path, encoding="utf-8", errors="replace") as fh:
+            for line in fh:
+                if "billing: fetched credits config" not in line:
+                    continue
+                try:
+                    row = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                cfg = ((row.get("ctx") or {}).get("config")) or {}
+                if isinstance(cfg, dict) and cfg.get("creditUsagePercent") is not None:
+                    last = row
+    except OSError:
+        return None
+    if last is None:
+        return None
+    ctx = last.get("ctx") or {}
+    cfg = ctx.get("config") or {}
+    try:
+        used = int(round(float(cfg.get("creditUsagePercent"))))
+    except (TypeError, ValueError):
+        return None
+    used = max(0, min(100, used))
+    period = cfg.get("currentPeriod") or {}
+    end = period.get("end") or cfg.get("billingPeriodEnd")
+    ts = str(last.get("ts") or "")
+    age = None
+    try:
+        when = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+        age = max(0.0, (now if now is not None else _t.time()) - when.timestamp())
+    except ValueError:
+        pass
+    ptype = str(period.get("type") or "")
+    window = "week" if "WEEK" in ptype.upper() or not ptype else "period"
+    return {"usage_remaining": {"week_pct": used}, "session_pct": None, "week_pct": used,
+            "resets": {"session": None, "week": ("at " + str(end)[:16].replace("T", " ") + "Z") if end else None},
+            "limited": used >= 100, "raw": None, "source": "grok billing log", "as_of": ts or None,
+            "age_s": round(age) if age is not None else None, "tier": ctx.get("subscriptionTier"),
+            "window": window, "session_cap": False, "quota": "exhausted" if used >= 100 else "available"}
+
+
 def surface(harness: str, probed: dict[str, Any] | None = None) -> dict[str, Any]:
     """Compact per-harness usage for seats/chips. Never invent 0. Grok has no meter."""
     name = (harness or "").strip().lower()
     p = probed if probed is not None else probe(harness)
-    if name == "grok":
+    if name == "grok" and not p.get("source"):
         return {"usage_remaining": None, "limited": False}
     out: dict[str, Any] = {
         "limited": bool(p.get("limited")),
@@ -316,6 +379,10 @@ def surface(harness: str, probed: dict[str, Any] | None = None) -> dict[str, Any
         raw = p.get("usage_remaining")
     text = raw if isinstance(raw, str) else json.dumps(raw) if raw is not None else ""
     session_pct, week_pct = _parse_claude_progress(out["usage_remaining"], text)
+    if session_pct is None and isinstance(p.get("session_pct"), int):
+        session_pct = p["session_pct"]
+    if week_pct is None and isinstance(p.get("week_pct"), int):
+        week_pct = p["week_pct"]
     if session_pct is not None:
         out["session_pct"] = session_pct
     if week_pct is not None:
@@ -332,8 +399,11 @@ def surface(harness: str, probed: dict[str, Any] | None = None) -> dict[str, Any
         out["probe_timed_out"] = True
     if p.get("error"):
         out["error"] = p.get("error")
-    if name == "grok":
+    if name == "grok" and not p.get("source"):
         out["usage_remaining"] = None
+    for k in ("tier", "session_cap", "window"):
+        if p.get(k) is not None:
+            out[k] = p[k]
     return out
 
 

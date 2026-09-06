@@ -133,7 +133,7 @@ class WidgetModel(unittest.TestCase):
         self.assertEqual(grok["display_week"], "unknown")
         self.assertIsNone(grok["bar_session"])
         self.assertIsNone(grok["bar_week"])
-        self.assertEqual(grok["footnote"], "grok reports no meter")
+        self.assertEqual(grok["footnote"], "no billing row yet")   # without a billing log row grok is unknown, never 0
 
     def test_lead_row_and_seated_count(self):
         set_lead(self.t1, "grok")
@@ -291,6 +291,30 @@ class CodexRolloutSnapshot(unittest.TestCase):
         b = _usage_block("codex", surface("codex", snap))
         self.assertEqual(b["bar_session"], 1); self.assertEqual(b["bar_week"], 69); self.assertTrue(b["near_limit"]); self.assertIn("2 h old", b["reason"])
         self.assertIsNone(codex_rollout_rate_limits(Path(tempfile.mkdtemp())))
+
+
+class GrokBillingLog(unittest.TestCase):
+    def test_newest_billing_row_is_the_weekly_meter(self):
+        import json as _j, tempfile
+        from convoy.usage import grok_unified_billing, surface
+        from convoy.widget import _usage_block
+        home = Path(tempfile.mkdtemp()); (home / "logs").mkdir()
+        rows = [
+            {"ts": "2026-09-05T01:00:00.000Z", "msg": "billing: fetched credits config", "ctx": {"config": {"creditUsagePercent": 40.0, "currentPeriod": {"type": "USAGE_PERIOD_TYPE_WEEKLY", "end": "2026-09-11T06:55:23+00:00"}}, "subscriptionTier": "SuperGrok"}},
+            {"ts": "2026-09-05T02:00:00.000Z", "msg": "something else", "ctx": {}},
+            {"ts": "2026-09-06T20:00:00.000Z", "msg": "billing: fetched credits config", "ctx": {"config": {"creditUsagePercent": 66.0, "currentPeriod": {"type": "USAGE_PERIOD_TYPE_WEEKLY", "start": "2026-09-04T06:55:23+00:00", "end": "2026-09-11T06:55:23+00:00"}}, "subscriptionTier": "SuperGrok"}},
+        ]
+        (home / "logs" / "unified.jsonl").write_text("\n".join(_j.dumps(r) for r in rows) + "\ngarbage\n", encoding="utf-8")
+        import calendar, time
+        now = calendar.timegm(time.strptime("2026-09-06T22:00:00", "%Y-%m-%dT%H:%M:%S"))
+        snap = grok_unified_billing(home, now=now)
+        self.assertEqual(snap["week_pct"], 66); self.assertIsNone(snap["session_pct"]); self.assertEqual(snap["tier"], "SuperGrok")
+        self.assertEqual(snap["age_s"], 7200); self.assertTrue(snap["resets"]["week"].startswith("at 2026-09-11"))
+        b = _usage_block("grok", surface("grok", snap))
+        self.assertEqual(b["bar_week"], 34); self.assertIsNone(b["bar_session"]); self.assertFalse(b["near_limit"]); self.assertIn("2 h old", b["reason"])
+        self.assertIsNone(grok_unified_billing(Path(tempfile.mkdtemp())))
+        full = dict(snap); full["week_pct"] = 100
+        self.assertTrue(_usage_block("grok", surface("grok", {**full, "limited": True}))["limited"])
 
 
 class WidgetWindow(unittest.TestCase):

@@ -3,6 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
+from convoy import usage
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 from convoy.layer import feed_since
@@ -16,7 +17,8 @@ class Phase5Usage(unittest.TestCase):
         (self.root / ".ola" / "brief.md").write_text("b")
 
     def test_grok_probe_is_null_not_zero(self):
-        p = probe("grok")
+        with mock.patch.object(usage, "grok_unified_billing", return_value=None):  # the no-log case: unknown, never 0
+            p = probe("grok")
         self.assertIsNone(p["usage_remaining"])
         self.assertFalse(p["limited"])
         self.assertNotEqual(p["usage_remaining"], 0)
