@@ -112,6 +112,8 @@ class HookWritersUseResolvedCommand(unittest.TestCase):
         cmds = json.dumps(settings["hooks"])
         self.assertIn(py.replace("\\", "\\\\"), cmds)
         self.assertIn("UserPromptSubmit", settings["hooks"])
+        self.assertIn("PostToolUse", settings["hooks"], "a fresh claude install stamps usage rows")
+        self.assertEqual(settings["hooks"]["PostToolUse"][0]["hooks"][0]["command"], py)
         self.assertEqual((self.wt / ".grok" / "convoy-root").read_text(encoding="utf-8").strip(), str(self.root.resolve()))
 
     def test_writers_fail_closed_when_nothing_resolves(self):
@@ -164,3 +166,30 @@ class HookWritersUseResolvedCommand(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CodexFreshInstallStampsUsage(unittest.TestCase):
+    """Audit 2026-09-06: the codex installer wrote Stop only, so a fresh codex
+    seat never stamped a kind=usage row. hooks.json now carries PostToolUse
+    with the inbox hook command (same handler, event from stdin)."""
+
+    def setUp(self):
+        self.wt = Path(tempfile.mkdtemp())
+        self.root = Path(tempfile.mkdtemp())
+        (self.root / ".convoy").mkdir()
+        (self.root / ".convoy" / "id").write_text("cvy_test\n", encoding="utf-8")
+
+    def test_codex_hooks_json_carries_post_tool_use_inbox_hook_once(self):
+        from convoy.identity import ensure_codex_end_hook
+        py = cmd._quote(sys.executable) + " -m convoy inbox --hook-pretooluse"
+        with mock.patch.object(cmd, "_probe_inbox_command", _probe({py})):
+            first = ensure_codex_end_hook(self.wt, root=self.root)
+            again = ensure_codex_end_hook(self.wt, root=self.root)
+        self.assertTrue(first["ok"] and again["ok"], first)
+        self.assertTrue(first["written"]); self.assertFalse(again["written"], "idempotent")
+        doc = json.loads((self.wt / ".codex" / "hooks.json").read_text(encoding="utf-8"))
+        self.assertIn("Stop", doc["hooks"])
+        post = doc["hooks"]["PostToolUse"]
+        self.assertEqual(len(post), 1)
+        self.assertEqual(post[0]["hooks"][0]["command"], py)
+        self.assertEqual(first["usage_hook_command"], py)
