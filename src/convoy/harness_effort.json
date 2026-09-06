@@ -58,7 +58,9 @@
         "mode": "unverified",
         "cli": null,
         "evidence": "unverified 2026-09-04: grok --help (demo box, grok 1.0.13) names remote sessions only on the resume path: `--restore-code  Restore the original session's repository snapshot when resuming. Remote sessions require --worktree (never checks out into the current directory)`; `-w, --worktree ... With --resume of a remote session, pass --restore-code to apply the snapshot codebase`. No option creates or attaches a remote session from this CLI, and Convoy has never resumed one"
-      }
+      },
+      "model_flag": "-m",
+      "model_flag_evidence": "grok --help (demo box, grok 1.0.13, 2026-09-04): -m/--model <MODEL> 'Model ID to use'"
     },
     {
       "id": "claude",
@@ -92,7 +94,9 @@
         "mode": "interactive-session",
         "cli": "--cloud",
         "evidence": "claude --help (demo box, 2.1.260, 2026-09-04): `--cloud [description|session_id|url]  Create a cloud session with the given description, or attach to an existing one by session ID or claude.ai/code URL`; also `--environment <environment_id>  Create a new cloud session that runs on the given self-hosted environment (ccpool_...)`. --cloud is an option of the interactive claude command, not a task subcommand; attach by id/url is stated, whether the create path stays attached is not"
-      }
+      },
+      "model_flag": "--model",
+      "model_flag_evidence": "claude --help (demo box, 2.1.260, 2026-09-04): --model <model> 'Model for the current session'"
     },
     {
       "id": "codex",
@@ -120,7 +124,15 @@
           "medium",
           "high",
           "xhigh"
-        ]
+        ],
+        "cli_config_flag": "-c",
+        "vendor_map": {
+          "low": "low",
+          "medium": "medium",
+          "high": "high",
+          "extra-high": "xhigh"
+        },
+        "evidence": "codex --help (demo box, codex-cli 0.153.0, 2026-09-06): `-c, --config <key=value>  Override a configuration value that would otherwise be loaded from ~/.codex/config.toml`, example `-c model=\"o3\"`; the key model_reasoning_effort is the one ~/.codex/config.toml carries on this box (`model_reasoning_effort = \"medium\"`), which is what a codex pane launched without it showed (`gpt-6-astra medium`, 2026-09-06). more-reasoning has no vendor value and stays recorded, not applied"
       },
       "models": null,
       "models_evidence": "unverified 2026-09-04: codex --help (demo box, codex-cli 0.153.0) -m/--model <MODEL> 'Model the agent should use'; no enumeration",
@@ -128,7 +140,9 @@
         "mode": "task",
         "cli": "codex cloud exec",
         "evidence": "codex --help (demo box, codex-cli 0.153.0, 2026-09-04): `cloud  [EXPERIMENTAL] Browse tasks from Codex Cloud and apply changes locally`; codex cloud --help lists `codex cloud exec` as `exec  Submit a new Codex Cloud task without launching the TUI`, plus status, list, apply, diff. A submitted task, not an interactive session. `--remote <ADDR>  Connect the TUI to a remote app server endpoint` is a self-hosted app server, not Codex Cloud"
-      }
+      },
+      "model_flag": "-m",
+      "model_flag_evidence": "codex --help and codex resume --help (demo box, codex-cli 0.153.0, 2026-09-06): -m/--model <MODEL> 'Model the agent should use'; live 2026-09-06 a relaunched codex pane without it booted ~/.codex/config.toml's model (gpt-6-astra) instead of the seat's gpt-5.6"
     },
     {
       "id": "cursor-agent",
@@ -151,7 +165,9 @@
         "mode": "unverified",
         "cli": null,
         "evidence": "unverified 2026-09-04: cursor-agent is not on PATH on the demo box; no --help to quote"
-      }
+      },
+      "model_flag": null,
+      "model_flag_evidence": "unverified 2026-09-04: cursor-agent is not on PATH on the demo box; no --help to quote"
     },
     {
       "id": "agy",
@@ -181,7 +197,9 @@
         "mode": "unverified",
         "cli": null,
         "evidence": "unverified 2026-09-04: agy --help (demo box, 1.1.22) has no line matching cloud or remote; nothing to quote, and absence in --help is not proof the product lacks a surface"
-      }
+      },
+      "model_flag": "--model",
+      "model_flag_evidence": "agy --help (demo box, 1.1.22, 2026-09-04): --model 'Model for the current CLI session'"
     },
     {
       "id": "hermes",
@@ -204,7 +222,9 @@
         "mode": "unverified",
         "cli": null,
         "evidence": "unverified 2026-09-04: hermes --help (demo box, v0.18.2) matches only `whatsapp-cloud  Set up WhatsApp Business Cloud API integration` and `serve  Start the Hermes backend server (headless; powers the desktop app and remote backends)`; neither is a cloud agent session"
-      }
+      },
+      "model_flag": "-m",
+      "model_flag_evidence": "hermes --help (demo box, v0.18.2, 2026-09-04): -m/--model MODEL 'Model override for this invocation'"
     },
     {
       "id": "pi",
@@ -237,7 +257,9 @@
         "mode": "unverified",
         "cli": null,
         "evidence": "unverified 2026-09-04: pi --help (demo box, 0.80.6) matches only the CLOUDFLARE_API_KEY / CLOUDFLARE_ACCOUNT_ID / CLOUDFLARE_GATEWAY_ID provider env vars; a model provider, not a cloud session"
-      }
+      },
+      "model_flag": "--model",
+      "model_flag_evidence": "pi --help (demo box, 0.80.6, 2026-09-04): --model <pattern> 'Model pattern or ID'"
     }
   ]
 }
