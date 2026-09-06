@@ -48,7 +48,7 @@ from typing import Any, Callable
 
 from .identity import ensure_grok_agent, ensure_inbox_hooks, install_neuron_identity
 from .index import is_temp_root
-from .harness_contract import effort_argv
+from .harness_contract import effort_argv, model_argv
 from .convoy import (
     CONDUCTOR,
     list_seats,
@@ -309,12 +309,13 @@ def resume_argv(seat: dict[str, Any]) -> list[str]:
     Grok keeps seat identity flags:
         [exe, '-m', MODEL?, '--agent', PATH?, EFFORT_FLAG?, '--resume', sid]
     Codex resume shape:
-        [exe, 'resume', sid]
+        [exe, '-m', MODEL?, '-c', 'model_reasoning_effort=V'?, 'resume', sid]
     Other harnesses:
-        [exe, EFFORT_FLAG?, '--resume', sid]
-    EFFORT_FLAG is the contract's evidenced flag for the seat's declared effort
-    (grok --reasoning-effort, claude --effort, agy --effort, pi --thinking);
-    absent when the contract has no evidenced flag (codex, cursor-agent, hermes).
+        [exe, MODEL_FLAG, MODEL?, EFFORT_FLAG?, '--resume', sid]
+    MODEL_FLAG and EFFORT_FLAG are the contract's evidenced flags for the seat's
+    declared model and effort (grok --reasoning-effort, claude --effort, agy
+    --effort, pi --thinking, codex -c model_reasoning_effort=); absent when the
+    contract has no evidenced flag (cursor-agent, hermes effort).
     First-run seat with no vendor UUID: no resume token is passed.
     Never -d, never `--` separator, never -p/-c, never ola-brain, never side-chat, never wt.
     """
@@ -326,10 +327,12 @@ def resume_argv(seat: dict[str, Any]) -> list[str]:
     if not binary:
         raise ValueError("refuse empty harness")
     argv = [binary]
+    # The seat's declared model rides argv through the contract's evidenced
+    # flag (grok/codex/hermes -m, claude/agy/pi --model). Without it the
+    # vendor's config default wins: live 2026-09-06 a relaunched codex seat
+    # declared gpt-5.6/high booted as gpt-6-astra medium from config.toml.
+    argv.extend(model_argv(to, seat.get("model")))
     if _harness_bin(to) == "grok":
-        model = seat.get("model")
-        if isinstance(model, str) and model.strip():
-            argv.extend(["-m", model.strip()])
         agent = seat.get("agent")
         if isinstance(agent, str) and agent.strip():
             argv.extend(["--agent", agent.strip()])

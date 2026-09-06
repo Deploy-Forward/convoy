@@ -101,11 +101,11 @@ class EffortOnTheWire(unittest.TestCase):
         self.assertIsNone(cursor["cli_flag"])
         self.assertIsNone(cursor["evidence"])
         self.assertFalse(cursor["applied"])
-        # codex has keys but no cli_flag and no evidence string: recorded, not applied
+        # codex has no flag: its effort is a config key applied through -c, with evidence
         codex = by_id["codex"]["effort"]
         self.assertIn("extra-high", codex["keys"])
         self.assertIsNone(codex["cli_flag"])
-        self.assertFalse(codex["applied"])
+        self.assertTrue(codex["applied"])
 
     def test_pi_keys_are_its_thinking_levels(self):
         # pi has no harness-scoped keys; what seat/join accept as effort and
@@ -160,7 +160,8 @@ class EffortValidatedPerHarness(unittest.TestCase):
         self.assertTrue(seat(self.root, "claude", "c1", effort="high")["effort_applied"])
         codex = seat(self.root, "codex", "x1", effort="extra-high")
         self.assertEqual(codex["effort"], "extra-high")
-        self.assertFalse(codex["effort_applied"])
+        self.assertTrue(codex["effort_applied"])
+        self.assertFalse(seat(self.root, "codex", "x2", effort="more-reasoning")["effort_applied"], "no vendor value")
         # no vocabulary to check against: recorded, not applied, not refused
         cursor = seat(self.root, "cursor-agent", "k1", effort="high")
         self.assertEqual(cursor["effort"], "high")
@@ -199,14 +200,16 @@ class EffortValidatedPerHarness(unittest.TestCase):
         swap(self.root, "chair-1", "codex", str(hp), author="chair-1", effort="extra-high")
         row = self._row("chair-1")
         self.assertEqual(row["effort"], "extra-high")
-        self.assertFalse(row["effort_applied"])
+        self.assertTrue(row["effort_applied"], "codex applies extra-high as -c model_reasoning_effort=xhigh")
 
     def test_update_seat_recomputes_applied_when_the_harness_changes(self):
         seat(self.root, "claude", "chair-2", effort="high")
         update_seat(self.root, "chair-2", to="codex")
         row = self._row("chair-2")
         self.assertEqual(row["effort"], "high")  # high is a codex key too
-        self.assertFalse(row["effort_applied"])
+        self.assertTrue(row["effort_applied"])
+        update_seat(self.root, "chair-2", effort="more-reasoning")
+        self.assertFalse(self._row("chair-2")["effort_applied"], "no vendor value for more-reasoning: recorded, not applied")
         with self.assertRaises(ValueError):
             update_seat(self.root, "chair-2", effort="banana")
 
@@ -237,8 +240,9 @@ class EffortReachesArgvWhereEvidenced(unittest.TestCase):
         self.assertNotIn("--effort", cursor)
         self.assertNotIn("high", cursor)
         codex = resume_argv({"to": "codex", "effort": "extra-high", "resume": "sid-x"})
-        self.assertNotIn("extra-high", codex)
-        self.assertNotIn("model_reasoning_effort", " ".join(codex))
+        self.assertNotIn("extra-high", codex, "Convoy's key never reaches the vendor; its own value does")
+        self.assertEqual(codex[1:], ["-c", "model_reasoning_effort=xhigh", "resume", "sid-x"])
+        self.assertEqual(resume_argv({"to": "codex", "effort": "more-reasoning", "resume": "sid-x"})[1:], ["resume", "sid-x"])
         self.assertNotIn("--effort", resume_argv({"to": "hermes", "effort": "high"}))
 
     def test_a_legacy_row_with_a_foreign_value_never_reaches_argv(self):
@@ -307,18 +311,18 @@ class EffortOverTheMcpWire(unittest.TestCase):
 
 
 class EffortAppliedOnTheChip(unittest.TestCase):
-    def test_glance_seat_card_says_recorded_not_applied(self):
+    def test_glance_seat_card_says_applied_only_with_a_vendor_value(self):
         from convoy.glance import build_by_thread
 
         root = Path(tempfile.mkdtemp())
         ensure_id(root)
-        seat(root, "codex", "x-chip", effort="extra-high")
+        seat(root, "codex", "x-chip", effort="more-reasoning")
         card = build_by_thread(
             root, probe_fn=lambda _h: {"usage_remaining": None, "limited": False, "raw": None},
             which_fn=lambda _n: None,
         )
         row = card["seats"][0]
-        self.assertEqual(row["effort"], "extra-high")
+        self.assertEqual(row["effort"], "more-reasoning")
         self.assertFalse(row["effort_applied"])
         seat(root, "claude", "c-chip")
         bare = [s for s in build_by_thread(
