@@ -149,6 +149,31 @@ class Server(unittest.TestCase):
         else:
             self.assertEqual(raised, [], "an unidentified pane is never raised")
 
+    def test_feed_history_rows_carry_no_token(self):
+        from convoy.lifecycle import join
+        from convoy.layer import conductor_stamp
+        j = join(self.root, "grok", session_id="grok-1")
+        conductor_stamp(self.root, "hello history")
+        r = self.post("/api/feed", {"root": str(self.root), "since": "10m"})
+        self.assertTrue(r["ok"]); kinds = [x["kind"] for x in r["rows"]]
+        self.assertIn("conductor", kinds); self.assertIn("join", kinds)
+        self.assertNotIn(j["token"], json.dumps(r))
+        self.assertEqual(r["rows"][0]["summary"], "hello history", "newest first")
+        self.assertFalse(self.post("/api/feed", {"root": str(self.root), "since": "soon"})["ok"])
+
+    def test_body_state_has_three_labels(self):
+        from convoy.convoy import seat as write_seat
+        from convoy.widget import build_widget_model
+        from convoy import pane_host
+        write_seat(self.root, "codex", "codex-1", worktree=str(self.root / "wt1"))
+        write_seat(self.root, "grok", "grok-9", worktree=str(self.root / "wt9"))
+        pane_host._write_state(self.root, "grok-9", {"launch_state": "closed-by-consent", "closed_at": "2026-09-06T00:00:00Z"})
+        m = build_widget_model([self.root], probe_fn=lambda h: dict(NULL_PROBE))
+        by = {c["session_id"]: c for c in m["threads"][0]["chairs"]}
+        self.assertEqual(by["codex-1"]["body_state"], "no-body", "alive-but-untyable is not gone")
+        self.assertEqual(by["grok-9"]["body_state"], "gone", "a consented close is gone")
+        self.assertIn(by["codex-1"]["chip"], ("gone", "idle", "stale", "working"))
+
     def test_pin_and_unknown_paths(self):
         self.assertEqual(self.post("/api/pin", {"on": False})["on"], False)
         req = urllib.request.Request(self.url + "/api/nothing", data=b"{}", method="POST", headers={"Content-Type": "application/json"})
