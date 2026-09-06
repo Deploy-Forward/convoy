@@ -235,7 +235,9 @@ class ATimedOutProbeIsUnknownNotExhausted(unittest.TestCase):
 
     def test_timeout_is_not_limited_and_quota_is_null(self):
         from convoy import usage
-        with mock.patch.object(usage, "_run", return_value=(124, "probe timeout")):
+        # the exec path: the rollout snapshot (usage.codex_rollout_rate_limits)
+        # answers first on a machine with codex history, so isolate it here
+        with mock.patch.object(usage, "codex_rollout_rate_limits", return_value=None),              mock.patch.object(usage, "_run", return_value=(124, "probe timeout")):
             p = usage.probe("codex")
         self.assertFalse(p["limited"])
         self.assertTrue(p["probe_timed_out"])
@@ -244,7 +246,7 @@ class ATimedOutProbeIsUnknownNotExhausted(unittest.TestCase):
 
     def test_a_real_out_of_credits_still_limits(self):
         from convoy import usage
-        with mock.patch.object(usage, "_run", return_value=(0, "Your workspace is out of credits.")):
+        with mock.patch.object(usage, "codex_rollout_rate_limits", return_value=None),              mock.patch.object(usage, "_run", return_value=(0, "Your workspace is out of credits.")):
             p = usage.probe("codex")
         self.assertTrue(p["limited"])
         self.assertEqual(p["quota"], "exhausted")
