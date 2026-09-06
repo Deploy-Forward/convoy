@@ -530,3 +530,50 @@ class Phase7BringUp(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class LiveArgvEscapesWtSeparators(unittest.TestCase):
+    def test_a_semicolon_in_a_pane_argument_is_escaped_for_wt(self):
+        from convoy import bringup
+        argv = ["wt", "--window", "new", "nt", "--title", "a;b", "-d", "C:/x", "grok.EXE", "do this; then that"]
+        with mock.patch.object(bringup, "_resolve_wt_bin", return_value="wt.exe"):
+            live = bringup._live_argv(argv)
+        self.assertEqual(live[5], "a\\;b")
+        self.assertEqual(live[-1], "do this\\; then that")
+        self.assertEqual(live[0], "wt.exe")
+        self.assertNotIn(";", "".join(live[1:]).replace("\\;", ""))
+
+    def test_relaunch_prompt_carries_no_bare_semicolon(self):
+        import inspect
+        from convoy import relaunch
+        src = inspect.getsource(relaunch.relaunch)
+        self.assertNotIn('"; ', src)
+
+
+class SeatModelRidesArgv(unittest.TestCase):
+    """Live 2026-09-06: relaunching seat luna1 (declared gpt-5.6 / high) booted
+    a codex pane reading `gpt-6-astra medium`, ~/.codex/config.toml's defaults,
+    because only grok's model reached argv. Every harness with an evidenced
+    model flag now carries the seat's model; codex effort rides -c."""
+
+    def test_codex_seat_carries_model_and_effort_before_resume(self):
+        argv = resume_argv({"to": "codex", "session_id": "luna1", "model": "gpt-5.6", "effort": "high", "resume": "vendor-uuid"})
+        self.assertEqual(argv[1:], ["-m", "gpt-5.6", "-c", "model_reasoning_effort=high", "resume", "vendor-uuid"])
+
+    def test_claude_seat_carries_model(self):
+        argv = resume_argv({"to": "claude", "session_id": "c", "model": "claude-opus-5", "effort": "high", "resume": "uuid"})
+        self.assertEqual(argv[1:], ["--model", "claude-opus-5", "--effort", "high", "--resume", "uuid"])
+
+    def test_no_model_declared_passes_no_model(self):
+        argv = resume_argv({"to": "codex", "session_id": "x", "resume": "uuid"})
+        self.assertNotIn("-m", argv)
+        self.assertNotIn("-c", argv)
+
+    def test_model_flag_is_contract_evidenced(self):
+        from convoy.harness_contract import model_flag, model_argv
+        for hid, flag in (("grok", "-m"), ("codex", "-m"), ("claude", "--model"), ("agy", "--model"), ("hermes", "-m"), ("pi", "--model")):
+            self.assertEqual(model_flag(hid)["flag"], flag, hid)
+            self.assertTrue(str(model_flag(hid)["evidence"]).strip(), hid)
+        self.assertIsNone(model_flag("cursor-agent")["flag"])
+        self.assertEqual(model_argv("cursor-agent", "anything"), [])
+        self.assertEqual(model_argv("codex", "  "), [])

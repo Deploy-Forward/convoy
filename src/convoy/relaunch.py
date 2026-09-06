@@ -97,7 +97,7 @@ def relaunch(root: Path | str, *, thread: str | None = None, runner: Runner | No
                       " and act on every row. Ack with " + convoy_root_command(root) + " seated --seat " + sid +
                       (" --token " + tok if tok else " --token <your join token>") +
                       ". Then continue the seat's work from " + str(c["worktree"]) +
-                      "; at the end of every turn start " + convoy_root_command(root) + " inbox --wait --seat " + sid +
+                      ". At the end of every turn start " + convoy_root_command(root) + " inbox --wait --seat " + sid +
                       " as a background command.")
             update_seat(root, sid, boot_prompt=prompt)
             c["boot_prompt_rearmed"] = True
@@ -113,7 +113,7 @@ def relaunch(root: Path | str, *, thread: str | None = None, runner: Runner | No
         for c in card["chairs"]:
             since = c["last_seen"] or EPOCH
             body = ("Relaunched at " + now + " after the panes died. Your last feed row was " +
-                    (c["last_seen"] or "never") + "; " + str(c["unread"]) + " inbox row(s) were waiting. "
+                    (c["last_seen"] or "never") + ". " + str(c["unread"]) + " inbox row(s) were waiting. "
                     "Run: convoy --root " + str(root) + " feed --since " + since +
                     "  then  convoy --root " + str(root) + " inbox --drain --seat " + c["session_id"] +
                     "  then ack with  convoy --root " + str(root) + " seated --seat " + c["session_id"] +

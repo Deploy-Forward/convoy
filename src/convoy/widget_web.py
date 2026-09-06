@@ -90,6 +90,11 @@ class WidgetApi:
         self._building = False
         self.sync_build = False   # tests: build inline so a GET sees the model
 
+    def invalidate(self) -> None:
+        """A write happened (archive, tune, relaunch): the next model() starts a rebuild now."""
+        with self._lock:
+            self._built_at = float("-inf")
+
     def _build(self) -> dict[str, Any]:
         from .widget import build_widget_model
         m = build_widget_model(self.roots, probe_fn=self.probe)
@@ -261,6 +266,7 @@ class WidgetApi:
         except ValueError as e:
             return {"ok": False, "error": str(e)}
         hook(r, "archive" if archived else "unarchive", ("archive " if archived else "unarchive ") + seat, instance_id=seat, author=None)
+        self.invalidate()
         return {"ok": True, "seat": seat, "archived": bool(archived), "row": row}
 
     def relaunch_seat(self, root: str, seat: str) -> dict[str, Any]:
@@ -354,6 +360,8 @@ def make_handler(api: WidgetApi):
             if p == "/widget.js":
                 return self._send(200, (PAGE / "widget.js").read_bytes(), "text/javascript; charset=utf-8")
             if p == "/api/model":
+                if "force=1" in self.path:
+                    api.invalidate()
                 return self._json(api.model())
             if p == "/api/card":
                 return self._json(api.card())
