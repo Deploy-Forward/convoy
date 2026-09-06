@@ -267,7 +267,15 @@ def _live_argv(argv: list[str]) -> list[str]:
     if first_cmd not in ("nt", "new-tab"):
         raise ValueError("first command must be nt/new-tab")
     wt = _resolve_wt_bin(parts[0])
-    return [wt, *parts[1:]]
+    # wt.exe splits ITS OWN command line on ';' (that is how nt ; split-pane
+    # chains). A boot prompt or title carrying a literal ';' therefore became
+    # a second wt command: live 2026-09-06, relaunching luna1 opened a tab
+    # reading `error 0x80070002 when launching '" at the end of every turn
+    # start convoy ...'`. WT's documented escape is `\;`. Everything after
+    # `--window new` is a pane argument; escape it there, never in the exe.
+    # A bare ";" argument IS the separator (nt ... ; split-pane ...); only a
+    # ';' inside an argument is escaped.
+    return [wt, *[a if a == ";" else a.replace(";", "\\;") for a in parts[1:]]]
 
 
 def is_conductor(to: Any) -> bool:

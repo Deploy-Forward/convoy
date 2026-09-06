@@ -530,3 +530,21 @@ class Phase7BringUp(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class LiveArgvEscapesWtSeparators(unittest.TestCase):
+    def test_a_semicolon_in_a_pane_argument_is_escaped_for_wt(self):
+        from convoy import bringup
+        argv = ["wt", "--window", "new", "nt", "--title", "a;b", "-d", "C:/x", "grok.EXE", "do this; then that"]
+        with mock.patch.object(bringup, "_resolve_wt_bin", return_value="wt.exe"):
+            live = bringup._live_argv(argv)
+        self.assertEqual(live[5], "a\\;b")
+        self.assertEqual(live[-1], "do this\\; then that")
+        self.assertEqual(live[0], "wt.exe")
+        self.assertNotIn(";", "".join(live[1:]).replace("\\;", ""))
+
+    def test_relaunch_prompt_carries_no_bare_semicolon(self):
+        import inspect
+        from convoy import relaunch
+        src = inspect.getsource(relaunch.relaunch)
+        self.assertNotIn('"; ', src)
