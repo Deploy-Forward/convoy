@@ -300,6 +300,7 @@ def _chair_row(
         "last_row": last_rows.get(sid),
         "unread": unread,
         "body_state": body_state,
+        "archived": bool(seat.get("archived")),
         "focus": "focus --seat " + sid,
         "nudge_available": chip == "stale",
         "nudge": "nudge --seat " + sid + " --dry-run",
