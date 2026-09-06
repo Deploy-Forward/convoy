@@ -1,172 +1,220 @@
-// convoy widget: renders /api/model, refreshes without flicker, POSTs actions.
-// Everything shown comes from the model; nothing is invented for looks.
+// convoy widget: one card, six zones (thread · bound · seats · act · history · usage).
+// Everything shown comes from /api/model and /api/feed; nothing is invented for looks.
+// Vendor marks: simple-icons (CC0 1.0) for claude, cursor, gemini; Convoy's own plain
+// glyphs for codex and grok (their marks are not in simple-icons; we do not trace trademarks).
 (function () {
   const $ = (id) => document.getElementById(id);
-  const state = { model: null, selected: 1, usage: "session", pinned: true, pending: null };
-  const chev = '<svg viewBox="0 0 10 10"><path d="M1.5 3.5 5 7l3.5-3.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>';
+  const state = { model: null, selected: 1, selectedSeat: null, pinned: true, usageTab: "thread", histTab: "session", feed: [], feedFor: null };
+  const chat = { seat: null, reply: "", ok: false, meta: "", draft: "", waiting: null };
+
+  const MARK = {
+    claude: '<svg viewBox="0 0 24 24"><path d="m4.7144 15.9555 4.7174-2.6471.079-.2307-.079-.1275h-.2307l-.7893-.0486-2.6956-.0729-2.3375-.0971-2.2646-.1214-.5707-.1214-.5343-.7043.0546-.3522.4797-.3218.6863.0608 1.5179.1032 2.2767.1578 1.6514.0972 2.4468.2549h.3886l.0546-.1579-.1336-.0972-.1032-.0971-2.3496-1.5908-2.5439-1.6817-1.3323-.9714-.7164-.4918-.3643-.4614-.1578-1.0078.6557-.7225.8803.0608.2246.0607.8925.6863 1.9064 1.4754 2.4893 1.8335.3643.3035.1457-.1032.0182-.0729-.1639-.2731-1.3505-2.4407-1.4451-2.4893-.6436-1.0321-.17-.6193c-.0607-.2549-.1032-.4674-.1032-.7286l.7468-1.0139.4128-.1336.9957.1336.4189.3643.6193 1.4147 1.0018 2.2282 1.5543 3.0286.4553.8985.2428.8318.0911.2549h.1579v-.1457l.1275-1.7062.2368-2.0947.2306-2.6956.079-.7589.3764-.9107.7468-.4918.5828.2792.4797.6863-.0668.4432-.2853 1.8517-.5586 2.9012-.3643 1.9429h.2124l.2428-.2428.9835-1.3052 1.6514-2.0643.7286-.8196.85-.9046.5464-.4311h1.0321l.7589 1.129-.34 1.1655-1.0625 1.3474-.8804 1.1411-1.2626 1.7-.7893 1.3596.0729.1093.1882-.0182 2.8526-.6071 1.5422-.2793 1.8396-.3156.8318.3886.0911.3946-.3278.8075-1.9672.4857-2.3072.4614-3.4357.8136-.0425.0304.0486.0607 1.5482.1457.6618.0364h1.6211l3.0165.2246.7893.5222.4735.6375-.079.4857-1.2141.6193-1.6393-.3886-3.8244-.9107-1.3112-.3279h-.1822v.1093l1.0929 1.0686 2.0035 1.8092 2.5074 2.3314.1275.5768-.3218.4553-.34-.0486-2.2039-1.6575-.85-.7468-1.9246-1.6208h-.1275v.17l.4432.6496 2.3436 3.5208.1214 1.0807-.17.3521-.6071.2125-.6679-.1214-1.3717-1.9247-1.4147-2.1676-1.1411-1.9428-.1396.0789-.6739 7.2555-.3157.3704-.7286.2793-.6071-.4614-.3218-.7468.3218-1.4753.3886-1.9247.3157-1.5301.2853-1.9004.17-.6314-.0121-.0425-.1396.0182-1.4329 1.9672-2.1797 2.9451-1.7244 1.8456-.4128.1639-.7164-.3704.0668-.6618.4006-.5889 2.386-3.0347 1.4389-1.8821.929-1.0868-.0061-.1579h-.0546l-6.3383 4.1155-1.129.1457-.4857-.4553.0608-.7468.2306-.2428 1.9064-1.3112-.0061.0061z"/></svg>',
+    codex: '<svg viewBox="0 0 24 24"><path d="M12 2.5a9.5 9.5 0 1 0 0 19 9.5 9.5 0 0 0 0-19zm0 2a7.5 7.5 0 1 1 0 15 7.5 7.5 0 0 1 0-15zm0 3.2a4.3 4.3 0 1 0 0 8.6 4.3 4.3 0 0 0 0-8.6z"/></svg>',
+    grok: '<svg viewBox="0 0 24 24"><path d="M3.2 3.2h3.4l5.4 6.9 5.4-6.9h3.4l-7.1 8.8 7.5 8.8h-3.4L12 13.9l-5.8 6.9H2.8l7.5-8.8z"/></svg>',
+    "cursor-agent": '<svg viewBox="0 0 24 24"><path d="M11.503.131 1.891 5.678a.84.84 0 0 0-.42.726v11.188c0 .3.162.575.42.724l9.609 5.55a1 1 0 0 0 .998 0l9.611-5.55a.84.84 0 0 0 .42-.726V6.404a.84.84 0 0 0-.42-.726L12.497.131a1 1 0 0 0-.994 0zm.493 1.756 8.6 4.966-8.6 4.966-8.6-4.966zm-9.1 6.7 8.6 4.966v9.93l-8.6-4.966zm18.2 0v9.93l-8.6 4.966v-9.93z"/></svg>',
+    agy: '<svg viewBox="0 0 24 24"><path d="M11.04 19.32Q12 21.51 12 24q0-2.49.93-4.68.96-2.19 2.58-3.81t3.81-2.55Q21.51 12 24 12q-2.49 0-4.68-.93-2.19-.96-3.81-2.58t-2.55-3.81Q12 2.49 12 0q0 2.49-.96 4.68-.93 2.19-2.55 3.81T4.68 11.07 0 12q2.49 0 4.68.96 2.19.93 3.81 2.55t2.55 3.81z"/></svg>',
+    hermes: '<svg viewBox="0 0 24 24"><path d="M3 12c4-8 14-8 18 0-4 8-14 8-18 0zm9-3a3 3 0 1 0 0 6 3 3 0 0 0 0-6z"/></svg>',
+    pi: '<svg viewBox="0 0 24 24"><path d="M4 6h16v2.4h-2.6V18h-2.4V8.4H9V18H6.6V8.4H4z"/></svg>',
+  };
+  const mark = (h) => `<span class="vm" title="${esc(h)}">${MARK[h] || '<svg viewBox="0 0 24 24"><rect x="5" y="5" width="14" height="14" rx="3"/></svg>'}</span>`;
 
   function esc(s) { return String(s == null ? "" : s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])); }
-  function nz(v, dash) { return v == null || v === "" ? (dash || "unknown") : v; }
-
   async function api(path, body) {
     const r = await fetch(path, body ? { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) } : {});
     return r.json();
   }
+  function thread() { const m = state.model; if (!m || !m.threads || !m.threads.length) return null; return m.threads.find((t) => t.n === state.selected) || m.threads[0]; }
+  const short = (ts) => ts ? String(ts).slice(11, 19) + "Z" : "";
 
-  function thread() {
-    const m = state.model; if (!m || !m.threads || !m.threads.length) return null;
-    return m.threads.find((t) => t.n === state.selected) || m.threads[0];
-  }
-
-  function renderDots() {
+  // ---------- zone 1: thread ----------
+  function renderHeader() {
     const m = state.model; const box = $("dots"); if (!m) return;
-    const html = (m.threads || []).map((t) => {
-      const cls = ["dot", t.n === state.selected ? "on" : "", t.stale_ring ? "stale" : ""].join(" ");
-      return `<span class="${cls}" data-n="${t.n}" title="${esc(t.thread || "")} · ${esc(t.convoy_id || "")}"><i></i>${t.n}</span>`;
-    }).join("");
+    const html = (m.threads || []).map((t) => `<span class="dot ${t.n === state.selected ? "on" : ""} ${t.stale_ring ? "stale" : ""}" data-n="${t.n}" title="${esc(t.thread || "")} · ${esc(t.convoy_id || "")}"><i></i>${esc(t.thread || t.n)}</span>`).join("");
     if (box.innerHTML !== html) box.innerHTML = html;
+    const t = thread(); $("count").textContent = t ? `${t.seated_n || 0}/${(t.chairs || []).length} seated` : "";
+    $("pin").classList.toggle("on", state.pinned);
   }
 
-  // Vendor marks: Convoy's own simple monochrome glyphs (not the vendors' trademarks).
-  const MARK = {
-    claude: '<svg viewBox="0 0 24 24"><path d="M12 3v18M3 12h18M5.6 5.6l12.8 12.8M18.4 5.6 5.6 18.4" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" fill="none"/></svg>',
-    codex: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8" fill="none" stroke="currentColor" stroke-width="2.2"/><circle cx="12" cy="12" r="3" fill="currentColor"/></svg>',
-    grok: '<svg viewBox="0 0 24 24"><path d="M4 4l16 16M20 4 4 20" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"/></svg>',
-    "cursor-agent": '<svg viewBox="0 0 24 24"><path d="M5 3l14 9-7 1-3 7z" fill="currentColor"/></svg>',
-    agy: '<svg viewBox="0 0 24 24"><path d="M12 2l2.6 7.4L22 12l-7.4 2.6L12 22l-2.6-7.4L2 12l7.4-2.6z" fill="currentColor"/></svg>',
-    hermes: '<svg viewBox="0 0 24 24"><path d="M3 12c4-8 14-8 18 0-4 8-14 8-18 0z" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="12" cy="12" r="3" fill="currentColor"/></svg>',
-    pi: '<svg viewBox="0 0 24 24"><path d="M4 7h16M8 7v11M16 7v11" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" fill="none"/></svg>',
-  };
-  const mark = (h) => MARK[h] || '<svg viewBox="0 0 24 24"><rect x="5" y="5" width="14" height="14" rx="3" fill="none" stroke="currentColor" stroke-width="2"/></svg>';
-  state.vendor = state.vendor || "overall";
-
-  function usageRows(t) {
-    const u = t.usage || {}; const names = Object.keys(u);
-    if (!names.length) return `<div class="foot">no harness attached</div>`;
-    const tab = (name, label, sub, near) => `<span class="vtab ${state.vendor === name ? "on" : ""} ${near ? "near" : ""}" data-vendor="${esc(name)}"><span class="mk">${name === "overall" ? '<svg viewBox="0 0 24 24"><path d="M4 18V9M10 18V5M16 18v-7M22 18H2" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" fill="none"/></svg>' : mark(name)}</span><span class="vn">${esc(label)}</span>${sub}</span>`;
-    const tabs = [tab("overall", "overall", `<span class="vbar"><i style="width:100%;background:transparent"></i></span>`, names.some((n) => u[n].near_limit))]
-      .concat(names.map((n) => { const r = u[n]; const pct = r.bar_session; const known = typeof pct === "number"; return tab(n, n, `<span class="vbar ${known ? "" : "unknown"}"><i style="width:${known ? pct : 100}%"></i></span>`, r.near_limit); }));
-    const barRow = (title, remaining, used, resets) => {
-      const known = typeof remaining === "number";
-      return `<div class="vsec"><div class="vhead"><span>${title}</span><span class="vright">${resets ? "resets " + esc(resets) : ""}</span></div><div class="bar big ${known ? "" : "unknown"}"><i style="width:${known ? remaining : 100}%"></i></div><div class="vfoot"><span>${known ? remaining + "% remaining" : "unknown"}</span><span>${known ? used + "% used" : ""}</span></div></div>`;
-    };
-    let body = "";
-    if (state.vendor === "overall" || !u[state.vendor]) {
-      const rows = names.map((n) => ({ n, r: u[n] })).sort((a, b) => (a.r.bar_session == null ? 101 : a.r.bar_session) - (b.r.bar_session == null ? 101 : b.r.bar_session));
-      body = `<div class="ovl">${rows.map(({ n, r }) => { const known = typeof r.bar_session === "number"; const cls = r.limited ? "limit" : (r.near_limit ? "near" : (known ? "" : "unknown")); return `<div class="orow ${cls}"><span class="mk">${mark(n)}</span><span class="on">${esc(n)}</span><div class="bar ${known ? "" : "unknown"}"><i style="width:${known ? r.bar_session : 100}%"></i></div><span class="opct">${r.limited ? "limited" : (known ? r.bar_session + "% left" : "unknown")}</span></div>`; }).join("")}</div>
-      <div class="foot">sorted by what is closest to its limit · a vendor is “near” at 80% used, by its own number</div>`;
-    } else {
-      const r = u[state.vendor];
-      body = `<div class="vtitle"><span>${esc(state.vendor)}</span><span class="vright">${r.limited ? '<span class="chip limit">limited</span>' : (r.near_limit ? '<span class="chip near">near limit</span>' : "")}</span></div>
-      ${barRow("Session", r.bar_session, r.used_session, r.resets && r.resets.session)}
-      ${barRow("Weekly", r.bar_week, r.used_week, r.resets && r.resets.week)}
-      ${(typeof r.bar_session !== "number" && r.reason) ? `<div class="foot">${esc(r.reason)}</div>` : ""}`;
-    }
-    return `<div class="vtabs">${tabs.join("")}</div>${body}`;
+  // ---------- zone 2: bound ----------
+  function zoneBound(t) {
+    const repo = t.repo || {}; const connected = repo.connected === true;
+    const flags = `--root ${t.root || "."}`;
+    return `<section class="z">
+      <div class="bound"><span class="what">Bound</span>${connected ? `<span class="chip ok">GitHub</span><span class="repo" title="${esc(repo.url)}">${esc(repo.url)}</span>` : `<span class="chip local">Local · no GitHub</span><span class="repo">${esc(t.thread || "")}</span>`}</div>
+      <details class="disc"><summary>${esc((repo.local_storage || "").replace(/^.*[\\\\/](?=[^\\\\/]+[\\\\/]\\.convoy$)/, "…/"))} · ${esc(t.convoy_id || "")} · copy flags</summary>
+        <div class="kv"><b>thread</b><span>${esc(t.thread || "")}</span><span></span>
+        <b>convoy_id</b><span>${esc(t.convoy_id || "")}</span><span class="copy" data-copy="${esc(t.convoy_id || "")}">copy</span>
+        <b>.convoy</b><span>${esc(repo.local_storage || "")}</span><span class="copy" data-copy="${esc(repo.local_storage || "")}">copy</span>
+        <b>index</b><span>${esc(repo.index_path || "")}</span><span></span>
+        <b>flags</b><span>${esc(flags)}</span><span class="copy" data-copy="${esc(flags)}">copy</span>
+        <b>lead</b><span>${esc(t.lead || "unknown")}</span><span></span></div>
+      </details></section>`;
   }
 
+  // ---------- zone 3: seats ----------
+  function bodyChip(c) {
+    const bs = c.body_state || (c.body ? "live" : "no-body");
+    if (bs === "live") { const sub = c.chip === "working" ? "working" : c.chip === "stale" ? "stale" : "idle"; const wait = c.waiting ? ` · ${c.waiting}w` : ""; return `<span class="bs live ${sub}" title="process tied to this chair by token or cwd"><i></i>live · ${sub}${wait}</span>`; }
+    if (bs === "gone") return `<span class="bs gone" title="the chair's pane was closed with consent"><i></i>gone</span>`;
+    return `<span class="bs nobody" title="no process Convoy can tie to this chair by token or cwd; a codex pane on Windows exposes neither, so it may well be alive"><i></i>no body found${c.waiting ? ` · ${c.waiting}w` : ""}</span>`;
+  }
   function chairRow(c) {
     const cls = ["row", c.lead ? "lead" : "", c.session_id === state.selectedSeat ? "sel" : ""].join(" ");
-    // model: the vendor's catalog when it has one, else a free field; effort: the harness's own keys, else n/a
     const model = c.models && c.models.length
       ? `<select class="tune" data-tune="model" data-seat="${esc(c.session_id)}">${(c.model && !c.models.includes(c.model)) ? `<option selected>${esc(c.model)}</option>` : ""}${c.models.map((m) => `<option ${m === c.model ? "selected" : ""}>${esc(m)}</option>`).join("")}</select>`
       : `<input class="tune" data-tune="model" data-seat="${esc(c.session_id)}" value="${esc(c.model || "")}" placeholder="model" title="no catalog for ${esc(c.harness || "")}: typed through as-is">`;
     const keys = c.effort_keys || [];
-    const effort = keys.length
-      ? `<select class="tune" data-tune="effort" data-seat="${esc(c.session_id)}"><option value="" ${c.effort ? "" : "selected"}>effort</option>${keys.map((k) => `<option ${k === c.effort ? "selected" : ""}>${esc(k)}</option>`).join("")}</select>${c.effort_applied === false ? `<span title="declared; this harness has no effort flag" style="color:var(--ink-3)"> ·</span>` : ""}`
-      : `<select class="tune" disabled title="no effort vocabulary for ${esc(c.harness || "")}"><option>n/a</option></select>`;
-    const chip = c.chip || (c.body === false ? "gone" : "unknown");
-    const chipLabel = { working: "working", idle: "idle", stale: "stale", gone: "no body found" }[chip] || chip;
-    const chipTitle = { working: "authored or drained a row within the idle window", idle: "a live body, nothing on the tape lately", stale: "rows waiting and nothing drained: needs a nudge", gone: "no process Convoy can tie to this chair by token or cwd (a codex pane on Windows exposes neither; the pane may be alive)" }[chip] || "";
-    const nudge = c.nudge_available ? `<span class="nudge" data-nudge="${esc(c.session_id)}">NUDGE</span>` : "";
-    const wait = c.waiting ? ` · ${c.waiting}w` : "";
+    const effort = keys.length ? `<select class="tune" data-tune="effort" data-seat="${esc(c.session_id)}"><option value="" ${c.effort ? "" : "selected"}>effort</option>${keys.map((k) => `<option ${k === c.effort ? "selected" : ""}>${esc(k)}</option>`).join("")}</select>` : `<select class="tune" disabled title="no effort vocabulary for ${esc(c.harness || "")}"><option>n/a</option></select>`;
+    const nudge = c.nudge_available ? ` <span class="nudge" data-nudge="${esc(c.session_id)}">NUDGE</span>` : "";
+    const wait = chat.waiting && chat.waiting.seat === c.session_id ? ` <span class="waiting"><i></i>waiting on ${esc(c.seat_label || c.session_id)}…</span>` : "";
     return `<tr class="${cls}" data-seat="${esc(c.session_id)}" title="${esc(c.worktree || "")}${c.branch ? " · " + esc(c.branch) : ""}">
       <td class="seat">${esc(c.lead ? "lead" : c.seat_label || c.session_id)}</td>
-      <td>${esc(c.harness || "")}</td>
+      <td><span class="hn">${mark(c.harness)}${esc(c.harness || "")}</span></td>
+      <td>${bodyChip(c)}${nudge}${wait}</td>
       <td>${model}</td>
       <td>${effort}</td>
-      <td class="chipcell"><span class="st ${esc(chip)}" title="${esc(chipTitle)}"><i></i>${esc(chipLabel)}${wait}</span> ${nudge}</td>
+      <td class="x" data-close="${esc(c.session_id)}" title="close this chair (asks for consent)">×</td>
     </tr>`;
   }
-
-  const chat = { seat: null, reply: "", ok: false, meta: "", draft: "" };
-  function actionBar(seat) {
-    if (chat.seat !== seat) { chat.seat = seat; chat.reply = ""; chat.ok = false; chat.meta = ""; }
-    return `<div class="row1"><span class="btn" id="act-ping" title="queue an identity check; the chair's own reply is the ID">ping ${esc(seat)}</span><input class="in" id="act-msg" placeholder="message ${esc(seat)} · or @g1 @luna1 … to fan out (queued; delivered only when each acks)" value="${esc(chat.draft)}"><span class="btn" id="act-send">send</span></div>${chat.reply ? `<div class="reply ${chat.ok ? "ok" : ""}">${esc(chat.reply)}</div>` : ""}${chat.meta ? `<div class="meta">${esc(chat.meta)}</div>` : ""}`;
+  function zoneSeats(t) {
+    return `<section class="z">
+      <div class="eyebrow"><span>Seats</span><span class="right">${t.seated_n || 0} seated · ${(t.seats && t.seats.stale) || 0} stale</span></div>
+      <table><colgroup><col style="width:27%"><col style="width:15%"><col style="width:24%"><col style="width:16%"><col style="width:13%"><col style="width:5%"></colgroup>
+      <thead><tr><th>seat</th><th>harness</th><th>body</th><th>model</th><th>effort</th><th></th></tr></thead>
+      <tbody>${(t.chairs || []).map(chairRow).join("")}</tbody></table>
+      <div class="legend"><span class="bs live"><i></i>live</span><span class="bs nobody"><i></i>no body found</span><span class="bs gone"><i></i>gone</span></div>
+    </section>`;
   }
+
+  // ---------- zone 4: act ----------
+  function zoneAct(t) {
+    const chairs = t.chairs || []; const seat = state.selectedSeat || (chairs.length === 1 ? chairs[0].session_id : null);
+    if (!seat) return `<section class="z"><div class="eyebrow"><span>Act</span><span class="right">select a seat</span></div><div class="meta">click a seat row: ping asks it to identify itself on the feed; message queues text into its inbox; @g1 @luna1 … fans out</div></section>`;
+    if (chat.seat !== seat) { chat.seat = seat; chat.reply = ""; chat.ok = false; chat.meta = ""; }
+    const draft = chat.draft || ("@" + seat + " ");
+    return `<section class="z">
+      <div class="eyebrow"><span>Act</span><span class="right">${esc(seat)}</span></div>
+      <div class="act"><span class="btn" id="act-ping">ping</span><input class="in" id="act-msg" value="${esc(draft)}"><span class="btn primary" id="act-send">send</span></div>
+      ${chat.reply ? `<div class="reply ${chat.ok ? "ok" : ""}">${esc(chat.reply)}</div>` : ""}${chat.meta ? `<div class="meta">${esc(chat.meta)}</div>` : ""}
+    </section>`;
+  }
+
+  // ---------- zone 5: history ----------
+  function zoneHistory(t) {
+    const rows = state.feed || []; const latest = rows[0];
+    const line = latest ? `<div class="line"><span class="t">${short(latest.ts)}</span> <b>${esc(latest.who || latest.kind)}</b> ${esc(latest.summary || "")}</div>` : `<div class="line">no rows in this window</div>`;
+    const sheet = state.histOpen ? `<div class="sheet">${rows.slice(0, 40).map((r) => `<div class="line"><span class="t">${short(r.ts)}</span> <b>${esc(r.who || r.kind)}</b>${r.to ? " → " + esc(r.to) : ""} ${esc(r.summary || "")}${r.delivery ? " · " + esc(r.delivery) : ""}</div>`).join("") || `<div class="line">nothing</div>`}</div>` : "";
+    return `<section class="z hist">
+      <div class="eyebrow"><span>History</span><span class="seg nodrag"><span class="${state.histTab === "session" ? "on" : ""}" data-hist="session">session</span><span class="${state.histTab === "week" ? "on" : ""}" data-hist="week">week</span></span></div>
+      <div id="hist-toggle" style="cursor:pointer">${line}</div>${sheet}
+    </section>`;
+  }
+
+  // ---------- zone 6: usage ----------
+  function meter(title, remaining, used, resets, extra) {
+    const known = typeof remaining === "number";
+    const limit = known && remaining <= 0;
+    return `<div class="bar ${extra.probing ? "probing" : known ? (limit ? "limit" : "") : "unknown"}"><i style="width:${known ? Math.max(remaining, 2) : 100}%"></i></div>
+      <div class="lab">${extra.probing ? "probing…" : known ? `<b>${remaining}% left</b>` : "unknown"} · ${title}${resets ? " · reset " + esc(resets) : ""}${limit ? ' <span class="chip limit">limited</span>' : ""}${extra.stale ? ` <span class="stale">· ${esc(extra.stale)}</span>` : ""}</div>`;
+  }
+  function vendorRow(name, r, seated) {
+    if (!r) return "";
+    const stale = r.source === "codex rollout snapshot" && r.reason ? r.reason.replace("from codex's last session rollout, ", "snapshot ") : "";
+    const noMeter = name === "grok" || (r.reason || "").includes("no meter") || (r.reason || "").includes("only inside its own TUI");
+    const body = noMeter && typeof r.bar_session !== "number"
+      ? `<div class="nometer">${esc(r.reason || "no meter on disk or CLI")}</div>`
+      : `<div class="meter">${meter("session", r.bar_session, r.used_session, r.resets && r.resets.session, { probing: r.probing, stale })}${meter("week", r.bar_week, r.used_week, r.resets && r.resets.week, { probing: r.probing, stale })}</div>`;
+    return `<div class="vrow ${seated ? "seated" : ""}">${mark(name)}<span class="name">${esc(name)}${r.limited ? ' <span class="chip limit">limited</span>' : (r.near_limit ? ' <span class="chip near">near</span>' : "")}</span>${body}</div>`;
+  }
+  function zoneUsage(t) {
+    const u = t.usage || {}; const seated = new Set((t.chairs || []).map((c) => c.harness));
+    const rank = (n) => u[n].limited ? -1 : (typeof u[n].bar_session === "number" ? u[n].bar_session : 999);
+    const all = Object.keys(u).sort((a, b) => rank(a) - rank(b));
+    const mine = all.filter((n) => seated.has(n));
+    let body;
+    if (state.usageTab === "thread") {
+      const withMeter = mine.filter((n) => typeof u[n].bar_session === "number" || u[n].probing);
+      body = mine.length ? mine.map((n) => vendorRow(n, u[n], true)).join("") : `<div class="empty">no seated harness on this thread</div>`;
+      if (mine.length && !withMeter.length) body += `<div class="empty">No usage for this thread's seats<span class="btn" data-usage-tab="overall">see overall</span></div>`;
+    } else {
+      body = all.length ? all.map((n) => vendorRow(n, u[n], seated.has(n))).join("") : `<div class="empty">no vendor meter Convoy can read</div>`;
+    }
+    return `<section class="z">
+      <div class="eyebrow"><span>Usage</span><span class="utabs nodrag"><span class="${state.usageTab === "thread" ? "on" : ""}" data-usage-tab="thread">thread</span><span class="${state.usageTab === "overall" ? "on" : ""}" data-usage-tab="overall">overall</span></span></div>
+      ${body}
+    </section>`;
+  }
+
+  // ---------- render ----------
+  function render() {
+    const m = state.model; const main = $("main");
+    if (!m || !m.ok) { main.innerHTML = `<div class="empty">${esc((m && m.error) || "no model")}</div>`; return; }
+    if (m.loading) return;
+    renderHeader();
+    const t = thread();
+    if (!t) { main.innerHTML = `<div class="empty">no thread on this machine yet · press + to start one</div>`; return; }
+    const html = zoneBound(t) + zoneSeats(t) + zoneAct(t) + zoneHistory(t) + zoneUsage(t);
+    if (main.innerHTML !== html) {
+      const focused = document.activeElement && document.activeElement.id === "act-msg" ? { pos: document.activeElement.selectionStart } : null;
+      main.innerHTML = html;
+      if (focused && $("act-msg")) { const el = $("act-msg"); el.focus(); try { el.setSelectionRange(focused.pos, focused.pos); } catch (e) {} }
+    }
+    $("clock").textContent = short(m.now);
+    const ls = t.last_stamp || m.last_stamp; if (!chat.waiting) $("status").textContent = ls && ls.summary ? "stamp · " + ls.summary : "";
+  }
+  async function refresh() {
+    try { state.model = await api("/api/model"); } catch (e) { state.model = { ok: false, error: "widget server unreachable" }; }
+    const t = thread();
+    if (t && !(state.model && state.model.loading)) {
+      const since = state.histTab === "week" ? "7d" : "6h";
+      try { const f = await api("/api/feed", { root: t.root, since, limit: 40 }); state.feed = f.rows || []; } catch (e) { state.feed = []; }
+    }
+    render();
+  }
+
+  // ---------- actions ----------
   let watching = null;
   async function watchReply(seat, since, pingId, started) {
     const t = thread(); if (!t) return;
     const r = await api("/api/replies", { root: t.root, seat, since, ping_id: pingId || null });
-    if (r.answered) { const last = r.rows[r.rows.length - 1]; chat.reply = (pingId ? "identified · " : "replied · ") + last.summary; chat.ok = true; chat.meta = "own row at " + last.ts; watching = null; render(); return; }
+    if (r.answered) { const last = r.rows[r.rows.length - 1]; chat.reply = (pingId ? "identified · " : "replied · ") + last.summary; chat.ok = true; chat.meta = "own row at " + last.ts; chat.waiting = null; watching = null; render(); return; }
     const waited = Math.round((Date.now() - started) / 1000);
-    chat.meta = (pingId ? "queued; waiting for " + seat + "'s own feed row citing " + pingId : "queued; waiting for a reply row") + " · " + waited + " s"; render();
-    if (waited < 180) watching = setTimeout(() => watchReply(seat, since, pingId, started), 3000); else { chat.meta += " · no reply in 3 min: the pane is idle or gone (nudge or relaunch)"; watching = null; render(); }
+    chat.meta = (pingId ? "queued; waiting for its own feed row citing " + pingId : "queued; waiting for a reply row") + " · " + waited + " s"; chat.waiting = { seat }; render();
+    if (waited < 180) watching = setTimeout(() => watchReply(seat, since, pingId, started), 3000); else { chat.meta += " · no reply in 3 min: idle or no body (nudge or relaunch)"; chat.waiting = null; watching = null; render(); }
   }
   async function act(kind) {
-    const seat = state.selectedSeat; const t = thread(); if (!seat || !t) return;
-    const bodyText = kind === "ping" ? "ping" : ($("act-msg") ? $("act-msg").value : "");
-    if (kind !== "ping" && !bodyText.trim()) { chat.reply = "type a message first"; chat.ok = false; render(); return; }
-    const mentions = kind === "ping" ? [] : [...bodyText.matchAll(/(^|\s)@([\w.-]+)/g)].map((m) => m[2]);
+    const t = thread(); if (!t) return;
+    const seat = state.selectedSeat || ((t.chairs || []).length === 1 ? t.chairs[0].session_id : null); if (!seat) return;
+    const raw = kind === "ping" ? "" : ($("act-msg") ? $("act-msg").value : "");
+    const mentions = [...raw.matchAll(/(^|\s)@([\w.-]+)/g)].map((m) => m[2]);
     const chairs = (t.chairs || []).map((c) => c.session_id);
-    const targets = mentions.length ? mentions.map((m) => chairs.find((c) => c === m || c.startsWith(m + "-") || c.split("-")[0] === m) || m) : [seat];
-    const text = mentions.length ? bodyText.replace(/(^|\s)@[\w.-]+/g, "$1").trim() : bodyText;
-    if (mentions.length && !text) { chat.reply = "say something after the @mentions"; chat.ok = false; render(); return; }
-    let r = null; const lines = [];
+    const targets = kind === "ping" ? [seat] : (mentions.length ? mentions.map((m) => chairs.find((c) => c === m || c.startsWith(m + "-") || c.split("-")[0] === m) || m) : [seat]);
+    const text = kind === "ping" ? "ping" : raw.replace(/(^|\s)@[\w.-]+/g, "$1").trim();
+    if (kind !== "ping" && !text) { chat.reply = "say something after the @mentions"; chat.ok = false; render(); return; }
+    const lines = []; let first = null;
     for (const tgt of targets) {
       const one = await api("/api/send", { root: t.root, seat: tgt, body: text, label: kind === "ping" ? "ping" : "widget" });
-      lines.push(tgt + ": " + (one.ok ? (one.delivery || "queued") : "refused · " + (one.error || ""))); if (!r || !r.ok) r = one;
+      lines.push(tgt + ": " + (one.ok ? (one.delivery || "queued") : "refused · " + (one.error || ""))); if (!first) first = one;
     }
-    if (targets.length > 1) { chat.reply = lines.join("\n"); chat.ok = false; chat.meta = "delivered: false for each until that chair's own row"; chat.draft = ""; render(); return; }
-    if (!r.ok) { chat.reply = "refused: " + (r.error || JSON.stringify(r)); chat.ok = false; chat.meta = ""; render(); return; }
-    chat.draft = ""; chat.ok = false; chat.reply = (kind === "ping" ? "ping " + r.ping_id : "message") + " " + (r.delivery || "queued") + " · delivered: false until " + seat + " acks";
-    const since = r.ts || new Date().toISOString().replace("Z", "000Z");
+    chat.draft = "@" + seat + " ";
+    if (targets.length > 1) { chat.reply = lines.join("\n"); chat.ok = false; chat.meta = "delivered: false for each until that chair's own row"; render(); return; }
+    if (!first.ok) { chat.reply = "refused: " + (first.error || ""); chat.ok = false; chat.meta = ""; render(); return; }
+    chat.ok = false; chat.reply = (kind === "ping" ? "ping " + first.ping_id : "message") + " " + (first.delivery || "queued") + " · delivered: false until " + targets[0] + " acks";
+    chat.waiting = { seat: targets[0] };
     if (watching) clearTimeout(watching);
-    render(); watchReply(seat, since, r.ping_id || null, Date.now());
+    render(); watchReply(targets[0], first.ts || new Date().toISOString().replace("Z", "000Z"), first.ping_id || null, Date.now());
   }
-  document.addEventListener("input", (e) => { if (e.target.id === "act-msg") chat.draft = e.target.value; });
-  document.addEventListener("keydown", (e) => { if (e.target.id === "act-msg" && e.key === "Enter") act("send"); });
-
-  function render() {
-    const m = state.model; const main = $("main");
-    if (!m || !m.ok) { main.innerHTML = `<div class="empty">${esc((m && m.error) || "no model")}</div>`; return; }
-    if (m.loading) { return; }
-    renderDots();
-    const t = thread();
-    if (!t) { main.innerHTML = `<div class="empty">no thread on this machine yet · press + to start one</div>`; return; }
-    const repo = t.repo || {};
-    const connected = repo.connected === true;
-    const html = `
-    <section class="card repo">
-      <div class="eyebrow"><span>Repo</span><span class="chip ${connected ? "ok" : "local"}">${connected ? "connected" : "local"}</span></div>
-      ${connected && repo.url ? `<div class="url">${esc(repo.url)}</div>` : `<div class="url" style="color:var(--ink-2)">no remote recorded</div>`}
-      <div class="eyebrow" style="margin-top:12px"><span>Local storage · thread</span></div>
-      <div class="path">${esc(nz(repo.local_storage, ""))}</div>
-      <div class="meta">${esc(nz(repo.index_path, ""))}</div>
-      <div class="meta">convoy_id <b>${esc(nz(t.convoy_id))}</b> · bound to thread <b>${esc(nz(t.thread))}</b>${t.lead ? ` · lead <b>${esc(t.lead)}</b>` : ""}</div>
-    </section>
-    <section class="card">
-      <div class="eyebrow"><span>Usage remaining</span><span class="right">${Object.values(t.usage || {}).filter((r) => r.near_limit || r.limited).length ? Object.values(t.usage || {}).filter((r) => r.near_limit || r.limited).length + " near limit" : "by vendor"}</span></div>
-      ${usageRows(t)}
-
-    </section>
-    <section class="card">
-      <div class="eyebrow"><span>Harnesses · neurons in thread</span><span class="right">${t.seated_n || 0} seated · ${(t.seats && t.seats.stale) || 0} stale</span></div>
-      <table><colgroup><col style="width:30%"><col style="width:11%"><col style="width:18%"><col style="width:17%"><col style="width:24%"></colgroup>
-      <thead><tr><th>seat</th><th>harness</th><th>model</th><th>effort</th><th>chip</th></tr></thead>
-      <tbody>${(t.chairs || []).map(chairRow).join("")}</tbody></table>
-      <div class="actions ${state.selectedSeat ? "show" : ""}" id="actions">${state.selectedSeat ? actionBar(state.selectedSeat) : ""}</div>
-      ${m.footer ? `<div class="foot">${esc(m.footer)}</div>` : ""}
-    </section>`;
-    if (main.innerHTML !== html) main.innerHTML = html;
-    const ls = t.last_stamp || m.last_stamp; if (!state.selectedSeat) $("status").textContent = ls && ls.summary ? "last stamp · " + ls.summary : "";
-    $("clock").textContent = (m.now || "").slice(11, 19) + "Z";
-    $("pin").classList.toggle("on", state.pinned);
+  async function nudgeDry(seat) {
+    const t = thread(); const r = await api("/api/nudge", { root: t.root, seat, dry_run: true });
+    state.pending = { seat, root: t.root };
+    const c = $("confirm");
+    c.innerHTML = `<div>nudge <b>${esc(seat)}</b> · ${esc(r.ok ? (r.adapter || r.transport || "") : (r.error || "refused"))}</div><div class="cmd">${esc(r.text || r.error || JSON.stringify(r))}</div><div class="btns"><span id="nudge-cancel">cancel</span>${r.ok ? '<span class="go" id="nudge-go">type it</span>' : ""}</div>`;
+    c.classList.add("show");
   }
-
-  async function refresh() {
-    try { state.model = await api("/api/model"); } catch (e) { state.model = { ok: false, error: "widget server unreachable" }; }
-    render();
+  async function closeChair(seat) {
+    const t = thread(); const c = $("confirm");
+    c.innerHTML = `<div>close chair <b>${esc(seat)}</b>: this asks the pane host to close its pane, with consent</div><div class="cmd">convoy --root ${esc(t.root)} close --seat ${esc(seat)}</div><div class="btns"><span id="nudge-cancel">cancel</span></div>`;
+    c.classList.add("show");
   }
 
   document.addEventListener("change", async (e) => {
@@ -177,18 +225,26 @@
     $("status").textContent = r.ok ? `${el.dataset.seat}: ${el.dataset.tune} = ${el.value || "unset"} (seat rewritten; a live pane picks it up on its next launch)` : ("refused: " + (r.error || JSON.stringify(r)));
     setTimeout(refresh, 300);
   });
+  document.addEventListener("input", (e) => { if (e.target.id === "act-msg") chat.draft = e.target.value; });
+  document.addEventListener("keydown", (e) => { if (e.target.id === "act-msg" && e.key === "Enter") act("send"); });
   document.addEventListener("click", async (e) => {
     if (e.target.id === "act-ping") { await act("ping"); return; }
     if (e.target.id === "act-send") { await act("send"); return; }
-    if (e.target.closest(".actions") || e.target.closest(".tune") || e.target.closest("select") || e.target.closest("input")) return;
-    const dot = e.target.closest(".dot"); if (dot) { state.selected = +dot.dataset.n; render(); return; }
-    const vt = e.target.closest("[data-vendor]"); if (vt) { state.vendor = vt.dataset.vendor; render(); return; }
+    if (e.target.id === "nudge-cancel") { $("confirm").classList.remove("show"); state.pending = null; return; }
+    if (e.target.id === "nudge-go" && state.pending) { const r = await api("/api/nudge", { ...state.pending, dry_run: false }); $("confirm").innerHTML = `<div>${esc(r.delivery || r.error || "")}${r.nudge_id ? " · " + esc(r.nudge_id) : ""} · delivered only when ${esc(state.pending.seat)} writes its own row</div><div class="btns"><span id="nudge-cancel">close</span></div>`; return; }
+    const cp = e.target.closest("[data-copy]"); if (cp) { try { await navigator.clipboard.writeText(cp.dataset.copy); cp.textContent = "copied"; setTimeout(() => (cp.textContent = "copy"), 1200); } catch (x) { $("status").textContent = "clipboard unavailable"; } return; }
+    const ut = e.target.closest("[data-usage-tab]"); if (ut) { state.usageTab = ut.dataset.usageTab; render(); return; }
+    const ht = e.target.closest("[data-hist]"); if (ht) { state.histTab = ht.dataset.hist; await refresh(); return; }
+    if (e.target.closest("#hist-toggle")) { state.histOpen = !state.histOpen; render(); return; }
+    const dot = e.target.closest(".dot"); if (dot) { state.selected = +dot.dataset.n; state.selectedSeat = null; chat.draft = ""; await refresh(); return; }
     const nd = e.target.closest("[data-nudge]"); if (nd) { e.stopPropagation(); await nudgeDry(nd.dataset.nudge); return; }
+    const cx = e.target.closest("[data-close]"); if (cx) { e.stopPropagation(); await closeChair(cx.dataset.close); return; }
+    if (e.target.closest("details.disc") || e.target.closest(".act") || e.target.closest("select") || e.target.closest("input")) return;
     const row = e.target.closest("tr.row"); if (row) {
-      state.selectedSeat = state.selectedSeat === row.dataset.seat ? null : row.dataset.seat; render();
+      state.selectedSeat = state.selectedSeat === row.dataset.seat ? null : row.dataset.seat; chat.draft = state.selectedSeat ? "@" + state.selectedSeat + " " : ""; render();
       if (!state.selectedSeat) { $("status").textContent = ""; return; }
       const t = thread(); const r = await api("/api/focus", { root: t.root, seat: row.dataset.seat });
-      $("status").textContent = r.focused ? "focused pane of " + row.dataset.seat : (row.dataset.seat + " selected · pane focus: " + (r.reason || r.error || "not available on this host"));
+      $("status").textContent = r.focused ? "raised the pane of " + row.dataset.seat : (row.dataset.seat + " selected · pane focus: " + (r.reason || (r.identify && r.identify.reason) || "not available on this host"));
       return; }
     if (e.target.closest("#pin")) { state.pinned = !state.pinned; const r = await api("/api/pin", { on: state.pinned }); state.pinned = !!r.on; render(); return; }
     if (e.target.closest("#plus")) { await openStart(); return; }
@@ -197,34 +253,18 @@
     const pick = e.target.closest("[data-pick]"); if (pick) { $("s-repo").value = pick.dataset.pick; if (pick.dataset.thread) $("s-thread").value = pick.dataset.thread; return; }
     if (e.target.id === "s-add") { addSeatRow(); return; }
     const rm = e.target.closest("[data-rm]"); if (rm) { rm.closest(".seat-row").remove(); return; }
+    const g = e.target.closest("[data-gh]"); if (g) { g.parentElement.querySelectorAll("span").forEach((x) => x.classList.remove("on")); g.classList.add("on"); return; }
     if (e.target.closest("#tag")) { e.preventDefault(); await api("/api/open", { url: "https://convoy.bot" }); return; }
   });
 
-  async function nudgeDry(seat) {
-    const t = thread(); const r = await api("/api/nudge", { root: t.root, seat, dry_run: true });
-    state.pending = { seat, root: t.root };
-    const c = $("confirm");
-    c.innerHTML = `<div>nudge <b>${esc(seat)}</b> · ${esc(r.ok ? (r.adapter || r.transport || "") : (r.error || "refused"))}</div><div class="cmd">${esc(r.text || r.error || JSON.stringify(r))}</div><div class="btns"><span id="nudge-cancel">cancel</span>${r.ok ? '<span class="go" id="nudge-go">type it</span>' : ""}</div>`;
-    c.classList.add("show");
-  }
-  document.addEventListener("click", async (e) => {
-    if (e.target.id === "nudge-cancel") { $("confirm").classList.remove("show"); state.pending = null; }
-    if (e.target.id === "nudge-go" && state.pending) {
-      const r = await api("/api/nudge", { ...state.pending, dry_run: false });
-      $("confirm").innerHTML = `<div>${esc(r.delivery || r.error || "")}${r.nudge_id ? " · " + esc(r.nudge_id) : ""} · delivered only when ${esc(state.pending.seat)} writes its own row</div><div class="btns"><span id="nudge-cancel">close</span></div>`;
-    }
-  });
-
-  // ---- the "+" flow: GitHub? -> repo -> harnesses -> N seats -> launch (original spec)
+  // ---------- the "+" flow: GitHub? -> repo -> harnesses -> N seats -> launch (original spec) ----------
   let cardCache = null;
   async function openStart() {
     const box = $("start"); box.classList.add("show");
     box.innerHTML = `<div class="eyebrow"><span>New thread</span><span class="right">reading the card…</span></div>`;
     cardCache = await api("/api/card", {});
-    const rows = (cardCache.rows || []);
-    const recent = (cardCache.recent || []);
-    const installed = rows.filter((r) => r.installed);
-    const harnessOpts = rows.map((r) => `<label class="hx ${r.installed ? "" : "off"}" title="${esc(r.install && r.install.page ? r.install.page : "")}"><input type="checkbox" value="${esc(r.harness)}" ${r.installed ? "" : "disabled"}> ${esc(r.harness)} <small>${r.installed ? (r.where || []).join("/") : "not installed"}</small></label>`).join("");
+    const rows = (cardCache.rows || []); const recent = (cardCache.recent || []); const installed = rows.filter((r) => r.installed);
+    const harnessOpts = rows.map((r) => `<label class="hx ${r.installed ? "" : "off"}" title="${esc(r.install && r.install.page ? r.install.page : "")}"><input type="checkbox" value="${esc(r.harness)}" ${r.installed ? "" : "disabled"}> ${mark(r.harness)}${esc(r.harness)} <small>${r.installed ? (r.where || []).join("/") : "not installed"}</small></label>`).join("");
     box.innerHTML = `
       <div class="eyebrow"><span>New thread</span><span class="right">${installed.length} harness${installed.length === 1 ? "" : "es"} installed</span></div>
       <div class="frow"><span class="lbl">GitHub?</span><span class="seg" id="s-gh"><span class="on" data-gh="yes">yes</span><span data-gh="no">no</span></span></div>
@@ -235,7 +275,7 @@
       <div class="frow"><span class="lbl">neurons</span><div id="s-seats" class="seats"></div></div>
       <div class="frow"><span class="lbl"></span><span class="pick" id="s-add">+ seat</span></div>
       <div class="btns"><span id="start-cancel">cancel</span><span class="go" id="start-go">launch</span></div>
-      <div class="foot" id="s-out"></div>`;
+      <div class="meta" id="s-out"></div>`;
     addSeatRow();
   }
   function seatRowHtml() {
@@ -255,7 +295,6 @@
     const title = () => { const h = row.querySelector(".sel-h").value; const taken = new Set(((thread() || {}).chairs || []).map((c) => c.seat_label || c.session_id)); let n = 1; while (taken.has(h + "-" + n) || [...document.querySelectorAll("#s-seats .sel-t")].some((i) => i !== row.querySelector(".sel-t") && i.value === h + "-" + n)) n++; row.querySelector(".sel-t").value = h + "-" + n; };
     row.querySelector(".sel-h").addEventListener("change", () => { sync(); title(); }); sync(); title();
   }
-  document.addEventListener("click", (e) => { const g = e.target.closest("[data-gh]"); if (g) { g.parentElement.querySelectorAll("span").forEach((x) => x.classList.remove("on")); g.classList.add("on"); } });
   async function submitStart() {
     const gh = $("s-gh").querySelector(".on").dataset.gh === "yes";
     const seats = [...document.querySelectorAll("#s-seats .seat-row")].map((r) => ({ harness: r.querySelector(".sel-h").value, title: r.querySelector(".sel-t").value || null, model: r.querySelector(".sel-m").value || null, effort: r.querySelector(".sel-e").value || null, where: r.querySelector(".sel-w").value || "local" }));
