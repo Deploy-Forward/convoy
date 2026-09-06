@@ -62,7 +62,7 @@ def _usage_display(surfaced: dict[str, Any]) -> str:
         return "unknown"
     pct = surfaced.get("session_pct")
     if isinstance(pct, int):
-        return str(pct) + "%"
+        return str(max(0, min(100, 100 - pct))) + "%"   # remaining, not used
     if isinstance(remaining, (int, float)) and remaining != 0:
         return str(remaining)
     if remaining == 0:
@@ -85,8 +85,15 @@ def _pct_or_none(value: Any) -> int | None:
 
 
 def _usage_block(harness: str, surfaced: dict[str, Any]) -> dict[str, Any]:
-    session = _pct_or_none(surfaced.get("session_pct"))
-    week = _pct_or_none(surfaced.get("week_pct"))
+    # The vendor reports percent USED ("Current session: 64%"); this card is
+    # USAGE REMAINING, so the bar and the label are 100 - used (Marco
+    # 2026-09-05: "we have 36% left, currently showing 64%").
+    used_session = _pct_or_none(surfaced.get("session_pct"))
+    used_week = _pct_or_none(surfaced.get("week_pct"))
+    session = (100 - used_session) if used_session is not None else None
+    week = (100 - used_week) if used_week is not None else None
+    session = max(0, min(100, session)) if session is not None else None
+    week = max(0, min(100, week)) if week is not None else None
     footnote = None
     if str(harness).strip().lower() == "grok":
         raw = surfaced.get("raw")
@@ -94,8 +101,32 @@ def _usage_block(harness: str, surfaced: dict[str, Any]) -> dict[str, Any]:
             footnote = raw.strip().splitlines()[0][:160]
         else:
             footnote = "grok reports no meter"
+    # why a bar is unknown, in the vendor's own terms: never a bare "unknown"
+    # when the probe told us more (Marco 2026-09-05: "if we can see threads
+    # we can see usage").
+    reason = None
+    if surfaced.get("probing"):
+        reason = "probing the vendor…"
+    elif str(harness).strip().lower() == "grok":
+        reason = "grok exposes no usage meter"
+    elif surfaced.get("probe_timed_out"):
+        reason = "vendor probe timed out; retrying every minute"
+    elif surfaced.get("error"):
+        reason = "probe failed: " + str(surfaced.get("error"))
+    elif surfaced.get("usage_remaining") is None and surfaced.get("session_pct") is None:
+        reason = "the vendor shows usage only inside its own TUI (/status); no headless number"
+    elif surfaced.get("source") == "codex rollout snapshot":
+        age = int(surfaced.get("age_s") or 0)
+        reason = "from codex's last session rollout, " + (str(age // 3600) + " h" if age >= 3600 else str(age // 60) + " min") + " old"
     return {
         **surfaced,
+        "reason": reason,
+        "used_session": used_session,
+        "used_week": used_week,
+        "resets": surfaced.get("resets") or {"session": None, "week": None},
+        # approaching a limit: the vendor's own number says >= 80% used
+        "near_limit": bool((used_session is not None and used_session >= 80) or (used_week is not None and used_week >= 80)),
+        "limited": bool(surfaced.get("limited")),
         "display": _usage_display(surfaced),
         "display_session": (str(session) + "%") if session is not None else "unknown",
         "display_week": (str(week) + "%") if week is not None else "unknown",

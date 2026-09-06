@@ -250,6 +250,49 @@ except Exception:
 
 
 @unittest.skipUnless(_HAS_TK, "tkinter missing")
+class UsageIsRemainingNotUsed(unittest.TestCase):
+    def test_vendor_used_percent_renders_as_remaining(self):
+        from convoy.widget import _usage_block
+        b = _usage_block("claude", {"usage_remaining": {"session_pct": 64}, "limited": False, "session_pct": 64, "week_pct": 20})
+        self.assertEqual(b["used_session"], 64); self.assertEqual(b["bar_session"], 36); self.assertEqual(b["display_session"], "36%")
+        self.assertEqual(b["bar_week"], 80); self.assertEqual(b["display_week"], "80%"); self.assertEqual(b["display"], "36%")
+        u = _usage_block("codex", {"usage_remaining": None, "limited": False, "probe_timed_out": True})
+        self.assertIsNone(u["bar_session"]); self.assertEqual(u["display_session"], "unknown"); self.assertIn("timed out", u["reason"])
+
+
+class VendorTabsData(unittest.TestCase):
+    def test_resets_and_near_limit_come_from_the_vendor_text(self):
+        from convoy.usage import parse_resets, surface
+        from convoy.widget import _usage_block
+        raw = "Current session: 82% used (Resets in 3h 53m)\nCurrent week (all models): 3% used (Resets in 3d 20h)\n"
+        r = parse_resets(raw)
+        self.assertEqual(r, {"session": "in 3h 53m", "week": "in 3d 20h"})
+        s = surface("claude", {"usage_remaining": {"session_pct": 82, "week_pct": 3}, "limited": False, "raw": raw})
+        b = _usage_block("claude", s)
+        self.assertEqual(b["used_session"], 82); self.assertEqual(b["bar_session"], 18); self.assertTrue(b["near_limit"])
+        self.assertEqual(b["resets"]["session"], "in 3h 53m"); self.assertEqual(b["resets"]["week"], "in 3d 20h")
+        self.assertEqual(parse_resets("no reset info here"), {"session": None, "week": None})
+        c = _usage_block("codex", surface("codex", {"usage_remaining": None, "limited": False, "raw": None, "probe_timed_out": True}))
+        self.assertFalse(c["near_limit"]); self.assertEqual(c["resets"], {"session": None, "week": None}); self.assertIn("timed out", c["reason"])
+
+
+class CodexRolloutSnapshot(unittest.TestCase):
+    def test_newest_rollout_rate_limits_become_session_and_week(self):
+        import json as _j, os as _o, tempfile, time
+        from convoy.usage import codex_rollout_rate_limits, surface
+        from convoy.widget import _usage_block
+        home = Path(tempfile.mkdtemp()); d = home / "sessions" / "2026" / "09" / "05"; d.mkdir(parents=True)
+        old = d / "rollout-old.jsonl"; old.write_text(_j.dumps({"timestamp": "2026-09-05T01:00:00Z", "payload": {"rate_limits": {"primary": {"used_percent": 10, "window_minutes": 300, "resets_at": 1788669963}, "secondary": {"used_percent": 5, "window_minutes": 10080, "resets_at": 1789199219}}}}) + "\n", encoding="utf-8")
+        new = d / "rollout-new.jsonl"; new.write_text("garbage\n" + _j.dumps({"timestamp": "2026-09-05T02:00:00Z", "payload": {"rate_limits": {"primary": {"used_percent": 99.0, "window_minutes": 300, "resets_at": 1788669963}, "secondary": {"used_percent": 31.0, "window_minutes": 10080, "resets_at": 1789199219}}}}) + "\n", encoding="utf-8")
+        _o.utime(old, (1000, 1000)); _o.utime(new, (2000, 2000))
+        snap = codex_rollout_rate_limits(home, now=2000 + 7200)
+        self.assertEqual(snap["session_pct"], 99); self.assertEqual(snap["week_pct"], 31); self.assertEqual(snap["age_s"], 7200)
+        self.assertEqual(snap["source"], "codex rollout snapshot"); self.assertTrue(snap["resets"]["session"].startswith("at 2026-"))
+        b = _usage_block("codex", surface("codex", snap))
+        self.assertEqual(b["bar_session"], 1); self.assertEqual(b["bar_week"], 69); self.assertTrue(b["near_limit"]); self.assertIn("2 h old", b["reason"])
+        self.assertIsNone(codex_rollout_rate_limits(Path(tempfile.mkdtemp())))
+
+
 class WidgetWindow(unittest.TestCase):
     def test_builds_without_mainloop(self):
         # Tk must not live in this interpreter: destroy() + later GC on a
