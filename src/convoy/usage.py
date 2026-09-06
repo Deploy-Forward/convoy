@@ -132,6 +132,28 @@ def _parse_claude_progress(data: Any, text: str) -> tuple[int | None, int | None
     return session_pct, week_pct
 
 
+_RESET = re.compile(r"(?:Current session|Current week[^:\n]*)?:?[^\n]*?\bResets?\s+(in|at)\s+([^\n)]+?)\s*\)?\s*$", re.I | re.M)
+
+
+def parse_resets(text: str) -> dict[str, str | None]:
+    """{'session': 'in 3h 53m', 'week': 'in 3d 20h'} from the vendor's own
+    lines, verbatim; None when the text does not say. Never computed."""
+    out: dict[str, str | None] = {"session": None, "week": None}
+    for line in (text or "").splitlines():
+        m = re.search(r"\bResets?\s+((?:in|at)\s+[^)\n]+)", line, re.I)
+        if not m:
+            continue
+        when = m.group(1).strip()
+        low = line.lower()
+        if "week" in low and out["week"] is None:
+            out["week"] = when
+        elif "session" in low and out["session"] is None:
+            out["session"] = when
+        elif out["session"] is None:
+            out["session"] = when
+    return out
+
+
 def _parse_claude(raw: str) -> tuple[Any, bool]:
     text = raw or ""
     data = _jsonish(text)
@@ -213,6 +235,13 @@ def surface(harness: str, probed: dict[str, Any] | None = None) -> dict[str, Any
         out["session_pct"] = session_pct
     if week_pct is not None:
         out["week_pct"] = week_pct
+    resets = parse_resets(text)
+    if resets["session"] or resets["week"]:
+        out["resets"] = resets
+    if p.get("probe_timed_out"):
+        out["probe_timed_out"] = True
+    if p.get("error"):
+        out["error"] = p.get("error")
     if name == "grok":
         out["usage_remaining"] = None
     return out

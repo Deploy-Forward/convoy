@@ -27,18 +27,42 @@
     if (box.innerHTML !== html) box.innerHTML = html;
   }
 
+  // Vendor marks: Convoy's own simple monochrome glyphs (not the vendors' trademarks).
+  const MARK = {
+    claude: '<svg viewBox="0 0 24 24"><path d="M12 3v18M3 12h18M5.6 5.6l12.8 12.8M18.4 5.6 5.6 18.4" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" fill="none"/></svg>',
+    codex: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8" fill="none" stroke="currentColor" stroke-width="2.2"/><circle cx="12" cy="12" r="3" fill="currentColor"/></svg>',
+    grok: '<svg viewBox="0 0 24 24"><path d="M4 4l16 16M20 4 4 20" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"/></svg>',
+    "cursor-agent": '<svg viewBox="0 0 24 24"><path d="M5 3l14 9-7 1-3 7z" fill="currentColor"/></svg>',
+    agy: '<svg viewBox="0 0 24 24"><path d="M12 2l2.6 7.4L22 12l-7.4 2.6L12 22l-2.6-7.4L2 12l7.4-2.6z" fill="currentColor"/></svg>',
+    hermes: '<svg viewBox="0 0 24 24"><path d="M3 12c4-8 14-8 18 0-4 8-14 8-18 0z" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="12" cy="12" r="3" fill="currentColor"/></svg>',
+    pi: '<svg viewBox="0 0 24 24"><path d="M4 7h16M8 7v11M16 7v11" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" fill="none"/></svg>',
+  };
+  const mark = (h) => MARK[h] || '<svg viewBox="0 0 24 24"><rect x="5" y="5" width="14" height="14" rx="3" fill="none" stroke="currentColor" stroke-width="2"/></svg>';
+  state.vendor = state.vendor || "overall";
+
   function usageRows(t) {
-    const u = t.usage || {};
-    return Object.keys(u).map((h) => {
-      const row = u[h] || {};
-      const pct = state.usage === "session" ? row.bar_session : row.bar_week;
-      const probing = row.probing === true;
-      const known = typeof pct === "number";
-      const cls = probing ? "probing" : (known ? "" : "unknown");
-      const label = probing ? "probing…" : (known ? pct + "%" : "unknown");
-      const why = !known && row.reason ? `<div class="why">${esc(row.reason)}</div>` : "";
-      return `<div class="usage-row"><span>${esc(h)}</span><div class="bar ${cls}"><i style="width:${known ? pct : 0}%"></i></div><span class="pct ${known ? "" : "unknown"}">${label}</span></div>${why}`;
-    }).join("") || `<div class="foot">no harness attached</div>`;
+    const u = t.usage || {}; const names = Object.keys(u);
+    if (!names.length) return `<div class="foot">no harness attached</div>`;
+    const tab = (name, label, sub, near) => `<span class="vtab ${state.vendor === name ? "on" : ""} ${near ? "near" : ""}" data-vendor="${esc(name)}"><span class="mk">${name === "overall" ? '<svg viewBox="0 0 24 24"><path d="M4 18V9M10 18V5M16 18v-7M22 18H2" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" fill="none"/></svg>' : mark(name)}</span><span class="vn">${esc(label)}</span>${sub}</span>`;
+    const tabs = [tab("overall", "overall", `<span class="vbar"><i style="width:100%;background:transparent"></i></span>`, names.some((n) => u[n].near_limit))]
+      .concat(names.map((n) => { const r = u[n]; const pct = r.bar_session; const known = typeof pct === "number"; return tab(n, n, `<span class="vbar ${known ? "" : "unknown"}"><i style="width:${known ? pct : 100}%"></i></span>`, r.near_limit); }));
+    const barRow = (title, remaining, used, resets) => {
+      const known = typeof remaining === "number";
+      return `<div class="vsec"><div class="vhead"><span>${title}</span><span class="vright">${resets ? "resets " + esc(resets) : ""}</span></div><div class="bar big ${known ? "" : "unknown"}"><i style="width:${known ? remaining : 100}%"></i></div><div class="vfoot"><span>${known ? remaining + "% remaining" : "unknown"}</span><span>${known ? used + "% used" : ""}</span></div></div>`;
+    };
+    let body = "";
+    if (state.vendor === "overall" || !u[state.vendor]) {
+      const rows = names.map((n) => ({ n, r: u[n] })).sort((a, b) => (a.r.bar_session == null ? 101 : a.r.bar_session) - (b.r.bar_session == null ? 101 : b.r.bar_session));
+      body = `<div class="ovl">${rows.map(({ n, r }) => { const known = typeof r.bar_session === "number"; const cls = r.limited ? "limit" : (r.near_limit ? "near" : (known ? "" : "unknown")); return `<div class="orow ${cls}"><span class="mk">${mark(n)}</span><span class="on">${esc(n)}</span><div class="bar ${known ? "" : "unknown"}"><i style="width:${known ? r.bar_session : 100}%"></i></div><span class="opct">${r.limited ? "limited" : (known ? r.bar_session + "% left" : "unknown")}</span></div>`; }).join("")}</div>
+      <div class="foot">sorted by what is closest to its limit · a vendor is “near” at 80% used, by its own number</div>`;
+    } else {
+      const r = u[state.vendor];
+      body = `<div class="vtitle"><span>${esc(state.vendor)}</span><span class="vright">${r.limited ? '<span class="chip limit">limited</span>' : (r.near_limit ? '<span class="chip near">near limit</span>' : "")}</span></div>
+      ${barRow("Session", r.bar_session, r.used_session, r.resets && r.resets.session)}
+      ${barRow("Weekly", r.bar_week, r.used_week, r.resets && r.resets.week)}
+      ${(typeof r.bar_session !== "number" && r.reason) ? `<div class="foot">${esc(r.reason)}</div>` : ""}`;
+    }
+    return `<div class="vtabs">${tabs.join("")}</div>${body}`;
   }
 
   function chairRow(c) {
@@ -52,6 +76,8 @@
       ? `<select class="tune" data-tune="effort" data-seat="${esc(c.session_id)}"><option value="" ${c.effort ? "" : "selected"}>effort</option>${keys.map((k) => `<option ${k === c.effort ? "selected" : ""}>${esc(k)}</option>`).join("")}</select>${c.effort_applied === false ? `<span title="declared; this harness has no effort flag" style="color:var(--ink-3)"> ·</span>` : ""}`
       : `<select class="tune" disabled title="no effort vocabulary for ${esc(c.harness || "")}"><option>n/a</option></select>`;
     const chip = c.chip || (c.body === false ? "gone" : "unknown");
+    const chipLabel = { working: "working", idle: "idle", stale: "stale", gone: "no body found" }[chip] || chip;
+    const chipTitle = { working: "authored or drained a row within the idle window", idle: "a live body, nothing on the tape lately", stale: "rows waiting and nothing drained: needs a nudge", gone: "no process Convoy can tie to this chair by token or cwd (a codex pane on Windows exposes neither; the pane may be alive)" }[chip] || "";
     const nudge = c.nudge_available ? `<span class="nudge" data-nudge="${esc(c.session_id)}">NUDGE</span>` : "";
     const wait = c.waiting ? ` · ${c.waiting}w` : "";
     return `<tr class="${cls}" data-seat="${esc(c.session_id)}" title="${esc(c.worktree || "")}${c.branch ? " · " + esc(c.branch) : ""}">
@@ -59,14 +85,14 @@
       <td>${esc(c.harness || "")}</td>
       <td>${model}</td>
       <td>${effort}</td>
-      <td class="chipcell"><span class="st ${esc(chip)}"><i></i>${esc(chip)}${wait}</span> ${nudge}</td>
+      <td class="chipcell"><span class="st ${esc(chip)}" title="${esc(chipTitle)}"><i></i>${esc(chipLabel)}${wait}</span> ${nudge}</td>
     </tr>`;
   }
 
   const chat = { seat: null, reply: "", ok: false, meta: "", draft: "" };
   function actionBar(seat) {
     if (chat.seat !== seat) { chat.seat = seat; chat.reply = ""; chat.ok = false; chat.meta = ""; }
-    return `<div class="row1"><span class="btn" id="act-ping" title="queue an identity check; the chair's own reply is the ID">ping ${esc(seat)}</span><input class="in" id="act-msg" placeholder="message ${esc(seat)} (queued into its inbox; delivered only when it acks)" value="${esc(chat.draft)}"><span class="btn" id="act-send">send</span></div>${chat.reply ? `<div class="reply ${chat.ok ? "ok" : ""}">${esc(chat.reply)}</div>` : ""}${chat.meta ? `<div class="meta">${esc(chat.meta)}</div>` : ""}`;
+    return `<div class="row1"><span class="btn" id="act-ping" title="queue an identity check; the chair's own reply is the ID">ping ${esc(seat)}</span><input class="in" id="act-msg" placeholder="message ${esc(seat)} · or @g1 @luna1 … to fan out (queued; delivered only when each acks)" value="${esc(chat.draft)}"><span class="btn" id="act-send">send</span></div>${chat.reply ? `<div class="reply ${chat.ok ? "ok" : ""}">${esc(chat.reply)}</div>` : ""}${chat.meta ? `<div class="meta">${esc(chat.meta)}</div>` : ""}`;
   }
   let watching = null;
   async function watchReply(seat, since, pingId, started) {
@@ -81,7 +107,17 @@
     const seat = state.selectedSeat; const t = thread(); if (!seat || !t) return;
     const bodyText = kind === "ping" ? "ping" : ($("act-msg") ? $("act-msg").value : "");
     if (kind !== "ping" && !bodyText.trim()) { chat.reply = "type a message first"; chat.ok = false; render(); return; }
-    const r = await api("/api/send", { root: t.root, seat, body: bodyText, label: kind === "ping" ? "ping" : "widget" });
+    const mentions = kind === "ping" ? [] : [...bodyText.matchAll(/(^|\s)@([\w.-]+)/g)].map((m) => m[2]);
+    const chairs = (t.chairs || []).map((c) => c.session_id);
+    const targets = mentions.length ? mentions.map((m) => chairs.find((c) => c === m || c.startsWith(m + "-") || c.split("-")[0] === m) || m) : [seat];
+    const text = mentions.length ? bodyText.replace(/(^|\s)@[\w.-]+/g, "$1").trim() : bodyText;
+    if (mentions.length && !text) { chat.reply = "say something after the @mentions"; chat.ok = false; render(); return; }
+    let r = null; const lines = [];
+    for (const tgt of targets) {
+      const one = await api("/api/send", { root: t.root, seat: tgt, body: text, label: kind === "ping" ? "ping" : "widget" });
+      lines.push(tgt + ": " + (one.ok ? (one.delivery || "queued") : "refused · " + (one.error || ""))); if (!r || !r.ok) r = one;
+    }
+    if (targets.length > 1) { chat.reply = lines.join("\n"); chat.ok = false; chat.meta = "delivered: false for each until that chair's own row"; chat.draft = ""; render(); return; }
     if (!r.ok) { chat.reply = "refused: " + (r.error || JSON.stringify(r)); chat.ok = false; chat.meta = ""; render(); return; }
     chat.draft = ""; chat.ok = false; chat.reply = (kind === "ping" ? "ping " + r.ping_id : "message") + " " + (r.delivery || "queued") + " · delivered: false until " + seat + " acks";
     const since = r.ts || new Date().toISOString().replace("Z", "000Z");
@@ -110,7 +146,7 @@
       <div class="meta">convoy_id <b>${esc(nz(t.convoy_id))}</b> · bound to thread <b>${esc(nz(t.thread))}</b>${t.lead ? ` · lead <b>${esc(t.lead)}</b>` : ""}</div>
     </section>
     <section class="card">
-      <div class="eyebrow"><span>Usage remaining</span><span class="seg nodrag"><span class="${state.usage === "session" ? "on" : ""}" data-usage="session">session</span><span class="${state.usage === "week" ? "on" : ""}" data-usage="week">week</span></span></div>
+      <div class="eyebrow"><span>Usage remaining</span><span class="right">${Object.values(t.usage || {}).filter((r) => r.near_limit || r.limited).length ? Object.values(t.usage || {}).filter((r) => r.near_limit || r.limited).length + " near limit" : "by vendor"}</span></div>
       ${usageRows(t)}
 
     </section>
@@ -146,7 +182,7 @@
     if (e.target.id === "act-send") { await act("send"); return; }
     if (e.target.closest(".actions") || e.target.closest(".tune") || e.target.closest("select") || e.target.closest("input")) return;
     const dot = e.target.closest(".dot"); if (dot) { state.selected = +dot.dataset.n; render(); return; }
-    const seg = e.target.closest("[data-usage]"); if (seg) { state.usage = seg.dataset.usage; render(); return; }
+    const vt = e.target.closest("[data-vendor]"); if (vt) { state.vendor = vt.dataset.vendor; render(); return; }
     const nd = e.target.closest("[data-nudge]"); if (nd) { e.stopPropagation(); await nudgeDry(nd.dataset.nudge); return; }
     const row = e.target.closest("tr.row"); if (row) {
       state.selectedSeat = state.selectedSeat === row.dataset.seat ? null : row.dataset.seat; render();

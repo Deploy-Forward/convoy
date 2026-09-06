@@ -18,3 +18,7 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 convoy = ["harness_skills/**", "harness_effort.json", "site/**"]
+
+[project.optional-dependencies]
+widget = ["pywebview>=5"]
+tray = ["pywebview>=5", "pystray>=0.19", "pillow>=10"]
