@@ -339,7 +339,10 @@ def _merge_claude_inbox_hooks(data: dict[str, Any], command: str) -> tuple[dict[
     if not isinstance(hooks, dict):
         hooks = {}
     changed = False
-    for event in ("PreToolUse", "UserPromptSubmit"):
+    # PostToolUse: the pane stamps its own vendor usage (kind=usage) after
+    # tool calls (inbox.stamp_usage_row). A fresh install without it wrote no
+    # usage row at all (audit 2026-09-06: zero kind=usage rows on happy-path).
+    for event in ("PreToolUse", "PostToolUse", "UserPromptSubmit"):
         events = hooks.get(event)
         if not isinstance(events, list):
             events = []
@@ -402,6 +405,21 @@ def _merge_end_hook(data: dict[str, Any], command: str) -> tuple[dict[str, Any],
     return data, changed
 
 
+def _merge_codex_usage_hook(data: dict[str, Any], command: str) -> tuple[dict[str, Any], bool]:
+    """EXACTLY ONE Convoy inbox entry under PostToolUse in codex's hooks.json."""
+    hooks = data.get("hooks")
+    if not isinstance(hooks, dict):
+        hooks = {}
+    events = hooks.get("PostToolUse")
+    if not isinstance(events, list):
+        events = []
+    rebuilt = [e for e in events if not _commands_in(e)] + [_command_hook_entry(command)]
+    changed = rebuilt != events
+    hooks["PostToolUse"] = rebuilt
+    data["hooks"] = hooks
+    return data, changed
+
+
 def _ensure_end_hook_file(
     worktree: Path | str,
     relative: Path,
@@ -430,6 +448,18 @@ def _ensure_end_hook_file(
         else:
             data = {}
         data, changed = _merge_end_hook(data, command)
+        if relative == CODEX_HOOKS_RELATIVE:
+            # codex fires PostToolUse (the ola-brain codex plugin declares it
+            # in its hooks.json; ~/.codex/logs_2.sqlite carries the event
+            # name). Same inbox command as grok/claude; the handler reads
+            # hook_event_name from stdin and stamps kind=usage on PostToolUse.
+            inbox = _resolved_or_kept(prev_text)
+            if inbox.get("command"):
+                data, more = _merge_codex_usage_hook(data, inbox["command"])
+                changed = changed or more
+                out["usage_hook_command"] = inbox["command"]
+            else:
+                out["usage_hook_error"] = inbox.get("error")
         if changed or not dest.is_file():
             dest.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
             out["written"] = True
