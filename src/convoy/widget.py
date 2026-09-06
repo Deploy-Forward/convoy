@@ -302,6 +302,7 @@ def _chair_row(
         "unread": unread,
         "body_state": body_state,
         "archived": bool(seat.get("archived")),
+        "own_usage": _own_usage(root, sid),
         "focus": "focus --seat " + sid,
         "nudge_available": chip == "stale",
         "nudge": "nudge --seat " + sid + " --dry-run",
@@ -371,6 +372,16 @@ def _thread_card(
         "last_stamp": rail.get("last_stamp"),
         "seats": rail.get("seats"),
     }
+
+
+def _own_usage(root: Path, sid: str) -> dict[str, Any] | None:
+    """The chair's own kind=usage row (its login's reading), or None."""
+    from .inbox import last_usage_row
+    r = last_usage_row(Path(root), sid)
+    if not r:
+        return None
+    return {"ts": r.get("ts"), "session_pct": r.get("session_pct"), "week_pct": r.get("week_pct"),
+            "resets": r.get("resets"), "limited": bool(r.get("limited")), "source": r.get("source"), "tier": r.get("tier")}
 
 
 def build_widget_model(

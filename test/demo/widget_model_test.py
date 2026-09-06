@@ -284,9 +284,11 @@ class CodexRolloutSnapshot(unittest.TestCase):
         home = Path(tempfile.mkdtemp()); d = home / "sessions" / "2026" / "09" / "05"; d.mkdir(parents=True)
         old = d / "rollout-old.jsonl"; old.write_text(_j.dumps({"timestamp": "2026-09-05T01:00:00Z", "payload": {"rate_limits": {"primary": {"used_percent": 10, "window_minutes": 300, "resets_at": 1788669963}, "secondary": {"used_percent": 5, "window_minutes": 10080, "resets_at": 1789199219}}}}) + "\n", encoding="utf-8")
         new = d / "rollout-new.jsonl"; new.write_text("garbage\n" + _j.dumps({"timestamp": "2026-09-05T02:00:00Z", "payload": {"rate_limits": {"primary": {"used_percent": 99.0, "window_minutes": 300, "resets_at": 1788669963}, "secondary": {"used_percent": 31.0, "window_minutes": 10080, "resets_at": 1789199219}}}}) + "\n", encoding="utf-8")
-        _o.utime(old, (1000, 1000)); _o.utime(new, (2000, 2000))
-        snap = codex_rollout_rate_limits(home, now=2000 + 7200)
-        self.assertEqual(snap["session_pct"], 99); self.assertEqual(snap["week_pct"], 31); self.assertEqual(snap["age_s"], 7200)
+        import calendar
+        t_new = calendar.timegm(time.strptime("2026-09-05T02:00:00", "%Y-%m-%dT%H:%M:%S"))
+        _o.utime(old, (t_new - 100, t_new - 100)); _o.utime(new, (t_new, t_new))
+        snap = codex_rollout_rate_limits(home, now=t_new + 7200)
+        self.assertEqual(snap["session_pct"], 99); self.assertEqual(snap["week_pct"], 31); self.assertEqual(snap["age_s"], 7200, "age from the row's own timestamp")
         self.assertEqual(snap["source"], "codex rollout snapshot"); self.assertTrue(snap["resets"]["session"].startswith("at 2026-"))
         b = _usage_block("codex", surface("codex", snap))
         self.assertEqual(b["bar_session"], 1); self.assertEqual(b["bar_week"], 69); self.assertTrue(b["near_limit"]); self.assertIn("2 h old", b["reason"])
@@ -315,6 +317,24 @@ class GrokBillingLog(unittest.TestCase):
         self.assertIsNone(grok_unified_billing(Path(tempfile.mkdtemp())))
         full = dict(snap); full["week_pct"] = 100
         self.assertTrue(_usage_block("grok", surface("grok", {**full, "limited": True}))["limited"])
+
+
+class CodexTwoLogins(unittest.TestCase):
+    def test_snapshots_group_by_weekly_reset_and_the_freshest_leads(self):
+        import json as _j, os as _o, tempfile, calendar, time
+        from convoy.usage import codex_rollout_rate_limits
+        home = Path(tempfile.mkdtemp()); d = home / "sessions" / "2026" / "09" / "06"; d.mkdir(parents=True)
+        def rl(sp, wp, wreset): return {"primary": {"used_percent": sp, "window_minutes": 300, "resets_at": 1788612419}, "secondary": {"used_percent": wp, "window_minutes": 10080, "resets_at": wreset}}
+        a = d / "rollout-a.jsonl"; a.write_text(_j.dumps({"timestamp": "2026-09-05T08:19:53Z", "payload": {"rate_limits": rl(89, 14, 1789199219)}}) + "\n", encoding="utf-8")
+        b = d / "rollout-b.jsonl"; b.write_text(_j.dumps({"timestamp": "2026-09-06T15:03:46Z", "payload": {"rate_limits": rl(91, 100, 1789189460)}}) + "\n", encoding="utf-8")
+        now = calendar.timegm(time.strptime("2026-09-06T22:00:00", "%Y-%m-%dT%H:%M:%S"))
+        for f in (a, b): _o.utime(f, (now - 60, now - 60))
+        snap = codex_rollout_rate_limits(home, now=now)
+        self.assertEqual((snap["session_pct"], snap["week_pct"]), (91, 100), "freshest by its own timestamp leads")
+        self.assertTrue(snap["limited"]); self.assertEqual(snap["age_s"], (22 - 15) * 3600 - 226)
+        self.assertEqual(len(snap["logins"]), 1)
+        other = snap["logins"][0]; self.assertEqual((other["session_pct"], other["week_pct"]), (89, 14)); self.assertFalse(other["limited"])
+        self.assertTrue(other["resets"]["week"].startswith("at 2026-09-12"))
 
 
 class WidgetWindow(unittest.TestCase):
