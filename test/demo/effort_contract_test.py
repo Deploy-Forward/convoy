@@ -194,7 +194,7 @@ class EffortValidatedPerHarness(unittest.TestCase):
         # refusal is silent: no kind=swap row lands for a swap that did not happen
         feed_before = feed_since(self.root, "1970-01-01T00:00:00.000000Z")
         with self.assertRaises(ValueError):
-            swap(self.root, "chair-1", "codex", str(hp), author="chair-1", effort="xhigh")
+            swap(self.root, "chair-1", "codex", str(hp), author="chair-1", effort="max")
         self.assertEqual(self._row("chair-1")["to"], "grok")
         self.assertEqual(feed_since(self.root, "1970-01-01T00:00:00.000000Z"), feed_before)
         swap(self.root, "chair-1", "codex", str(hp), author="chair-1", effort="extra-high")
