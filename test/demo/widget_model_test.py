@@ -276,6 +276,23 @@ class VendorTabsData(unittest.TestCase):
         self.assertFalse(c["near_limit"]); self.assertEqual(c["resets"], {"session": None, "week": None}); self.assertIn("timed out", c["reason"])
 
 
+class CodexRolloutSnapshot(unittest.TestCase):
+    def test_newest_rollout_rate_limits_become_session_and_week(self):
+        import json as _j, os as _o, tempfile, time
+        from convoy.usage import codex_rollout_rate_limits, surface
+        from convoy.widget import _usage_block
+        home = Path(tempfile.mkdtemp()); d = home / "sessions" / "2026" / "09" / "05"; d.mkdir(parents=True)
+        old = d / "rollout-old.jsonl"; old.write_text(_j.dumps({"timestamp": "2026-09-05T01:00:00Z", "payload": {"rate_limits": {"primary": {"used_percent": 10, "window_minutes": 300, "resets_at": 1788669963}, "secondary": {"used_percent": 5, "window_minutes": 10080, "resets_at": 1789199219}}}}) + "\n", encoding="utf-8")
+        new = d / "rollout-new.jsonl"; new.write_text("garbage\n" + _j.dumps({"timestamp": "2026-09-05T02:00:00Z", "payload": {"rate_limits": {"primary": {"used_percent": 99.0, "window_minutes": 300, "resets_at": 1788669963}, "secondary": {"used_percent": 31.0, "window_minutes": 10080, "resets_at": 1789199219}}}}) + "\n", encoding="utf-8")
+        _o.utime(old, (1000, 1000)); _o.utime(new, (2000, 2000))
+        snap = codex_rollout_rate_limits(home, now=2000 + 7200)
+        self.assertEqual(snap["session_pct"], 99); self.assertEqual(snap["week_pct"], 31); self.assertEqual(snap["age_s"], 7200)
+        self.assertEqual(snap["source"], "codex rollout snapshot"); self.assertTrue(snap["resets"]["session"].startswith("at 2026-"))
+        b = _usage_block("codex", surface("codex", snap))
+        self.assertEqual(b["bar_session"], 1); self.assertEqual(b["bar_week"], 69); self.assertTrue(b["near_limit"]); self.assertIn("2 h old", b["reason"])
+        self.assertIsNone(codex_rollout_rate_limits(Path(tempfile.mkdtemp())))
+
+
 class WidgetWindow(unittest.TestCase):
     def test_builds_without_mainloop(self):
         # Tk must not live in this interpreter: destroy() + later GC on a
