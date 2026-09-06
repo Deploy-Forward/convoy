@@ -120,6 +120,10 @@ def _usage_block(harness: str, surfaced: dict[str, Any]) -> dict[str, Any]:
         "reason": reason,
         "used_session": used_session,
         "used_week": used_week,
+        "resets": surfaced.get("resets") or {"session": None, "week": None},
+        # approaching a limit: the vendor's own number says >= 80% used
+        "near_limit": bool((used_session is not None and used_session >= 80) or (used_week is not None and used_week >= 80)),
+        "limited": bool(surfaced.get("limited")),
         "display": _usage_display(surfaced),
         "display_session": (str(session) + "%") if session is not None else "unknown",
         "display_week": (str(week) + "%") if week is not None else "unknown",

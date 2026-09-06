@@ -260,6 +260,22 @@ class UsageIsRemainingNotUsed(unittest.TestCase):
         self.assertIsNone(u["bar_session"]); self.assertEqual(u["display_session"], "unknown"); self.assertIn("timed out", u["reason"])
 
 
+class VendorTabsData(unittest.TestCase):
+    def test_resets_and_near_limit_come_from_the_vendor_text(self):
+        from convoy.usage import parse_resets, surface
+        from convoy.widget import _usage_block
+        raw = "Current session: 82% used (Resets in 3h 53m)\nCurrent week (all models): 3% used (Resets in 3d 20h)\n"
+        r = parse_resets(raw)
+        self.assertEqual(r, {"session": "in 3h 53m", "week": "in 3d 20h"})
+        s = surface("claude", {"usage_remaining": {"session_pct": 82, "week_pct": 3}, "limited": False, "raw": raw})
+        b = _usage_block("claude", s)
+        self.assertEqual(b["used_session"], 82); self.assertEqual(b["bar_session"], 18); self.assertTrue(b["near_limit"])
+        self.assertEqual(b["resets"]["session"], "in 3h 53m"); self.assertEqual(b["resets"]["week"], "in 3d 20h")
+        self.assertEqual(parse_resets("no reset info here"), {"session": None, "week": None})
+        c = _usage_block("codex", surface("codex", {"usage_remaining": None, "limited": False, "raw": None, "probe_timed_out": True}))
+        self.assertFalse(c["near_limit"]); self.assertEqual(c["resets"], {"session": None, "week": None}); self.assertIn("timed out", c["reason"])
+
+
 class WidgetWindow(unittest.TestCase):
     def test_builds_without_mainloop(self):
         # Tk must not live in this interpreter: destroy() + later GC on a

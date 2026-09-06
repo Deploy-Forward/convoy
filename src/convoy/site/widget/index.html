@@ -76,6 +76,32 @@ section.card { background: var(--panel); border: 1px solid var(--hair); border-r
 .bar.probing i { background: linear-gradient(90deg, #e9ecf2, #cfd4dd, #e9ecf2); background-size: 200% 100%; width: 100%; animation: shimmer 1.4s linear infinite; }
 @keyframes shimmer { from { background-position: 200% 0 } to { background-position: -200% 0 } }
 .pct { text-align: right; color: var(--ink-2); }
+.vtabs { display: flex; gap: 6px; margin: 2px 0 10px; overflow-x: auto; }
+.vtab { display: flex; flex-direction: column; align-items: center; gap: 4px; min-width: 64px; padding: 8px 6px 7px; border-radius: 10px; border: 1px solid transparent; color: var(--ink-2); cursor: pointer; font: 11px var(--sans); }
+.vtab:hover { background: var(--panel-2); }
+.vtab.on { background: var(--blue); color: #fff; }
+.vtab.near:not(.on) .vn { color: var(--amber); }
+.vtab .mk { width: 20px; height: 20px; display: block; }
+.vtab .mk svg { width: 20px; height: 20px; display: block; }
+.vbar { display: block; width: 44px; height: 3px; border-radius: 999px; background: rgba(0,0,0,.10); overflow: hidden; }
+.vtab.on .vbar { background: rgba(255,255,255,.28); }
+.vbar i { display: block; height: 100%; background: var(--green); }
+.vtab.on .vbar i { background: #fff; }
+.vbar.unknown i { background: var(--unknown); }
+.vtitle { display: flex; justify-content: space-between; align-items: center; font: 600 15px var(--sans); color: var(--ink); margin: 2px 0 6px; }
+.vsec { margin: 8px 0 4px; }
+.vhead { display: flex; justify-content: space-between; font: 600 13px var(--sans); color: var(--ink); margin-bottom: 6px; }
+.vright { color: var(--ink-3); font: 12px var(--mono); }
+.bar.big { height: 8px; }
+.vfoot { display: flex; justify-content: space-between; font: 12px var(--mono); color: var(--ink-2); margin-top: 5px; }
+.chip.near { color: var(--amber); border-color: rgba(183,121,31,.4); background: rgba(183,121,31,.08); }
+.chip.limit { color: var(--red); border-color: rgba(192,57,43,.4); background: rgba(192,57,43,.06); }
+.ovl { display: flex; flex-direction: column; gap: 6px; }
+.orow { display: grid; grid-template-columns: 22px 92px 1fr 84px; gap: 10px; align-items: center; font: 12.5px var(--mono); padding: 4px 0; }
+.orow .mk svg { width: 18px; height: 18px; display: block; color: var(--ink-2); }
+.orow.near .opct { color: var(--amber); }
+.orow.limit .opct { color: var(--red); }
+.orow .opct { text-align: right; color: var(--ink-2); }
 .why { grid-column: 1 / -1; font: 11px var(--mono); color: var(--ink-3); margin: -3px 0 4px 86px; }
 .pct.unknown { color: var(--ink-3); }
 .foot { font: 11px var(--mono); color: var(--ink-3); margin-top: 6px; }
