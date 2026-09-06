@@ -114,6 +114,7 @@
           "low",
           "medium",
           "high",
+          "xhigh",
           "extra-high",
           "more-reasoning"
         ],
@@ -130,9 +131,10 @@
           "low": "low",
           "medium": "medium",
           "high": "high",
-          "extra-high": "xhigh"
+          "extra-high": "xhigh",
+          "xhigh": "xhigh"
         },
-        "evidence": "codex --help (demo box, codex-cli 0.153.0, 2026-09-06): `-c, --config <key=value>  Override a configuration value that would otherwise be loaded from ~/.codex/config.toml`, example `-c model=\"o3\"`; the key model_reasoning_effort is the one ~/.codex/config.toml carries on this box (`model_reasoning_effort = \"medium\"`), which is what a codex pane launched without it showed (`gpt-6-astra medium`, 2026-09-06). more-reasoning has no vendor value and stays recorded, not applied"
+        "evidence": "codex --help (demo box, codex-cli 0.153.0, 2026-09-06): `-c, --config <key=value>  Override a configuration value that would otherwise be loaded from ~/.codex/config.toml`, example `-c model=\"o3\"`; the key model_reasoning_effort is the one ~/.codex/config.toml carries on this box (`model_reasoning_effort = \"medium\"`), which is what a codex pane launched without it showed (`gpt-6-astra medium`, 2026-09-06). more-reasoning has no vendor value and stays recorded, not applied. xhigh is accepted as-is because it is the vendor's own value (vendor_values), 2026-09-06 spec: 'two gpt-5.6-luna xhigh'"
       },
       "models": null,
       "models_evidence": "unverified 2026-09-04: codex --help (demo box, codex-cli 0.153.0) -m/--model <MODEL> 'Model the agent should use'; no enumeration",
