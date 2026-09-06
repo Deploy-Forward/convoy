@@ -195,6 +195,24 @@ class Server(unittest.TestCase):
         self.assertFalse(list_seats(self.root)[0].get("archived"), "relaunch un-archives")
         self.assertFalse(self.post("/api/archive", {"root": str(self.root), "seat": "nobody"})["ok"])
 
+    def test_post_tool_use_stamps_the_panes_own_usage_at_most_every_five_minutes(self):
+        from convoy.convoy import seat as write_seat
+        from convoy.inbox import stamp_usage_row, last_usage_row
+        from convoy.widget import build_widget_model
+        write_seat(self.root, "codex", "codex-1", worktree=str(self.root))
+        snap = {"usage_remaining": {"session_pct": 30, "week_pct": 60}, "session_pct": 30, "week_pct": 60, "limited": False, "raw": None,
+                "source": "codex rollout snapshot", "as_of": "2026-09-06T22:00:00Z", "resets": {"session": "at x", "week": "at y"}}
+        r1 = stamp_usage_row(self.root, "codex-1", "codex", probe_fn=lambda h: snap, now="2026-09-06T22:00:00.000000Z")
+        self.assertEqual(r1["kind"], "usage"); self.assertEqual(r1["week_pct"], 60); self.assertIn("70% left 5h", r1["summary"])
+        self.assertIsNone(stamp_usage_row(self.root, "codex-1", "codex", probe_fn=lambda h: snap, now="2026-09-06T22:03:00.000000Z"), "rate limited")
+        r2 = stamp_usage_row(self.root, "codex-1", "codex", probe_fn=lambda h: {**snap, "usage_remaining": {"session_pct": 30, "week_pct": 100}, "week_pct": 100, "limited": True}, now="2026-09-06T22:06:00.000000Z")
+        self.assertTrue(r2["limited"])
+        self.assertEqual(last_usage_row(self.root, "codex-1")["week_pct"], 100)
+        m = build_widget_model([self.root], probe_fn=lambda h: dict(NULL_PROBE))
+        own = m["threads"][0]["chairs"][0]["own_usage"]
+        self.assertEqual(own["week_pct"], 100); self.assertTrue(own["limited"])
+        self.assertNotIn("token", json.dumps(own))
+
     def test_pin_and_unknown_paths(self):
         self.assertEqual(self.post("/api/pin", {"on": False})["on"], False)
         req = urllib.request.Request(self.url + "/api/nothing", data=b"{}", method="POST", headers={"Content-Type": "application/json"})

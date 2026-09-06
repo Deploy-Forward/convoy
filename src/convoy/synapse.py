@@ -356,8 +356,12 @@ def _send_one(
         usage = probe(to)
     else:
         usage = {"usage_remaining": None, "limited": False, "raw": None}
-    if usage.get("limited"):
-        # Grok has no meter; even a lying probe must not surface one.
+    if usage.get("limited") and not resolved_instance_id:
+        # A LIVE chair is never refused on a usage snapshot: the queue costs
+        # nothing and the vendor's own pane refuses work if it is truly out;
+        # snapshots are stale and per-login (2026-09-06: grok at 100% weekly
+        # kept working; codex had two logins on one machine). The refusal
+        # stays for spawning a NEW vendor session, which would fail.
         limited_remaining = None if _normalize_target_name(target_name) == "grok" else normalize_usage_remaining(usage.get("usage_remaining"))
         ask = {
             "action": "bring_up",

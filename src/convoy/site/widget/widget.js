@@ -78,7 +78,7 @@
     return `<tr class="${cls}" data-seat="${esc(c.session_id)}" title="${esc(c.worktree || "")}${c.branch ? " · " + esc(c.branch) : ""}">
       <td class="seat">${esc(c.lead ? "lead" : c.seat_label || c.session_id)}</td>
       <td><span class="hn">${mark(c.harness)}${esc(c.harness || "")}</span></td>
-      <td>${bodyChip(c)}${nudge}${wait}</td>
+      <td title="${c.own_usage ? esc("this pane's own reading at " + c.own_usage.ts + ": " + (typeof c.own_usage.session_pct === "number" ? (100 - c.own_usage.session_pct) + "% left 5h" : "session unknown") + ", " + (typeof c.own_usage.week_pct === "number" ? (100 - c.own_usage.week_pct) + "% left week" : "week unknown")) : "no usage row from this pane yet (it stamps one after tool calls)"}">${bodyChip(c)}${c.own_usage ? `<span class="own ${c.own_usage.limited ? "limit" : ""}">${typeof c.own_usage.week_pct === "number" ? (100 - c.own_usage.week_pct) + "%w" : ""}${typeof c.own_usage.session_pct === "number" ? " " + (100 - c.own_usage.session_pct) + "%s" : ""}</span>` : ""}${nudge}${wait}</td>
       <td>${model}</td>
       <td>${effort}</td>
       <td class="x" data-archive="${esc(c.session_id)}" title="archive this seat: hidden here, kept on the thread; show archived to relaunch">×</td>
@@ -127,12 +127,13 @@
   }
   function vendorRow(name, r, seated) {
     if (!r) return "";
-    const stale = r.source === "codex rollout snapshot" && r.reason ? r.reason.replace("from codex's last session rollout, ", "snapshot ") : "";
+    const stale = r.source && r.as_of ? "as of " + String(r.as_of).slice(0, 16).replace("T", " ") + "Z" + (r.age_s != null ? " (" + (r.age_s >= 3600 ? Math.round(r.age_s / 3600) + " h" : Math.round(r.age_s / 60) + " min") + " old)" : "") : "";
     const noMeter = name === "grok" || (r.reason || "").includes("no meter") || (r.reason || "").includes("only inside its own TUI");
     const body = noMeter && typeof r.bar_session !== "number"
       ? `<div class="nometer">${esc(r.reason || "no meter on disk or CLI")}</div>`
       : `<div class="meter">${meter("session", r.bar_session, r.used_session, r.resets && r.resets.session, { probing: r.probing, stale })}${meter("week", r.bar_week, r.used_week, r.resets && r.resets.week, { probing: r.probing, stale })}</div>`;
-    return `<div class="vrow ${seated ? "seated" : ""}">${mark(name)}<span class="name">${esc(name)}${r.limited ? ' <span class="chip limit">limited</span>' : (r.near_limit ? ' <span class="chip near">near</span>' : "")}</span>${body}</div>`;
+    const logins = (r.logins || []).map((o) => `<div class="meter alt"><div class="lab">another ${esc(name)} login${o.resets && o.resets.week ? " (week resets " + esc(o.resets.week) + ")" : ""}: ${typeof o.session_pct === "number" ? (100 - o.session_pct) + "% left · 5h" : ""}${typeof o.week_pct === "number" ? " · " + (100 - o.week_pct) + "% left · week" : ""}${o.limited ? ' <span class="chip limit">limited</span>' : ""} <span class="stale">· ${esc(o.as_of || "")}</span></div></div>`).join("");
+    return `<div class="vrow ${seated ? "seated" : ""}">${mark(name)}<span class="name">${esc(name)}${r.limited ? ' <span class="chip limit">limited</span>' : (r.near_limit ? ' <span class="chip near">near</span>' : "")}</span><div>${body}${logins}</div></div>`;
   }
   function zoneUsage(t) {
     const u = t.usage || {}; const seated = new Set((t.chairs || []).filter((c) => !c.archived).map((c) => c.harness));

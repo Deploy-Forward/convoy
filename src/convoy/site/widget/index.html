@@ -91,6 +91,8 @@ input.tune { border: 1px solid var(--hair-2); border-radius: 7px; padding: 2px 7
 input.tune::placeholder { color: var(--ink-3); }
 .x { color: var(--ink-3); cursor: pointer; text-align: center; } .x:hover { color: var(--red); }
 .nudge { font: 600 10px var(--mono); letter-spacing: .1em; padding: 2px 7px; border-radius: 6px; border: 1px solid rgba(192,57,43,.5); color: var(--red); background: rgba(192,57,43,.06); cursor: pointer; }
+.own { font: 10.5px var(--mono); color: var(--ink-3); margin-left: 6px; }
+.own.limit { color: var(--red); }
 .legend { display: flex; gap: 14px; align-items: center; font: 11px var(--mono); color: var(--ink-3); margin-top: 6px; }
 tr.row.archived td { color: var(--ink-3); background: var(--panel-2); }
 
@@ -135,6 +137,7 @@ tr.row.archived td { color: var(--ink-3); background: var(--panel-2); }
 .meter .lab { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-bottom: 4px; }
 .meter .lab b { color: var(--ink); font-weight: 600; }
 .meter .lab .stale { color: var(--amber); }
+.meter.alt .lab { color: var(--ink-3); white-space: normal; margin-top: 2px; }
 .empty { padding: 10px 0; color: var(--ink-3); font: 12px var(--mono); }
 .empty .btn { margin-left: 8px; }
 .nometer { color: var(--ink-3); font: 11.5px var(--mono); padding-top: 2px; }
