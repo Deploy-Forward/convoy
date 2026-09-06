@@ -58,6 +58,14 @@
     if (bs === "gone") return `<span class="bs gone" title="the chair's pane was closed with consent"><i></i>gone</span>`;
     return `<span class="bs nobody" title="no process Convoy can tie to this chair by token or cwd; a codex pane on Windows exposes neither, so it may well be alive"><i></i>no body found${c.waiting ? ` · ${c.waiting}w` : ""}</span>`;
   }
+  function archivedRow(c) {
+    return `<tr class="row archived" data-seat="${esc(c.session_id)}" title="${esc(c.worktree || "")}">
+      <td class="seat">${esc(c.seat_label || c.session_id)}</td>
+      <td><span class="hn">${mark(c.harness)}${esc(c.harness || "")}</span></td>
+      <td><span class="bs gone"><i></i>archived</span></td>
+      <td colspan="2"><span class="btn" data-relaunch="${esc(c.session_id)}">relaunch</span> <span class="btn" data-unarchive="${esc(c.session_id)}">show</span></td>
+      <td></td></tr>`;
+  }
   function chairRow(c) {
     const cls = ["row", c.lead ? "lead" : "", c.session_id === state.selectedSeat ? "sel" : ""].join(" ");
     const model = c.models && c.models.length
@@ -73,7 +81,7 @@
       <td>${bodyChip(c)}${nudge}${wait}</td>
       <td>${model}</td>
       <td>${effort}</td>
-      <td class="x" data-close="${esc(c.session_id)}" title="close this chair (asks for consent)">×</td>
+      <td class="x" data-archive="${esc(c.session_id)}" title="archive this seat: hidden here, kept on the thread; show archived to relaunch">×</td>
     </tr>`;
   }
   function zoneSeats(t) {
@@ -81,8 +89,8 @@
       <div class="eyebrow"><span>Seats</span><span class="right">${t.seated_n || 0} seated · ${(t.seats && t.seats.stale) || 0} stale</span></div>
       <table><colgroup><col style="width:27%"><col style="width:15%"><col style="width:24%"><col style="width:16%"><col style="width:13%"><col style="width:5%"></colgroup>
       <thead><tr><th>seat</th><th>harness</th><th>body</th><th>model</th><th>effort</th><th></th></tr></thead>
-      <tbody>${(t.chairs || []).map(chairRow).join("")}</tbody></table>
-      <div class="legend"><span class="bs live"><i></i>live</span><span class="bs nobody"><i></i>no body found</span><span class="bs gone"><i></i>gone</span></div>
+      <tbody>${(t.chairs || []).filter((c) => !c.archived).map(chairRow).join("")}${state.showArchived ? (t.chairs || []).filter((c) => c.archived).map(archivedRow).join("") : ""}</tbody></table>
+      <div class="legend"><span class="bs live"><i></i>live</span><span class="bs nobody"><i></i>no body found</span><span class="bs gone"><i></i>gone</span>${(t.chairs || []).some((c) => c.archived) ? `<span class="btn" id="toggle-archived" style="margin-left:auto">${state.showArchived ? "hide" : "show"} ${(t.chairs || []).filter((c) => c.archived).length} archived</span>` : ""}</div>
     </section>`;
   }
 
@@ -127,7 +135,7 @@
     return `<div class="vrow ${seated ? "seated" : ""}">${mark(name)}<span class="name">${esc(name)}${r.limited ? ' <span class="chip limit">limited</span>' : (r.near_limit ? ' <span class="chip near">near</span>' : "")}</span>${body}</div>`;
   }
   function zoneUsage(t) {
-    const u = t.usage || {}; const seated = new Set((t.chairs || []).map((c) => c.harness));
+    const u = t.usage || {}; const seated = new Set((t.chairs || []).filter((c) => !c.archived).map((c) => c.harness));
     const rank = (n) => u[n].limited ? -1 : (typeof u[n].bar_session === "number" ? u[n].bar_session : 999);
     const all = Object.keys(u).sort((a, b) => rank(a) - rank(b));
     const mine = all.filter((n) => seated.has(n));
@@ -211,11 +219,6 @@
     c.innerHTML = `<div>nudge <b>${esc(seat)}</b> · ${esc(r.ok ? (r.adapter || r.transport || "") : (r.error || "refused"))}</div><div class="cmd">${esc(r.text || r.error || JSON.stringify(r))}</div><div class="btns"><span id="nudge-cancel">cancel</span>${r.ok ? '<span class="go" id="nudge-go">type it</span>' : ""}</div>`;
     c.classList.add("show");
   }
-  async function closeChair(seat) {
-    const t = thread(); const c = $("confirm");
-    c.innerHTML = `<div>close chair <b>${esc(seat)}</b>: this asks the pane host to close its pane, with consent</div><div class="cmd">convoy --root ${esc(t.root)} close --seat ${esc(seat)}</div><div class="btns"><span id="nudge-cancel">cancel</span></div>`;
-    c.classList.add("show");
-  }
 
   document.addEventListener("change", async (e) => {
     const el = e.target.closest("[data-tune]"); if (!el) return;
@@ -238,7 +241,10 @@
     if (e.target.closest("#hist-toggle")) { state.histOpen = !state.histOpen; render(); return; }
     const dot = e.target.closest(".dot"); if (dot) { state.selected = +dot.dataset.n; state.selectedSeat = null; chat.draft = ""; await refresh(); return; }
     const nd = e.target.closest("[data-nudge]"); if (nd) { e.stopPropagation(); await nudgeDry(nd.dataset.nudge); return; }
-    const cx = e.target.closest("[data-close]"); if (cx) { e.stopPropagation(); await closeChair(cx.dataset.close); return; }
+    const ax = e.target.closest("[data-archive]"); if (ax) { e.stopPropagation(); const t = thread(); const r = await api("/api/archive", { root: t.root, seat: ax.dataset.archive, archived: true }); $("status").textContent = r.ok ? ax.dataset.archive + " archived (kept on the thread; show archived to relaunch)" : "refused: " + (r.error || ""); if (state.selectedSeat === ax.dataset.archive) state.selectedSeat = null; await refresh(); return; }
+    const ux = e.target.closest("[data-unarchive]"); if (ux) { e.stopPropagation(); const t = thread(); const r = await api("/api/archive", { root: t.root, seat: ux.dataset.unarchive, archived: false }); $("status").textContent = r.ok ? ux.dataset.unarchive + " shown again" : "refused: " + (r.error || ""); await refresh(); return; }
+    const rl = e.target.closest("[data-relaunch]"); if (rl) { e.stopPropagation(); const t = thread(); $("status").textContent = "relaunching " + rl.dataset.relaunch + "…"; const r = await api("/api/relaunch", { root: t.root, seat: rl.dataset.relaunch }); $("status").textContent = r.ok ? rl.dataset.relaunch + (r.launched ? " relaunched: pending until it acks" : " chair written; window did not launch: " + (r.error || "")) : "refused: " + (r.error || ""); await refresh(); return; }
+    if (e.target.id === "toggle-archived") { state.showArchived = !state.showArchived; render(); return; }
     if (e.target.closest("details.disc") || e.target.closest(".act") || e.target.closest("select") || e.target.closest("input")) return;
     const row = e.target.closest("tr.row"); if (row) {
       state.selectedSeat = state.selectedSeat === row.dataset.seat ? null : row.dataset.seat; chat.draft = state.selectedSeat ? "@" + state.selectedSeat + " " : ""; render();

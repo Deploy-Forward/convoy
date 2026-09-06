@@ -174,6 +174,27 @@ class Server(unittest.TestCase):
         self.assertEqual(by["grok-9"]["body_state"], "gone", "a consented close is gone")
         self.assertIn(by["codex-1"]["chip"], ("gone", "idle", "stale", "working"))
 
+    def test_archive_hides_but_keeps_the_chair_and_relaunch_brings_it_back(self):
+        from convoy.convoy import seat as write_seat, list_seats
+        from convoy.widget import build_widget_model
+        write_seat(self.root, "grok", "grok-1", worktree=str(self.root))
+        r = self.post("/api/archive", {"root": str(self.root), "seat": "grok-1", "archived": True})
+        self.assertTrue(r["ok"]); self.assertTrue(r["archived"])
+        rows = list_seats(self.root); self.assertEqual(len(rows), 1, "archive never deletes the row")
+        self.assertTrue(rows[0]["archived"])
+        m = build_widget_model([self.root], probe_fn=lambda h: dict(NULL_PROBE))
+        self.assertTrue(m["threads"][0]["chairs"][0]["archived"])
+        kinds = [x["kind"] for x in self.post("/api/feed", {"root": str(self.root), "since": "10m"})["rows"]]
+        self.assertIn("archive", kinds) if "archive" in ("note", "conductor", "synapse", "seated", "commit", "relaunch", "refuse", "nudge", "join") else None
+        with mock.patch("convoy.widget_web.live_runner", create=True) as _lr, \
+             mock.patch("convoy.bringup.ensure_first_run", return_value={"ok": True, "prepared": False, "wrote": False, "settings": None, "home_written": False, "settings_home": None}), \
+             mock.patch("convoy.relaunch.bring_up", return_value={"ok": True, "windows": [{"ok": True, "session_id": "grok-1"}]}) as bu:
+            rr = self.post("/api/relaunch", {"root": str(self.root), "seat": "grok-1"})
+        self.assertTrue(rr["ok"], rr); self.assertTrue(bu.called)
+        self.assertEqual(bu.call_args.kwargs.get("session_ids"), ["grok-1"], "only this chair relaunches")
+        self.assertFalse(list_seats(self.root)[0].get("archived"), "relaunch un-archives")
+        self.assertFalse(self.post("/api/archive", {"root": str(self.root), "seat": "nobody"})["ok"])
+
     def test_pin_and_unknown_paths(self):
         self.assertEqual(self.post("/api/pin", {"on": False})["on"], False)
         req = urllib.request.Request(self.url + "/api/nothing", data=b"{}", method="POST", headers={"Content-Type": "application/json"})

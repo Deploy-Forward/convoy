@@ -247,6 +247,38 @@ class WidgetApi:
                 break
         return {"ok": True, "since": since, "rows": out}
 
+    def archive(self, root: str, seat: str, archived: bool = True) -> dict[str, Any]:
+        """× on a seat hides it. The chair stays on seats.jsonl (the canonical
+        tape) with archived: true; nothing is closed, deleted or relaunched.
+        Un-archiving flips the flag back. (Marco 2026-09-06.)"""
+        from .convoy import list_seats, update_seat
+        from .layer import hook
+        r = Path(root)
+        if not any(x.get("session_id") == seat for x in list_seats(r)):
+            return {"ok": False, "error": "unknown chair: " + seat}
+        try:
+            row = update_seat(r, seat, archived=bool(archived))
+        except ValueError as e:
+            return {"ok": False, "error": str(e)}
+        hook(r, "archive" if archived else "unarchive", ("archive " if archived else "unarchive ") + seat, instance_id=seat, author=None)
+        return {"ok": True, "seat": seat, "archived": bool(archived), "row": row}
+
+    def relaunch_seat(self, root: str, seat: str) -> dict[str, Any]:
+        """Relaunch ONE chair (its pane died or it was archived): un-archive,
+        then the same relaunch the CLI runs for that seat only, live."""
+        from .bringup import live_runner
+        from .relaunch import relaunch
+        r = Path(root)
+        un = self.archive(root, seat, archived=False)
+        if not un.get("ok"):
+            return un
+        try:
+            card = relaunch(r, runner=live_runner, timeout=0.0, seats=[seat])
+        except (ValueError, OSError) as e:
+            return {"ok": False, "error": str(e)}
+        return {"ok": bool(card.get("ok")), "launched": bool(card.get("launched")), "error": card.get("error"),
+                "seated": card.get("seated"), "chairs": card.get("chairs")}
+
     def pin(self, on: bool) -> dict[str, Any]:
         self.pinned = bool(on)
         applied = self.on_pin(self.pinned) if self.on_pin else None
@@ -349,6 +381,10 @@ def make_handler(api: WidgetApi):
                 return self._json(api.send(str(body.get("root") or "."), str(body.get("seat") or ""), str(body.get("body") or ""), body.get("label")))
             if p == "/api/replies":
                 return self._json(api.replies(str(body.get("root") or "."), str(body.get("seat") or ""), str(body.get("since") or "1970-01-01T00:00:00.000000Z"), body.get("ping_id")))
+            if p == "/api/archive":
+                return self._json(api.archive(str(body.get("root") or "."), str(body.get("seat") or ""), bool(body.get("archived", True))))
+            if p == "/api/relaunch":
+                return self._json(api.relaunch_seat(str(body.get("root") or "."), str(body.get("seat") or "")))
             if p == "/api/feed":
                 return self._json(api.feed(str(body.get("root") or "."), str(body.get("since") or "10m"), int(body.get("limit") or 40)))
             if p == "/api/tune":
