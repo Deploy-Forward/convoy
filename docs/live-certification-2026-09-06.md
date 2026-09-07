@@ -102,12 +102,15 @@ loopback :8789) answered `tools/call feed` with all four `CERT` notes.
 
 **Open, not proven:**
 
-- The public edge `https://convoy.bot/mcp` still reports `0.1.0+6b8670a`
-  bound to a different root. The staged origin is proven on :8789; the
-  scheduled-task cutover (`ConvoyBotMcp` action to the pinned venv and this
-  root) was not performed by the lead's session (permission-gated) and is
-  Marco's step. Until then grok-bot's read-back over the public edge is not
-  done.
+- Public edge: Marco performed the `ConvoyBotMcp` cutover at ~14:20 local
+  on 2026-09-07. `https://convoy.bot/mcp` now reports `0.1.0+40e547b` and a
+  `feed` call over the edge returns all four CERT notes (read 18:2xZ).
+  Grok Bot's Orchestrator confirmed the catalog in a notification ("21
+  tools on thread happy-path"). No grok-bot-authored row is on the feed: the
+  public edge lists 21 read tools and hides `note`/`stamp` by design
+  (`_WRITE_TOOLS`), so grok-bot cannot stamp a read-back over the public MCP
+  unless write tools are enabled on the origin. That is a security decision,
+  not a bug, and it is open.
 - `kind=commit` provenance rows did not land for the four lane commits; the
   commits exist on the branches, the feed does not carry them.
 - Usage rows: both claude seats stamped `kind=usage` on PostToolUse (fresh
