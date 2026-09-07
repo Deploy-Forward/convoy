@@ -79,6 +79,40 @@ per seat carries the same text (`convoy send`).
 Quota-aware automatic delegation (grok-bot's job, not tested here), cloud
 seats, and per-account usage attribution beyond "this pane stamped a row".
 
-## Outcome
+## Outcome (recorded 2026-09-07T00:40Z, main at 40e547b)
 
-Recorded after the run. Empty until then.
+Launched with `convoy crew --launch` at 2026-09-07T00:00:15Z: one wt.exe
+window (pid 125284), four panes, four worktrees minted on `convoy/<title>`.
+
+| seat  | live command line (Win32_Process, after launch)                              | seated (own token) | CERT reply                                   | lane commit |
+|-------|-------------------------------------------------------------------------------|--------------------|----------------------------------------------|-------------|
+| luna3 | codex.exe `-m gpt-5.6-luna -c model_reasoning_effort=xhigh "<boot>"` pid 75032 | 00:02:35 match     | model=gpt-5.6-luna effort=xhigh pid=null     | 8ee2e68     |
+| luna4 | codex.exe `-m gpt-5.6-luna -c model_reasoning_effort=xhigh "<boot>"` pid 114392 | 00:01:38 match    | model=gpt-5.6-luna effort=xhigh pid=114392   | 025a893     |
+| opus1 | claude.exe `--model claude-opus-4-8 --effort high "<boot>"` pid 105836        | 00:01:50 match     | model=claude-opus-4-8 effort=high pid=105836 | 2c31549     |
+| opus2 | claude.exe `--model claude-opus-4-8 --effort high "<boot>"` pid 75108         | 00:02:16 match     | model=claude-opus-4-8 effort=high pid=75108  | 027ef92     |
+
+"match" means the `kind=seated` row's token equals the `kind=join` row's
+token for that seat (read from `.convoy/feed.jsonl`); Convoy wrote none of
+the seated rows. luna4's pane status line read `gpt-5.6-luna xhigh` on the
+screenshot taken at 00:01Z. Each seat's `docs/cert/<seat>.md` on its lane
+branch reports the same model and effort the argv carried.
+
+Read-back: a Convoy MCP origin at 40e547b bound to this root (staged on
+loopback :8789) answered `tools/call feed` with all four `CERT` notes.
+
+**Open, not proven:**
+
+- The public edge `https://convoy.bot/mcp` still reports `0.1.0+6b8670a`
+  bound to a different root. The staged origin is proven on :8789; the
+  scheduled-task cutover (`ConvoyBotMcp` action to the pinned venv and this
+  root) was not performed by the lead's session (permission-gated) and is
+  Marco's step. Until then grok-bot's read-back over the public edge is not
+  done.
+- `kind=commit` provenance rows did not land for the four lane commits; the
+  commits exist on the branches, the feed does not carry them.
+- Usage rows: both claude seats stamped `kind=usage` on PostToolUse (fresh
+  install, 00:01:59 and 00:02:07). Neither codex seat stamped one although
+  `.codex/hooks.json` in its worktree carries PostToolUse; whether codex
+  reads a project-local hooks.json is unverified.
+- luna3 reported `pid=null` (it could not map its own process); opus2 put
+  its join token into its CERT note text.
