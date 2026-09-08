@@ -16,10 +16,8 @@
     hermes: '<svg viewBox="0 0 24 24"><path d="M3 12c4-8 14-8 18 0-4 8-14 8-18 0zm9-3a3 3 0 1 0 0 6 3 3 0 0 0 0-6z"/></svg>',
     pi: '<svg viewBox="0 0 24 24"><path d="M4 6h16v2.4h-2.6V18h-2.4V8.4H9V18H6.6V8.4H4z"/></svg>',
   };
-  // Brand hex per vendor, as lobehub's Color mode shows them (Claude #D97757, OpenAI/Grok #000,
-  // Gemini #1C69FF); Codex #49A3B0 is the codex plugin's own --brand. Unknown vendors stay neutral.
-  const BRAND = { claude: "#D97757", codex: "#49A3B0", grok: "#111111", cursor: "#111111", gemini: "#1C69FF", agy: "#1C69FF" };
-  const mark = (h) => `<span class="vm" style="--brand:${BRAND[h] || "#6b7280"}" title="${esc(h)}">${MARK[h] || '<svg viewBox="0 0 24 24"><rect x="5" y="5" width="14" height="14" rx="3"/></svg>'}</span>`;
+  // Every vendor mark in one flat ink, no chip (Marco 2026-09-08): the glyph identifies the vendor, colour does not.
+  const mark = (h) => `<span class="vm" title="${esc(h)}">${MARK[h] || '<svg viewBox="0 0 24 24"><rect x="5" y="5" width="14" height="14" rx="3"/></svg>'}</span>`;
 
   function esc(s) { return String(s == null ? "" : s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])); }
   async function api(path, body) {
