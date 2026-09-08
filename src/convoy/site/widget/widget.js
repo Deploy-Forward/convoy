@@ -18,7 +18,7 @@
   };
   // Brand hex per vendor, as lobehub's Color mode shows them (Claude #D97757, OpenAI/Grok #000,
   // Gemini #1C69FF); Codex #49A3B0 is the codex plugin's own --brand. Unknown vendors stay neutral.
-  const BRAND = { claude: "#D97757", codex: "#49A3B0", grok: "#000000", cursor: "#000000", gemini: "#1C69FF", agy: "#1C69FF" };
+  const BRAND = { claude: "#D97757", codex: "#49A3B0", grok: "#111111", cursor: "#111111", gemini: "#1C69FF", agy: "#1C69FF" };
   const mark = (h) => `<span class="vm" style="--brand:${BRAND[h] || "#6b7280"}" title="${esc(h)}">${MARK[h] || '<svg viewBox="0 0 24 24"><rect x="5" y="5" width="14" height="14" rx="3"/></svg>'}</span>`;
 
   function esc(s) { return String(s == null ? "" : s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])); }
