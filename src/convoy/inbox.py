@@ -346,9 +346,12 @@ def last_usage_row(root: Path, session_id: str) -> dict[str, Any] | None:
     return last
 
 
-def stamp_usage_row(root: Path, session_id: str, harness: str, *, probe_fn=None, now: str | None = None) -> dict[str, Any] | None:
+def stamp_usage_row(root: Path, session_id: str, harness: str, *, probe_fn=None, now: str | None = None,
+                    require_source: bool = False) -> dict[str, Any] | None:
     """One kind=usage row for this chair from its vendor's own reading, at
-    most every USAGE_ROW_MIN_S. Returns the row, or None when skipped."""
+    most every USAGE_ROW_MIN_S. Returns the row, or None when skipped.
+    require_source=True skips the row when the vendor gave no reading (a
+    launch heartbeat must not write "unknown" rows)."""
     from datetime import datetime, timezone
     from .layer import hook, utc_now
     from .usage import probe, surface
@@ -363,6 +366,8 @@ def stamp_usage_row(root: Path, session_id: str, harness: str, *, probe_fn=None,
         except ValueError:
             pass
     got = (probe_fn or probe)(harness)
+    if require_source and not got.get("source"):
+        return None
     view = surface(harness, got)
     extra = {"harness": harness, "stamped_at": stamp,
              "session_pct": view.get("session_pct"), "week_pct": view.get("week_pct"),
