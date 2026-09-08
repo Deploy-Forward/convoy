@@ -158,18 +158,28 @@
       "usage_probe": "cursor-agent",
       "usage_remaining_null_until_live_probe": true,
       "effort": {
-        "mode": "unknown",
-        "keys": null
+        "mode": "model-driven",
+        "keys": null,
+        "evidence": "cursor-agent --help (this box, 2026.08.11-e8db854, 2026-09-08): there is no effort flag; effort rides the model id (gpt-5.3-codex-xhigh, claude-opus-5-low) or a bracket override on --model ('claude-opus-4-8[effort=high]'). Convoy records a declared effort and never emits it"
       },
       "models": null,
-      "models_evidence": "unverified 2026-09-04: cursor-agent is not on PATH on the demo box; no --help to quote",
+      "models_evidence": "unverified 2026-09-08: `cursor-agent models` on this box (Pro+ login) printed a per-account list of ~40 ids (auto, gpt-5.3-codex-*, gpt-5.6-luna-high, gpt-5.6-sol-*, claude-opus-5-*, claude-sonnet-5-*, claude-fable-5-*, cursor-grok-4.6-*, composer-2.5, gemini-3.7-flash-high); effort is baked into the id (…-low/-medium/-high/-xhigh, …-fast). The list is per account and Convoy does not call it, so the catalog stays a field, not a menu",
       "cloud": {
         "mode": "unverified",
         "cli": null,
-        "evidence": "unverified 2026-09-04: cursor-agent is not on PATH on the demo box; no --help to quote"
+        "evidence": "cursor-agent --help (this box, 2026.08.11-e8db854, 2026-09-08): `worker  Start a private cloud worker that connects to Cursor to run agents in your environment` is a self-hosted worker, not a cloud session; no option creates or attaches a Cursor cloud session from this CLI"
       },
-      "model_flag": null,
-      "model_flag_evidence": "unverified 2026-09-04: cursor-agent is not on PATH on the demo box; no --help to quote"
+      "model_flag": "--model",
+      "model_flag_evidence": "cursor-agent --help (this box, 2026.08.11-e8db854, 2026-09-08): `--model <model>  Model to use (e.g., gpt-5, sonnet-4-thinking). Parameterized models accept quoted bracket overrides, e.g. 'claude-opus-4-8[context=1m,effort=high,fast=false]'`",
+      "resume": {
+        "flag": "--resume",
+        "evidence": "cursor-agent --help (this box, 2026.08.11-e8db854, 2026-09-08): `--resume [chatId]  Select a session to resume`; `--continue  Continue previous session`"
+      },
+      "live_flags": [
+        "--trust",
+        "--force"
+      ],
+      "live_flags_evidence": "cursor-agent --help (this box, 2026.08.11-e8db854, 2026-09-08): `--trust  Trust the current workspace without prompting`; `-f, --force  Force allow commands unless explicitly denied`. Live panes only, the way claude gets --permission-mode bypassPermissions"
     },
     {
       "id": "agy",
