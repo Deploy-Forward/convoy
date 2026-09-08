@@ -88,12 +88,44 @@ class WidgetApi:
         self._cached: dict[str, Any] | None = None
         self._built_at = float("-inf")
         self._building = False
+        self._build_started = float("-inf")
+        # Marco 2026-09-08: × lagged because model() kept serving the LAST
+        # built model for seconds after the write (the rebuild runs on a
+        # thread, and a build already in flight finished with the old seat
+        # rows). A write now records an override per chair that every
+        # model() applies until a build that STARTED after the write lands.
+        self._overrides: dict[tuple[str, str], tuple[float, dict[str, Any]]] = {}
         self.sync_build = False   # tests: build inline so a GET sees the model
 
     def invalidate(self) -> None:
         """A write happened (archive, tune, relaunch): the next model() starts a rebuild now."""
         with self._lock:
             self._built_at = float("-inf")
+
+    def override(self, root: str, seat: str, **fields: Any) -> None:
+        """Show a write on the very next model(), before any rebuild."""
+        import time as _t
+        key = (str(Path(root).resolve()), seat)
+        with self._lock:
+            prev = self._overrides.get(key, (0.0, {}))[1]
+            self._overrides[key] = (_t.monotonic(), {**prev, **fields})
+
+    def _apply_overrides(self, m: dict[str, Any]) -> dict[str, Any]:
+        with self._lock:
+            ov = dict(self._overrides)
+        if not ov:
+            return m
+        out = dict(m)
+        threads = []
+        for t in out.get("threads") or []:
+            root = str(Path(str(t.get("root") or "")).resolve()) if t.get("root") else ""
+            chairs = []
+            for c in t.get("chairs") or []:
+                hit = ov.get((root, str(c.get("session_id") or "")))
+                chairs.append({**c, **hit[1]} if hit else c)
+            threads.append({**t, "chairs": chairs})
+        out["threads"] = threads
+        return out
 
     def _build(self) -> dict[str, Any]:
         from .widget import build_widget_model
@@ -115,6 +147,8 @@ class WidgetApi:
             if kick:
                 self._building = True
         if kick:
+            started = _t.monotonic()
+
             def work() -> None:
                 try:
                     m = self._build()
@@ -124,14 +158,17 @@ class WidgetApi:
                     self._cached = m
                     self._built_at = _t.monotonic()
                     self._building = False
+                    # a build that started after a write has read that write from disk
+                    self._overrides = {k: v for k, v in self._overrides.items() if v[0] > started}
             if self.sync_build:
                 work()
                 with self._lock:
-                    return dict(self._cached or {})
+                    built = dict(self._cached or {})
+                return self._apply_overrides(built)   # outside the lock: _apply_overrides takes it
             threading.Thread(target=work, daemon=True).start()
         if cached is None:
             return {"ok": True, "loading": True, "threads": [], "refresh_ms": int(self.refresh_s * 1000), "now": None}
-        return dict(cached)
+        return self._apply_overrides(dict(cached))
 
     def focus(self, root: str, seat: str) -> dict[str, Any]:
         """Elevate the chair's pane. First the host adapter (focus_seat: tmux
@@ -266,6 +303,7 @@ class WidgetApi:
         except ValueError as e:
             return {"ok": False, "error": str(e)}
         hook(r, "archive" if archived else "unarchive", ("archive " if archived else "unarchive ") + seat, instance_id=seat, author=None)
+        self.override(root, seat, archived=bool(archived))
         self.invalidate()
         return {"ok": True, "seat": seat, "archived": bool(archived), "row": row}
 
