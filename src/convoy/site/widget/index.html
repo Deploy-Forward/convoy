@@ -73,8 +73,8 @@ tr.row.sel td.seat { color: var(--blue-2); font-weight: 600; box-shadow: inset 3
 td.seat { position: relative; padding-left: 12px; font-size: 12px; letter-spacing: -.01em; }
 tr.lead td.seat::before { content: ""; position: absolute; left: 0; top: 6px; bottom: 6px; width: 3px; border-radius: 2px; background: var(--blue); }
 .hn { display: inline-flex; align-items: center; gap: 6px; }
-.vm { display: inline-flex; align-items: center; justify-content: center; width: 16px; height: 16px; border-radius: 5px; background: var(--brand, #6b7280); color: #fff; flex: none; }
-.vm svg { width: 11px; height: 11px; display: block; fill: currentColor; }
+.vm { display: inline-flex; align-items: center; justify-content: center; width: 16px; height: 16px; color: var(--brand, var(--ink-2)); flex: none; }
+.vm svg { width: 15px; height: 15px; display: block; fill: currentColor; }
 .bs { display: inline-flex; align-items: center; gap: 6px; }
 .bs i { width: 8px; height: 8px; border-radius: 50%; flex: none; box-sizing: border-box; }
 .bs.live i { background: var(--green); box-shadow: 0 0 0 3px rgba(31,138,76,.16); }
@@ -125,8 +125,8 @@ tr.row.archived td { color: var(--ink-3); background: var(--panel-2); }
 .vrow { display: grid; grid-template-columns: 22px minmax(78px, auto) 1fr; gap: 10px; align-items: start; padding: 7px 0; border-top: 1px solid var(--hair); }
 .vrow:first-of-type { border-top: 0; }
 .vrow.seated { background: linear-gradient(90deg, rgba(47,79,216,.05), transparent); margin: 0 -6px; padding-left: 6px; padding-right: 6px; border-radius: 8px; }
-.vrow .vm { width: 20px; height: 20px; border-radius: 6px; margin-top: 1px; }
-.vrow .vm svg { width: 13px; height: 13px; }
+.vrow .vm { width: 20px; height: 20px; margin-top: 1px; }
+.vrow .vm svg { width: 19px; height: 19px; }
 .vrow .name { font: 600 12.5px var(--mono); color: var(--ink); padding-top: 1px; white-space: nowrap; }
 .meter { display: grid; grid-template-columns: 1fr; gap: 3px; font: 11.5px var(--mono); color: var(--ink-2); }
 .meter .bar { height: 7px; border-radius: 999px; background: #e9ecf2; overflow: hidden; }
