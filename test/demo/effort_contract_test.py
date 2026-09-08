@@ -94,12 +94,12 @@ class EffortOnTheWire(unittest.TestCase):
 
     def test_choices_is_null_where_the_contract_is_silent(self):
         by_id = {h["id"]: h for h in self._choices()["harnesses"]}
+        # cursor-agent (on this box since 2026-09-08): effort rides the model id, never a flag
         cursor = by_id["cursor-agent"]["effort"]
-        # the contract spells this mode "unknown"; the wire says null, never "unknown"
-        self.assertIsNone(cursor["mode"])
+        self.assertEqual(cursor["mode"], "model-driven")
         self.assertIsNone(cursor["keys"])
         self.assertIsNone(cursor["cli_flag"])
-        self.assertIsNone(cursor["evidence"])
+        self.assertIn("--help", cursor["evidence"])
         self.assertFalse(cursor["applied"])
         # codex has no flag: its effort is a config key applied through -c, with evidence
         codex = by_id["codex"]["effort"]
