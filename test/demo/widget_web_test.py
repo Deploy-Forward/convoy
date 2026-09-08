@@ -213,6 +213,18 @@ class Server(unittest.TestCase):
         self.assertEqual(own["week_pct"], 100); self.assertTrue(own["limited"])
         self.assertNotIn("token", json.dumps(own))
 
+    def test_launch_heartbeat_skips_a_vendor_with_no_reading(self):
+        from convoy.convoy import seat as write_seat
+        from convoy.inbox import stamp_usage_row, last_usage_row
+        write_seat(self.root, "grok", "g-1", worktree=str(self.root))
+        none = {"usage_remaining": None, "limited": False, "raw": None}
+        self.assertIsNone(stamp_usage_row(self.root, "g-1", "grok", probe_fn=lambda h: none, require_source=True))
+        self.assertIsNone(last_usage_row(self.root, "g-1"))
+        snap = {"usage_remaining": {"week_pct": 66}, "session_pct": None, "week_pct": 66, "limited": False, "raw": None,
+                "source": "grok billing log", "as_of": "2026-09-08T03:15:00Z", "resets": {"session": None, "week": "at x"}}
+        r = stamp_usage_row(self.root, "g-1", "grok", probe_fn=lambda h: snap, require_source=True)
+        self.assertEqual(r["kind"], "usage"); self.assertEqual(r["week_pct"], 66); self.assertIn("34% left week", r["summary"])
+
     def test_pin_and_unknown_paths(self):
         self.assertEqual(self.post("/api/pin", {"on": False})["on"], False)
         req = urllib.request.Request(self.url + "/api/nothing", data=b"{}", method="POST", headers={"Content-Type": "application/json"})
