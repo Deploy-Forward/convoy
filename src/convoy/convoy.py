@@ -172,7 +172,7 @@ def seat(
         "worktree": wt,
         "model": model_val,
         "effort": effort_val,
-        "effort_applied": effort_applied(to, effort_val),
+        "effort_applied": effort_applied(to, effort_val, model_val),
         "resume": resume_val,
         # Token-to-harness binding (opus-2 RED at baa6a55): resume_for records
         # the harness this token is claimed for; resume_target refuses on
@@ -333,7 +333,7 @@ def update_seat(root: Path, session_id: str, **changes: Any) -> dict[str, Any]:
         except ValueError:
             updated["effort"] = None
     if "effort" in changes or harness_changed:
-        updated["effort_applied"] = effort_applied(str(updated.get("to") or ""), updated.get("effort"))
+        updated["effort_applied"] = effort_applied(str(updated.get("to") or ""), updated.get("effort"), updated.get("model"))
     if "model" in changes:
         updated["model"] = validate_model(str(updated.get("to") or ""), changes["model"])
     elif harness_changed:

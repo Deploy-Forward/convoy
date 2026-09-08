@@ -97,7 +97,7 @@ class EffortOnTheWire(unittest.TestCase):
         # cursor-agent (on this box since 2026-09-08): effort rides the model id, never a flag
         cursor = by_id["cursor-agent"]["effort"]
         self.assertEqual(cursor["mode"], "model-driven")
-        self.assertIsNone(cursor["keys"])
+        self.assertIn("xhigh", cursor["keys"])   # the catalog's suffix tokens
         self.assertIsNone(cursor["cli_flag"])
         self.assertIn("--help", cursor["evidence"])
         self.assertFalse(cursor["applied"])
@@ -307,7 +307,7 @@ class EffortOverTheMcpWire(unittest.TestCase):
         self.assertNotIn("effort_types", card["contract"])
         by_id = {a["id"]: a for a in card["agents"]}
         self.assertEqual(by_id["grok"]["effort"]["keys"], _contract("grok")["effort"]["keys"])
-        self.assertIsNone(by_id["cursor-agent"]["effort"]["keys"])
+        self.assertIn("xhigh", by_id["cursor-agent"]["effort"]["keys"])
 
 
 class EffortAppliedOnTheChip(unittest.TestCase):

@@ -48,7 +48,7 @@ from typing import Any, Callable
 
 from .identity import ensure_grok_agent, ensure_inbox_hooks, install_neuron_identity
 from .index import is_temp_root
-from .harness_contract import effort_argv, model_argv
+from .harness_contract import effective_model, effort_argv, model_argv
 from .convoy import (
     CONDUCTOR,
     list_seats,
@@ -331,7 +331,7 @@ def resume_argv(seat: dict[str, Any]) -> list[str]:
     # flag (grok/codex/hermes -m, claude/agy/pi --model). Without it the
     # vendor's config default wins: live 2026-09-06 a relaunched codex seat
     # declared gpt-5.6/high booted as gpt-6-astra medium from config.toml.
-    argv.extend(model_argv(to, seat.get("model")))
+    argv.extend(model_argv(to, effective_model(to, seat.get("model"), seat.get("effort"))))
     if _harness_bin(to) == "grok":
         agent = seat.get("agent")
         if isinstance(agent, str) and agent.strip():

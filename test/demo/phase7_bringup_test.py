@@ -603,3 +603,50 @@ class CursorAgentSeat(unittest.TestCase):
         self.assertEqual(live_flags("cursor-agent"), ["--trust", "--force"])
         self.assertEqual(live_flags("codex"), [])
         self.assertEqual(effort_contract("cursor-agent")["mode"], "model-driven")
+
+
+class CursorAgentEffortRidesTheModelId(unittest.TestCase):
+    """cursor-agent has no effort flag; <model>-<effort> is emitted only when the
+    account's catalog (`cursor-agent models`) lists it. Fixture catalog via
+    CONVOY_CURSOR_MODELS_FILE so no vendor CLI runs in tests."""
+
+    def setUp(self):
+        import tempfile
+        self.fx = Path(tempfile.mkdtemp()) / "models.txt"
+        self.fx.write_text("Available models\n\nauto - Auto (default)\ngpt-5.6-luna-high - GPT-5.6 Luna 1M High\n"
+                           "gpt-5.6-luna-xhigh - GPT-5.6 Luna 1M Extra High\ngpt-5.6-luna-xhigh-fast - Fast\n"
+                           "gpt-5.5-extra-high - GPT-5.5 Extra High\nclaude-opus-5-low - Claude Opus 5 1M Low\n", encoding="utf-8")
+        self._old = os.environ.get("CONVOY_CURSOR_MODELS_FILE")
+        os.environ["CONVOY_CURSOR_MODELS_FILE"] = str(self.fx)
+
+    def tearDown(self):
+        if self._old is None:
+            os.environ.pop("CONVOY_CURSOR_MODELS_FILE", None)
+        else:
+            os.environ["CONVOY_CURSOR_MODELS_FILE"] = self._old
+
+    def test_compose_against_the_catalog(self):
+        from convoy.cursor_models import compose, read_catalog
+        cat = read_catalog()
+        self.assertIn("gpt-5.6-luna-xhigh", cat)
+        self.assertEqual(compose("gpt-5.6-luna", "xhigh", cat)["model"], "gpt-5.6-luna-xhigh")
+        self.assertEqual(compose("gpt-5.6-luna-fast", "xhigh", cat)["model"], "gpt-5.6-luna-xhigh-fast")
+        self.assertEqual(compose("gpt-5.5", "xhigh", cat)["model"], "gpt-5.5-extra-high", "alias xhigh -> extra-high when that is the listed id")
+        r = compose("gpt-5.6-luna", "max", cat); self.assertEqual(r["model"], "gpt-5.6-luna"); self.assertFalse(r["applied"])
+        r = compose("gpt-5.6-luna-high", "xhigh", cat); self.assertEqual(r["model"], "gpt-5.6-luna-high"); self.assertFalse(r["applied"])
+        self.assertIsNone(compose("gpt-5.6-luna", None, cat)["applied"])
+        self.assertFalse(compose("gpt-5.6-luna", "xhigh", None)["applied"])
+
+    def test_argv_and_seat_row_carry_the_composed_id(self):
+        argv = resume_argv({"to": "cursor-agent", "session_id": "c", "model": "gpt-5.6-luna", "effort": "xhigh", "resume": "chat-1"})
+        self.assertEqual(argv[1:], ["--model", "gpt-5.6-luna-xhigh", "--resume", "chat-1"])
+        argv = resume_argv({"to": "cursor-agent", "session_id": "c", "model": "gpt-5.6-luna", "effort": "max", "resume": "chat-1"})
+        self.assertEqual(argv[1:], ["--model", "gpt-5.6-luna", "--resume", "chat-1"], "unlisted composition: bare model, never an invented id")
+        root = Path(tempfile.mkdtemp()); ensure_id(root); bind(root, "t")
+        row = seat(root, "cursor-agent", "cur-x", worktree=str(root), model="gpt-5.6-luna", effort="xhigh")
+        self.assertTrue(row["effort_applied"]); self.assertEqual(row["model"], "gpt-5.6-luna", "the seat keeps what was declared")
+        wt2 = Path(tempfile.mkdtemp()); wt3 = Path(tempfile.mkdtemp())
+        row2 = seat(root, "cursor-agent", "cur-y", worktree=str(wt2), model="gpt-5.6-luna", effort="max")
+        self.assertFalse(row2["effort_applied"])
+        with self.assertRaises(ValueError):
+            seat(root, "cursor-agent", "cur-z", worktree=str(wt3), model="gpt-5.6-luna", effort="banana")
