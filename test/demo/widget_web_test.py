@@ -225,6 +225,28 @@ class Server(unittest.TestCase):
         r = stamp_usage_row(self.root, "g-1", "grok", probe_fn=lambda h: snap, require_source=True)
         self.assertEqual(r["kind"], "usage"); self.assertEqual(r["week_pct"], 66); self.assertIn("34% left week", r["summary"])
 
+    def test_archive_shows_on_the_next_model_even_while_the_cache_is_stale(self):
+        from convoy.convoy import seat as write_seat
+        from convoy.widget_web import WidgetApi
+        write_seat(self.root, "codex", "c-1", worktree=str(self.root))
+        api = WidgetApi([self.root], refresh_s=3600, probe_fn=lambda h: dict(NULL_PROBE))
+        api.sync_build = True
+        first = api.model()
+        self.assertFalse(first["threads"][0]["chairs"][0]["archived"])
+        api.sync_build = False          # from here the cache is what a slow rebuild would serve
+        api._built_at = float("inf")    # and no rebuild is due
+        r = api.archive(str(self.root), "c-1", archived=True)
+        self.assertTrue(r["ok"])
+        api._built_at = float("inf")    # archive invalidated; keep the rebuild from running yet
+        m = api.model()
+        self.assertTrue(m["threads"][0]["chairs"][0]["archived"], "the override rides the stale model")
+        api.archive(str(self.root), "c-1", archived=False)
+        api._built_at = float("inf")
+        self.assertFalse(api.model()["threads"][0]["chairs"][0]["archived"])
+        api.sync_build = True; api._built_at = float("-inf")
+        self.assertFalse(api.model()["threads"][0]["chairs"][0]["archived"], "a fresh build agrees and clears the override")
+        self.assertEqual(api._overrides, {})
+
     def test_pin_and_unknown_paths(self):
         self.assertEqual(self.post("/api/pin", {"on": False})["on"], False)
         req = urllib.request.Request(self.url + "/api/nothing", data=b"{}", method="POST", headers={"Content-Type": "application/json"})
