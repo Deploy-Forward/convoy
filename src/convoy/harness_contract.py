@@ -213,11 +213,25 @@ def effort_argv(harness_id: str, effort: Any) -> list[str]:
     return [str(eff["cli_config_flag"]), str(eff["vendor_key"]) + "=" + vendor.strip()]
 
 
-def effort_applied(harness_id: str, effort: Any) -> bool | None:
-    """Seat-row fact: None when no effort is declared, else whether argv carries it."""
+def effort_applied(harness_id: str, effort: Any, model: Any = None) -> bool | None:
+    """Seat-row fact: None when no effort is declared, else whether argv carries
+    it. A model-id harness (cursor-agent) carries it inside the model, so the
+    answer needs the model and the account's catalog."""
     if not (isinstance(effort, str) and effort.strip()):
         return None
+    if _effort_block(harness_id).get("via") == "model-id":
+        from .cursor_models import compose, read_catalog
+        return bool(compose(model, effort, read_catalog())["applied"])
     return bool(effort_argv(harness_id, effort))
+
+
+def effective_model(harness_id: str, model: Any, effort: Any) -> str | None:
+    """The model id argv carries: the declared one, or for a model-id harness
+    the composed <model>-<effort> when the account's catalog lists it."""
+    if _effort_block(harness_id).get("via") == "model-id":
+        from .cursor_models import compose, read_catalog
+        return compose(model, effort, read_catalog())["model"]
+    return model.strip() if isinstance(model, str) and model.strip() else None
 
 
 def model_catalog(harness_id: str) -> dict[str, Any]:
