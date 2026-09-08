@@ -126,6 +126,18 @@ def _applied_flag(eff: dict[str, Any]) -> str | None:
     return None
 
 
+def live_flags(harness_id: str) -> list[str]:
+    """Flags a LIVE pane gets and a dry argv does not, only when the contract
+    quotes a --help for them (cursor-agent --trust --force). [] otherwise."""
+    wanted = canonical_harness_id(harness_id)
+    for row in harness_entries():
+        if row["id"] == wanted:
+            flags, ev = row.get("live_flags"), row.get("live_flags_evidence")
+            if isinstance(flags, list) and flags and isinstance(ev, str) and ev.strip():
+                return [str(f) for f in flags]
+    return []
+
+
 def model_flag(harness_id: str) -> dict[str, Any]:
     """{flag, evidence}: the harness's own model flag, applied only when the
     contract quotes a live --help for it. None means Convoy passes no model
