@@ -834,9 +834,20 @@ def ensure_first_run(seat: dict[str, Any], root: Path | str | None = None, live:
 
 
 def _with_claude_live_flags(argv: list[str], to: Any) -> list[str]:
-    """Live Claude argv includes --permission-mode bypassPermissions and --allow-dangerously-skip-permissions. Dry resume_argv does not."""
+    """Live Claude argv includes --permission-mode bypassPermissions and --allow-dangerously-skip-permissions. Dry resume_argv does not.
+    Other harnesses take their live-only flags from the contract's `live_flags`
+    (cursor-agent: --trust --force, quoted from its --help, 2026-09-08)."""
     parts = [str(a) for a in argv]
     if not _is_claude(to):
+        from .harness_contract import live_flags
+        extra = [f for f in live_flags(to) if f not in parts]
+        if extra:
+            # before the positional boot prompt, which is always last when present
+            bp = parts[-1] if len(parts) > 1 and not parts[-1].startswith("-") and parts[-1] != parts[0] and " " in parts[-1] else None
+            if bp is not None:
+                parts = parts[:-1] + extra + [bp]
+            else:
+                parts = parts + extra
         return parts
     if "--permission-mode" not in parts:
         parts.extend(["--permission-mode", "bypassPermissions"])

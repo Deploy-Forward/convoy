@@ -574,6 +574,32 @@ class SeatModelRidesArgv(unittest.TestCase):
         for hid, flag in (("grok", "-m"), ("codex", "-m"), ("claude", "--model"), ("agy", "--model"), ("hermes", "-m"), ("pi", "--model")):
             self.assertEqual(model_flag(hid)["flag"], flag, hid)
             self.assertTrue(str(model_flag(hid)["evidence"]).strip(), hid)
-        self.assertIsNone(model_flag("cursor-agent")["flag"])
-        self.assertEqual(model_argv("cursor-agent", "anything"), [])
+        self.assertEqual(model_flag("cursor-agent")["flag"], "--model")  # on this box since 2026-09-08
+        self.assertEqual(model_argv("cursor-agent", "gpt-5.6-luna-high"), ["--model", "gpt-5.6-luna-high"])
         self.assertEqual(model_argv("codex", "  "), [])
+
+
+class CursorAgentSeat(unittest.TestCase):
+    """cursor-agent --help (2026.08.11, 2026-09-08): positional prompt, --model,
+    --resume [chatId], --trust, --force. Dry argv carries model + resume + boot;
+    only a live pane adds --trust --force, before the boot prompt."""
+
+    def test_dry_argv_model_resume_boot(self):
+        argv = resume_argv({"to": "cursor-agent", "session_id": "cur1", "model": "gpt-5.6-luna-high", "effort": "high",
+                            "resume": "chat-123", "boot_prompt": "You are the new occupant of seat cur1"})
+        self.assertEqual(argv[1:], ["--model", "gpt-5.6-luna-high", "--resume", "chat-123", "You are the new occupant of seat cur1"])
+        self.assertNotIn("--trust", argv); self.assertNotIn("high", argv[1:-1])
+
+    def test_live_flags_ride_before_the_boot_prompt(self):
+        from convoy.bringup import _with_claude_live_flags
+        live = _with_claude_live_flags(["C:/x/cursor-agent.CMD", "--model", "auto", "You are the new occupant of seat cur1"], "cursor-agent")
+        self.assertEqual(live[1:], ["--model", "auto", "--trust", "--force", "You are the new occupant of seat cur1"])
+        self.assertEqual(_with_claude_live_flags(["C:/x/cursor-agent.CMD", "--resume", "c"], "cursor-agent")[1:], ["--resume", "c", "--trust", "--force"])
+        self.assertEqual(_with_claude_live_flags(["C:/x/codex.CMD", "resume", "c"], "codex")[1:], ["resume", "c"], "no live flags without contract evidence")
+
+    def test_contract_flags_are_evidenced(self):
+        from convoy.harness_contract import model_flag, live_flags, effort_contract
+        self.assertEqual(model_flag("cursor-agent")["flag"], "--model")
+        self.assertEqual(live_flags("cursor-agent"), ["--trust", "--force"])
+        self.assertEqual(live_flags("codex"), [])
+        self.assertEqual(effort_contract("cursor-agent")["mode"], "model-driven")
