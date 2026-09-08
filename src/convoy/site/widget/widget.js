@@ -135,7 +135,12 @@
       ? `<div class="nometer">${esc(r.reason || "no meter on disk or CLI")}</div>`
       : `<div class="meter">${meter("session", r.bar_session, r.used_session, r.resets && r.resets.session, { probing: r.probing, stale })}${meter("week", r.bar_week, r.used_week, r.resets && r.resets.week, { probing: r.probing, stale })}</div>`;
     const logins = (r.logins || []).map((o) => `<div class="meter alt"><div class="lab">another ${esc(name)} login${o.resets && o.resets.week ? " (week resets " + esc(o.resets.week) + ")" : ""}: ${typeof o.session_pct === "number" ? (100 - o.session_pct) + "% left · 5h" : ""}${typeof o.week_pct === "number" ? " · " + (100 - o.week_pct) + "% left · week" : ""}${o.limited ? ' <span class="chip limit">limited</span>' : ""} <span class="stale">· ${esc(o.as_of || "")}</span></div></div>`).join("");
-    return `<div class="vrow ${seated ? "seated" : ""}">${mark(name)}<span class="name">${esc(name)}${r.limited ? ' <span class="chip limit">limited</span>' : (r.near_limit ? ' <span class="chip near">near</span>' : "")}</span><div>${body}${logins}</div></div>`;
+    // Marco 2026-09-08: explicit, not "near". The chip carries the smallest remaining share.
+    const left = [r.bar_session, r.bar_week].filter((v) => typeof v === "number");
+    const low = left.length ? Math.min(...left) : null;
+    const chip = r.limited ? ' <span class="chip limit">limited' + (low != null ? " · " + low + "% left" : "") + '</span>'
+      : (r.near_limit && low != null ? ' <span class="chip near">' + low + '% left</span>' : "");
+    return `<div class="vrow ${seated ? "seated" : ""}">${mark(name)}<span class="name">${esc(name)}${chip}</span><div>${body}${logins}</div></div>`;
   }
   function zoneUsage(t) {
     const u = t.usage || {}; const seated = new Set((t.chairs || []).filter((c) => !c.archived).map((c) => c.harness));

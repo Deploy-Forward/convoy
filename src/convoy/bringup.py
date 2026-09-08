@@ -752,6 +752,16 @@ def ensure_first_run(seat: dict[str, Any], root: Path | str | None = None, live:
             # command probes a shell; a dry bring-up (no runner) skips it.
             if live:
                 hook_card = ensure_inbox_hooks(wt_path, root=root, harness=to)
+                # Launch heartbeat (Marco 2026-09-08): the chair's vendor reading
+                # lands as its own kind=usage row at launch, so the thread tab
+                # is explicit before the first tool call. Only a reading the
+                # vendor gave (require_source); never blocks the launch.
+                try:
+                    from .inbox import stamp_usage_row
+                    hb = stamp_usage_row(root, sid, to, require_source=True)
+                    out["usage_heartbeat"] = hb.get("ts") if hb else None
+                except Exception:  # a heartbeat must never break a launch
+                    out["usage_heartbeat"] = None
             else:
                 hook_card = {"ok": True, "written": False, "command": None, "kinds": None, "skipped": "dry-run"}
             out["inbox_hook_written"] = bool(hook_card.get("written"))
