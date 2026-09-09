@@ -46,7 +46,43 @@ GROK_AGENT_NAME = "convoy-neuron"
 GROK_AGENT_RELATIVE = Path(".grok") / "agents" / (GROK_AGENT_NAME + ".md")
 GROK_INBOX_HOOK_RELATIVE = Path(".grok") / "hooks" / "convoy-inbox.json"
 CLAUDE_SETTINGS_RELATIVE = Path(".claude") / "settings.json"
-CLAUDE_END_COMMAND_RELATIVE = Path(".claude") / "commands" / "end.md"
+CLAUDE_COMMANDS_RELATIVE = Path(".claude") / "commands"
+# Marco 2026-09-09: Convoy's Claude commands carry the convoy- prefix so they never
+# shadow another tool's /end or /start on the same machine (the OLA ones do exist).
+CLAUDE_COMMAND_NAMES = ("convoy-end", "convoy-start", "convoy-add")
+CLAUDE_END_COMMAND_RELATIVE = CLAUDE_COMMANDS_RELATIVE / "convoy-end.md"
+
+
+def claude_command_text(name: str) -> str:
+    """The packaged command with {{CONVOY}} spelled the way THIS box proves
+    Convoy is invoked (cmd.convoy_command: the bare word only when the PATH
+    entry answers as this package, else the interpreter form)."""
+    from .cmd import convoy_command  # noqa: PLC0415
+    raw = (Path(__file__).resolve().parent / "harness_skills" / "commands" / (name + ".md")).read_text(encoding="utf-8")
+    return raw.replace("{{CONVOY}}", convoy_command())
+
+
+def install_claude_commands(target_dir: Path | str) -> dict[str, Any]:
+    """Write every Convoy Claude command into target_dir (a worktree's
+    .claude/commands or the user's ~/.claude/commands). Idempotent; a stale
+    Convoy-owned end.md from before the rename is removed."""
+    d = Path(target_dir)
+    out: dict[str, Any] = {"ok": True, "written": [], "dir": str(d)}
+    try:
+        d.mkdir(parents=True, exist_ok=True)
+        for name in CLAUDE_COMMAND_NAMES:
+            f = d / (name + ".md")
+            text = claude_command_text(name)
+            if not f.is_file() or f.read_text(encoding="utf-8") != text:
+                f.write_text(text, encoding="utf-8")
+                out["written"].append(str(f))
+        stale = d / "end.md"
+        if stale.is_file() and "Convoy" in stale.read_text(encoding="utf-8")[:400] and "ola-brain" not in stale.read_text(encoding="utf-8")[:400]:
+            stale.unlink()
+            out["removed_stale"] = str(stale)
+    except OSError as e:
+        out.update({"ok": False, "error": type(e).__name__ + ": " + str(e)})
+    return out
 CODEX_HOOKS_RELATIVE = Path(".codex") / "hooks.json"
 CODEX_PROMPT_NAME = "convoy.md"
 
@@ -228,15 +264,15 @@ def install_neuron_identity(worktree: Path | str) -> dict[str, Any]:
             out["written"] = True
         if not prompt.get("ok"):
             out["ok"] = False
-        claude_command = wt / CLAUDE_END_COMMAND_RELATIVE
-        claude_command.parent.mkdir(parents=True, exist_ok=True)
-        before_command = claude_command.read_text(encoding="utf-8") if claude_command.is_file() else None
-        command_text = (Path(__file__).resolve().parent / "harness_skills" / "end.md").read_text(encoding="utf-8")
-        if before_command != command_text:
-            claude_command.write_text(command_text, encoding="utf-8")
+        cmds = install_claude_commands(wt / CLAUDE_COMMANDS_RELATIVE)
+        if cmds.get("written"):
             out["written"] = True
+        if not cmds.get("ok"):
+            out["ok"] = False
+            out["error"] = cmds.get("error")
         out["end_paths"] = end_paths
-        out["claude_end_command"] = str(claude_command)
+        out["claude_end_command"] = str(wt / CLAUDE_END_COMMAND_RELATIVE)
+        out["claude_commands"] = cmds.get("written")
         return out
     except OSError as e:
         out["ok"] = False
