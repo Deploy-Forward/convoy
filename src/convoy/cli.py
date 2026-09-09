@@ -127,6 +127,9 @@ def main(argv: list[str] | None = None) -> int:
     mode.add_argument("--push", action="store_true", help="explicitly authorize one plain git push; refuses dirty/detached/no-upstream state")
     mode.add_argument("--hook", action="store_true", help="read a Stop-hook JSON payload from stdin; heartbeat only, never pushes")
     en.add_argument("--summary", help="one-line task-end summary (automatic hooks use a fixed heartbeat summary)")
+    en.add_argument("--seat", default=None, help="lead: end (and --push) ONE named chair's lane from its worktree")
+    en.add_argument("--all", action="store_true", help="lead: orchestra; every live chair ends (and --push) its own lane, one handoff .md + .json under .convoy/handoff/")
+    en.add_argument("--include-archived", action="store_true", help="with --all: archived chairs too")
 
     prb = sub.add_parser("probe")
     prb.add_argument("--to", required=True)
@@ -322,6 +325,12 @@ def main(argv: list[str] | None = None) -> int:
     if args.cmd == "end":
         from .end import end_task
 
+        if (args.seat or args.all) and not args.hook:
+            from .end_all import end_all
+            card = end_all(root, seat=args.seat, push=bool(args.push), summary=args.summary,
+                           include_archived=bool(args.include_archived))
+            print(json.dumps(card, ensure_ascii=False))
+            return 0 if card.get("ok") else 1
         payload = None
         if args.hook:
             try:
