@@ -12,10 +12,24 @@ from convoy import cmd
 
 
 class ConvoyCommand(unittest.TestCase):
-    def test_console_script_wins_when_on_path(self):
-        with mock.patch.object(cmd.shutil, "which", return_value="/usr/bin/convoy"):
+    def setUp(self):
+        cmd._CONVOY_COMMAND = None
+        self.addCleanup(setattr, cmd, "_CONVOY_COMMAND", None)
+
+    def test_console_script_wins_when_on_path_and_proves_itself(self):
+        with mock.patch.object(cmd.shutil, "which", return_value="/usr/bin/convoy"), \
+             mock.patch.object(cmd, "_is_convoy_itself", return_value=True):
             self.assertEqual(cmd.convoy_command(), "convoy")
             self.assertEqual(cmd.convoy_root_command("/r"), "convoy --root /r")
+
+    def test_a_stranger_named_convoy_on_path_is_not_convoy(self):
+        # live 2026-09-08: .local\\bin\\convoy.cmd is the OLA shell tap; name is not proof
+        with mock.patch.object(cmd.shutil, "which", return_value="C:\\Users\\x\\.local\\bin\\convoy.cmd"), \
+             mock.patch.object(cmd, "_is_convoy_itself", return_value=False) as probe, \
+             mock.patch.object(cmd.sys, "executable", "C:\\Python314\\python.exe"):
+            self.assertEqual(cmd.convoy_command(), "C:\\Python314\\python.exe -m convoy")
+            self.assertEqual(cmd.convoy_command(), "C:\\Python314\\python.exe -m convoy")
+            self.assertEqual(probe.call_count, 1, "the proof runs once per process")
 
     def test_falls_back_to_this_interpreter(self):
         with mock.patch.object(cmd.shutil, "which", return_value=None), \

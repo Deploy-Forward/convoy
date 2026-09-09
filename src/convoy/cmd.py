@@ -203,14 +203,34 @@ def resolve_end_hook_command(refresh: bool = False) -> dict:
     return out
 
 
+_CONVOY_COMMAND: str | None = None
+
+
+def _is_convoy_itself(name: str) -> bool:
+    """Does `<name> inbox --help` answer as this package? A stranger by the
+    same name fails (live 2026-09-08: `.local\\bin\\convoy.cmd` on this box is
+    the OLA shell tap into Invoke-Convoy.ps1; every boot prompt told the seats
+    to run it, and they only worked by falling back to `python -m convoy`)."""
+    return _probe_command(name + " " + INBOX_HOOK_ARGS, INBOX_HOOK_ARGS, "--hook-pretooluse")
+
+
 def convoy_command() -> str:
+    """The one spelling of Convoy's own command line for neuron-facing text.
+    The bare word `convoy` only when the thing on PATH by that name PROVES it
+    is this package; otherwise this interpreter, `-m convoy`. Name is not
+    proof. Cached per process (the proof spawns a shell)."""
+    global _CONVOY_COMMAND
+    if _CONVOY_COMMAND is not None:
+        return _CONVOY_COMMAND
     exe = shutil.which("convoy")
-    if exe:
-        return "convoy"
+    if exe and _is_convoy_itself("convoy"):
+        _CONVOY_COMMAND = "convoy"
+        return _CONVOY_COMMAND
     py = sys.executable or "python"
     if any(ch in py for ch in ' "'):
         py = '"' + py.replace('"', '\\"') + '"'
-    return py + " -m convoy"
+    _CONVOY_COMMAND = py + " -m convoy"
+    return _CONVOY_COMMAND
 
 
 def convoy_root_command(root: os.PathLike | str) -> str:
