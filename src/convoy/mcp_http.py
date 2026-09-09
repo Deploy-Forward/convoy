@@ -57,7 +57,17 @@ from .panes import bodies
 from .gitstate import git_state
 from .layer import SCHEMA_VERSION, conductor_stamp, feed_since, neuron_note, parse_since
 from .synapse import fake_runner, native_runner, send_one
-from .usage import normalize_usage_remaining, probe
+from .usage import CachedProbe, normalize_usage_remaining, probe as _live_probe
+
+# Live 2026-09-09 on the production origin: roster took 20.5 s and glance 19.7 s
+# on loopback because each request probed the vendors synchronously on the
+# request thread (claude's /usage alone is ~6.5 s, called more than once per
+# card). Clients gave up mid-response, which the server logged as WinError
+# 10053 in _send. The widget solved the same problem with CachedProbe: the
+# request path never blocks on a vendor; the first ask says probing:true and a
+# background refresh fills the cache. One instance per process, shared by
+# every tool that reads usage.
+probe: Any = CachedProbe(_live_probe, ttl_s=60.0)
 
 PROTOCOL_LATEST = "2025-03-26"
 PROTOCOL_SUPPORTED = frozenset({PROTOCOL_LATEST, "2024-11-05"})
@@ -671,7 +681,7 @@ def _call_tool(root: Path, name: str, arguments: dict[str, Any] | None) -> dict[
     if name == "roster":
         return build_roster(root)
     if name == "glance":
-        return build_glance(root, thread=_opt_str(args, "thread"), convoy_id=_opt_str(args, "convoy_id"))
+        return build_glance(root, thread=_opt_str(args, "thread"), convoy_id=_opt_str(args, "convoy_id"), probe_fn=probe)
     if name == "onboard":
         # An MCP process is bound to ONE root for its lifetime (module
         # docstring). onboard writes the thread at the root its checkout_root
@@ -881,7 +891,7 @@ def _call_tool(root: Path, name: str, arguments: dict[str, Any] | None) -> dict[
     if name == "choices":
         return launch_choices(root)
     if name == "card":
-        return build_card(root, listed=[t["name"] for t in _listed_tools()])
+        return build_card(root, listed=[t["name"] for t in _listed_tools()], probe_fn=probe)
     if name == "neurons":
         return neuron_activity(root, since=_opt_str(args, "since"))
     if name == "inbox":

@@ -382,3 +382,37 @@ class PhaseMcpHttp(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RequestPathNeverBlocksOnAVendor(unittest.TestCase):
+    """Live 2026-09-09: roster 20.5 s and glance 19.7 s on loopback because the
+    origin probed vendors synchronously per request; clients aborted mid-body
+    (WinError 10053 in _send). The origin's probe is now CachedProbe: the first
+    ask answers at once with probing:true and a background thread fills it."""
+
+    def test_roster_and_glance_answer_before_a_slow_vendor_does(self):
+        import time
+        from convoy import mcp_http
+        from convoy.usage import CachedProbe
+        started = threading.Event()
+        release = threading.Event()
+
+        def slow_vendor(_h):
+            started.set()
+            release.wait(5)
+            return {"usage_remaining": {"session_pct": 40, "week_pct": 20}, "limited": False, "raw": None, "source": "test"}
+
+        root = Path(tempfile.mkdtemp()); ensure_id(root); bind(root, "t")
+        seat(root, "claude", "c-1", worktree=str(root))
+        cached = CachedProbe(slow_vendor, ttl_s=60.0)
+        with mock.patch.object(mcp_http, "probe", cached):
+            t0 = time.monotonic()
+            r = mcp_http.handle_rpc(root, {"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                                           "params": {"name": "roster", "arguments": {}}})
+            g = mcp_http.handle_rpc(root, {"jsonrpc": "2.0", "id": 2, "method": "tools/call",
+                                           "params": {"name": "glance", "arguments": {}}})
+            elapsed = time.monotonic() - t0
+        self.assertLess(elapsed, 2.0, "the request path waited on the vendor: %.1fs" % elapsed)
+        self.assertIsNotNone(r); self.assertIsNotNone(g)
+        self.assertTrue(started.is_set(), "a background probe was kicked")
+        release.set()
