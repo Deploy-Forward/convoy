@@ -88,3 +88,30 @@ class Phase1ThreadedContext(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RecordIsConvoyNotOla(unittest.TestCase):
+    """Marco 2026-09-10: a conductor kept writing under .ola/. context now names the
+    canonical write paths and lists every legacy .ola file it still reads."""
+
+    def test_legacy_is_labelled_and_canonical_paths_are_named(self):
+        import tempfile
+        from convoy.context import pack
+        root = Path(tempfile.mkdtemp())
+        (root / ".convoy").mkdir(); (root / ".ola").mkdir()
+        (root / ".ola" / "brief.md").write_text("b", encoding="utf-8")
+        (root / ".ola" / "handoff-20260910T073611Z.md").write_text("h", encoding="utf-8")
+        out = pack(root)
+        self.assertEqual(out["brief_source"], "legacy-ola"); self.assertEqual(out["handoff_source"], "legacy-ola")
+        self.assertEqual(sorted(Path(x).name for x in out["legacy_ola"]), ["brief.md", "handoff-20260910T073611Z.md"])
+        self.assertTrue(out["advice"].startswith("write briefs to .convoy/brief.md"))
+        self.assertEqual(Path(out["canonical"]["brief"]), root / ".convoy" / "brief.md")
+        self.assertEqual(Path(out["canonical"]["handoff_dir"]), root / ".convoy" / "handoff")
+        (root / ".convoy" / "brief.md").write_text("new", encoding="utf-8")
+        (root / ".convoy" / "handoff").mkdir(); (root / ".convoy" / "handoff" / "20260910T080000.md").write_text("n", encoding="utf-8")
+        out2 = pack(root)
+        self.assertEqual(out2["brief_source"], "convoy"); self.assertEqual(out2["handoff_source"], "convoy")
+        self.assertEqual(Path(out2["brief"]), root / ".convoy" / "brief.md")
+        self.assertEqual(len(out2["legacy_ola"]), 2, "legacy files are still listed so the drift stays visible")
+        clean = Path(tempfile.mkdtemp()); (clean / ".convoy").mkdir()
+        self.assertEqual(pack(clean)["legacy_ola"], []); self.assertIsNone(pack(clean)["advice"])
