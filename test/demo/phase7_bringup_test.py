@@ -650,3 +650,14 @@ class CursorAgentEffortRidesTheModelId(unittest.TestCase):
         self.assertFalse(row2["effort_applied"])
         with self.assertRaises(ValueError):
             seat(root, "cursor-agent", "cur-z", worktree=str(wt3), model="gpt-5.6-luna", effort="banana")
+
+
+class BootPromptReadsThreadOnce(unittest.TestCase):
+    def test_handoff_equal_to_thread_is_named_once(self):
+        from convoy.lifecycle import _boot_prompt
+        root = Path(tempfile.mkdtemp())
+        p = _boot_prompt(root, "s", "tok", "thread.md")
+        self.assertEqual(p.count(str(root / "thread.md")), 1)
+        self.assertNotIn(" and ", p.split(". Then run")[0])
+        q = _boot_prompt(root, "s", "tok", "handoff.md")
+        self.assertIn(" and " + str(root / "handoff.md"), q)

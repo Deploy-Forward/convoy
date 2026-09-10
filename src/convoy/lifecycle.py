@@ -41,9 +41,15 @@ def _boot_prompt(root: Path, session_id: str, token: str, handoff: str) -> str:
     handoff_path = Path(handoff)
     if not handoff_path.is_absolute():
         handoff_path = Path(root) / handoff_path
+    same = False
+    try:
+        same = handoff_path.resolve() == thread_path.resolve()
+    except OSError:
+        same = str(handoff_path) == str(thread_path)
+    reads = str(thread_path) if same else str(thread_path) + " and " + str(handoff_path)
     return (
         "You are the new occupant of Convoy seat '" + session_id + "'. "
-        "Read " + str(thread_path) + " and " + str(handoff_path) + ". Then run: "
+        "Read " + reads + ". Then run: "
         + convoy_root_command(root) + " seated --seat " + session_id +
         " --token " + token + " — then continue the seat's work."
     )
