@@ -413,7 +413,11 @@ def build_widget_model(
             path, n=i, index_row=row, probe_fn=fn, enumerate_fn=enumerate_fn,
             now=now, threshold_s=threshold,
         ))
-    return {"ok": True, "threads": threads, "now": now, "idle_s_flag": threshold}
+    hidden: list[dict[str, Any]] = []
+    if roots is None:
+        from .index import hidden_threads
+        hidden = [{"convoy_id": r.get("convoy_id"), "thread": r.get("thread"), "root": r.get("root")} for r in hidden_threads()]
+    return {"ok": True, "threads": threads, "hidden_threads": hidden, "now": now, "idle_s_flag": threshold}
 
 
 NUDGE_AWAIT_S = 60.0
