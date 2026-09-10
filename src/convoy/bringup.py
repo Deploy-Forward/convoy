@@ -1041,9 +1041,15 @@ def pane_env(base: dict[str, str] | None = None, *, registry: dict[str, str] | N
     if os.name != "nt":
         return src
     env = dict(_registry_env() if registry is None else registry)
+    # os.environ on Windows uppercases its keys (SYSTEMROOT), while the
+    # registry and the harness launchers spell them mixed-case (SystemRoot);
+    # live 2026-09-10 a case-sensitive copy dropped SystemRoot and every
+    # cursor-agent.CMD died with "The system cannot find the path specified".
+    upper = {k.upper(): v for k, v in src.items()}
+    present = {k.upper() for k in env}
     for name in _WIN_PROCESS_VARS:
-        if name not in env and name in src:
-            env[name] = src[name]
+        if name.upper() not in present and name.upper() in upper:
+            env[name] = upper[name.upper()]
     for name, value in src.items():
         if name.upper().startswith("CONVOY_"):
             env[name] = value
