@@ -257,7 +257,7 @@
     const ht = e.target.closest("[data-hist]"); if (ht) { state.histTab = ht.dataset.hist; await refresh(); return; }
     if (e.target.closest("#hist-toggle")) { state.histOpen = !state.histOpen; render(); return; }
     const hx = e.target.closest("[data-hide]"); if (hx) { e.stopPropagation(); const r = await api("/api/thread-hide", { convoy_id: hx.dataset.hide, hidden: true }); $("status").textContent = r.ok ? (r.thread || "thread") + " archived off the strip (kept on disk; open the +N chip to restore)" : "refused: " + (r.error || ""); await refresh(true); return; }
-    const ux = e.target.closest("[data-unhide]"); if (ux) { e.stopPropagation(); const r = await api("/api/thread-hide", { convoy_id: ux.dataset.unhide, hidden: false }); $("status").textContent = r.ok ? (r.thread || "thread") + " restored" : "refused: " + (r.error || ""); await refresh(true); return; }
+    const uh = e.target.closest("[data-unhide]"); if (uh) { e.stopPropagation(); const r = await api("/api/thread-hide", { convoy_id: uh.dataset.unhide, hidden: false }); $("status").textContent = r.ok ? (r.thread || "thread") + " restored" : "refused: " + (r.error || ""); await refresh(true); return; }
     const th = e.target.closest("[data-toggle-hidden]"); if (th) { state.showHiddenThreads = !state.showHiddenThreads; renderHeader(); return; }
     const dot = e.target.closest(".dot"); if (dot && dot.dataset.n) { state.selected = +dot.dataset.n; state.selectedSeat = null; chat.draft = ""; await refresh(); return; }
     const nd = e.target.closest("[data-nudge]"); if (nd) { e.stopPropagation(); await nudgeDry(nd.dataset.nudge); return; }
