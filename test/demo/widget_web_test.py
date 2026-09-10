@@ -247,6 +247,31 @@ class Server(unittest.TestCase):
         self.assertFalse(api.model()["threads"][0]["chairs"][0]["archived"], "a fresh build agrees and clears the override")
         self.assertEqual(api._overrides, {})
 
+    def test_a_thread_can_be_archived_off_the_strip_and_restored(self):
+        import os as _os, tempfile as _tf
+        from convoy import index as idx
+        from convoy.widget import build_widget_model
+        home = Path(_tf.mkdtemp())
+        with mock.patch.dict(_os.environ, {"CONVOY_HOME": str(home)}), mock.patch.object(idx, "is_temp_root", return_value=False):
+            from convoy.convoy import read_id as _rid
+            idx.record(self.root, _rid(self.root), "alpha")
+            other = Path(_tf.mkdtemp()); ensure_id(other); bind(other, "beta")
+            from convoy.convoy import read_id
+            idx.record(other, read_id(other), "beta")
+            self.assertEqual(sorted(r["thread"] for r in idx.recent(10)), ["alpha", "beta"])
+            r = self.post("/api/thread-hide", {"convoy_id": read_id(other), "hidden": True})
+            self.assertTrue(r["ok"]); self.assertEqual(r["thread"], "beta")
+            self.assertEqual([x["thread"] for x in idx.recent(10)], ["alpha"], "hidden threads leave the strip")
+            self.assertEqual([x["thread"] for x in idx.hidden_threads()], ["beta"])
+            self.assertTrue((other / ".convoy" / "id").is_file(), "nothing under the root changes")
+            m = build_widget_model(None, probe_fn=lambda h: dict(NULL_PROBE))
+            self.assertEqual([t["thread"] for t in m["hidden_threads"]], ["beta"])
+            idx.record(other, read_id(other), "beta")
+            self.assertEqual([x["thread"] for x in idx.hidden_threads()], ["beta"], "a later write keeps it archived")
+            self.assertTrue(self.post("/api/thread-hide", {"convoy_id": read_id(other), "hidden": False})["ok"])
+            self.assertEqual(idx.hidden_threads(), [])
+            self.assertFalse(self.post("/api/thread-hide", {"convoy_id": "cvy_nope"})["ok"])
+
     def test_pin_and_unknown_paths(self):
         self.assertEqual(self.post("/api/pin", {"on": False})["on"], False)
         req = urllib.request.Request(self.url + "/api/nothing", data=b"{}", method="POST", headers={"Content-Type": "application/json"})

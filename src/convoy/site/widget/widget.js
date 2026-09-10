@@ -27,10 +27,21 @@
   function thread() { const m = state.model; if (!m || !m.threads || !m.threads.length) return null; return m.threads.find((t) => t.n === state.selected) || m.threads[0]; }
   const short = (ts) => ts ? String(ts).slice(11, 19) + "Z" : "";
 
+  $("dots").addEventListener("wheel", (e) => { const b = $("dots"); if (b.scrollWidth > b.clientWidth && e.deltaY) { b.scrollLeft += e.deltaY; e.preventDefault(); } }, { passive: false });
+
   // ---------- zone 1: thread ----------
   function renderHeader() {
     const m = state.model; const box = $("dots"); if (!m) return;
-    const html = (m.threads || []).map((t) => `<span class="dot ${t.n === state.selected ? "on" : ""} ${t.stale_ring ? "stale" : ""}" data-n="${t.n}" title="${esc(t.thread || "")} · ${esc(t.convoy_id || "")}"><i></i>${esc(t.thread || t.n)}</span>`).join("");
+    // Marco 2026-09-10: the strip clipped past four threads and could not archive one.
+    // Now it scrolls (wheel = sideways), every tab has an × that archives the thread off
+    // the strip (index flag only; nothing under the root changes), and a trailing chip
+    // shows how many are archived and reveals them dimmed; clicking a dimmed one restores it.
+    const hidden = m.hidden_threads || [];
+    let html = (m.threads || []).map((t) => `<span class="dot ${t.n === state.selected ? "on" : ""} ${t.stale_ring ? "stale" : ""}" data-n="${t.n}" title="${esc(t.thread || "")} · ${esc(t.convoy_id || "")}"><i></i>${esc(t.thread || t.n)}<b class="x" data-hide="${esc(t.convoy_id || "")}" title="archive this thread off the strip (kept on disk)">×</b></span>`).join("");
+    if (hidden.length) {
+      html += `<span class="dot more ${state.showHiddenThreads ? "on" : ""}" data-toggle-hidden="1" title="archived threads">${state.showHiddenThreads ? "hide" : "+" + hidden.length}</span>`;
+      if (state.showHiddenThreads) html += hidden.map((h) => `<span class="dot hid" data-unhide="${esc(h.convoy_id || "")}" title="restore ${esc(h.thread || "")} to the strip"><i></i>${esc(h.thread || h.convoy_id)}</span>`).join("");
+    }
     if (box.innerHTML !== html) box.innerHTML = html;
     const t = thread(); $("count").textContent = t ? `${t.seated_n || 0}/${(t.chairs || []).length} seated` : "";
     $("pin").classList.toggle("on", state.pinned);
@@ -245,7 +256,10 @@
     const ut = e.target.closest("[data-usage-tab]"); if (ut) { state.usageTab = ut.dataset.usageTab; render(); return; }
     const ht = e.target.closest("[data-hist]"); if (ht) { state.histTab = ht.dataset.hist; await refresh(); return; }
     if (e.target.closest("#hist-toggle")) { state.histOpen = !state.histOpen; render(); return; }
-    const dot = e.target.closest(".dot"); if (dot) { state.selected = +dot.dataset.n; state.selectedSeat = null; chat.draft = ""; await refresh(); return; }
+    const hx = e.target.closest("[data-hide]"); if (hx) { e.stopPropagation(); const r = await api("/api/thread-hide", { convoy_id: hx.dataset.hide, hidden: true }); $("status").textContent = r.ok ? (r.thread || "thread") + " archived off the strip (kept on disk; open the +N chip to restore)" : "refused: " + (r.error || ""); await refresh(true); return; }
+    const ux = e.target.closest("[data-unhide]"); if (ux) { e.stopPropagation(); const r = await api("/api/thread-hide", { convoy_id: ux.dataset.unhide, hidden: false }); $("status").textContent = r.ok ? (r.thread || "thread") + " restored" : "refused: " + (r.error || ""); await refresh(true); return; }
+    const th = e.target.closest("[data-toggle-hidden]"); if (th) { state.showHiddenThreads = !state.showHiddenThreads; renderHeader(); return; }
+    const dot = e.target.closest(".dot"); if (dot && dot.dataset.n) { state.selected = +dot.dataset.n; state.selectedSeat = null; chat.draft = ""; await refresh(); return; }
     const nd = e.target.closest("[data-nudge]"); if (nd) { e.stopPropagation(); await nudgeDry(nd.dataset.nudge); return; }
     const ax = e.target.closest("[data-archive]"); if (ax) { e.stopPropagation(); const t = thread(); const c = (t.chairs || []).find((x) => x.session_id === ax.dataset.archive); if (c) { c.archived = true; } if (state.selectedSeat === ax.dataset.archive) state.selectedSeat = null; render();
       const r = await api("/api/archive", { root: t.root, seat: ax.dataset.archive, archived: true }); $("status").textContent = r.ok ? ax.dataset.archive + " archived (kept on the thread; show archived to relaunch)" : "refused: " + (r.error || ""); if (!r.ok && c) { c.archived = false; render(); } await refresh(true); return; }

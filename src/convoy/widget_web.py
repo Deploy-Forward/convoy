@@ -289,6 +289,15 @@ class WidgetApi:
                 break
         return {"ok": True, "since": since, "rows": out}
 
+    def hide_thread(self, convoy_id: str, hidden: bool = True) -> dict[str, Any]:
+        """Archive a whole thread off the strip (index flag only; nothing on disk
+        under the root changes). The next model omits it and lists it as a stub."""
+        from .index import set_hidden
+        r = set_hidden(str(convoy_id or ""), bool(hidden))
+        if r.get("ok"):
+            self.invalidate()
+        return r
+
     def archive(self, root: str, seat: str, archived: bool = True) -> dict[str, Any]:
         """× on a seat hides it. The chair stays on seats.jsonl (the canonical
         tape) with archived: true; nothing is closed, deleted or relaunched.
@@ -429,6 +438,8 @@ def make_handler(api: WidgetApi):
                 return self._json(api.replies(str(body.get("root") or "."), str(body.get("seat") or ""), str(body.get("since") or "1970-01-01T00:00:00.000000Z"), body.get("ping_id")))
             if p == "/api/archive":
                 return self._json(api.archive(str(body.get("root") or "."), str(body.get("seat") or ""), bool(body.get("archived", True))))
+            if p == "/api/thread-hide":
+                return self._json(api.hide_thread(str(body.get("convoy_id") or ""), bool(body.get("hidden", True))))
             if p == "/api/relaunch":
                 return self._json(api.relaunch_seat(str(body.get("root") or "."), str(body.get("seat") or "")))
             if p == "/api/feed":
