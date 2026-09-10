@@ -978,17 +978,76 @@ def dry_runner(*_a: Any, **_k: Any) -> dict[str, Any]:
 CREATE_NEW_CONSOLE = 0x00000010
 
 
-def pane_env(base: dict[str, str] | None = None) -> dict[str, str]:
-    """Environment for a pane Convoy opens: the launcher's, minus the launcher's
-    shell identity on Windows. Live 2026-09-10: cursor-agent's hook runner on
-    Windows always builds a PowerShell pipeline (`Get-Content -LiteralPath ...
-    -Raw | & { $input | <hook> }`) but executes it in the shell named by
-    SHELL; panes launched from a Git Bash tool call inherited SHELL=bash, so
-    every PreToolUse hook failed and every tool was refused. A pane should
-    see the environment a user double-clicking the harness would see."""
-    env = dict(os.environ if base is None else base)
-    if os.name == "nt":
-        env.pop("SHELL", None)
+# Process-only variables Windows sets at logon that the registry does not carry.
+_WIN_PROCESS_VARS = (
+    "SystemRoot", "SystemDrive", "windir", "ComSpec", "PATHEXT", "OS",
+    "USERPROFILE", "USERNAME", "USERDOMAIN", "HOMEDRIVE", "HOMEPATH", "APPDATA", "LOCALAPPDATA",
+    "TEMP", "TMP", "PUBLIC", "ALLUSERSPROFILE", "ProgramData", "ProgramFiles", "ProgramFiles(x86)",
+    "ProgramW6432", "CommonProgramFiles", "CommonProgramFiles(x86)", "CommonProgramW6432",
+    "COMPUTERNAME", "LOGONSERVER", "SESSIONNAME", "NUMBER_OF_PROCESSORS", "PROCESSOR_ARCHITECTURE",
+    "PROCESSOR_IDENTIFIER", "PROCESSOR_LEVEL", "PROCESSOR_REVISION", "DriverData", "OneDrive",
+)
+
+
+def _registry_env() -> dict[str, str]:
+    """The user's environment as Explorer would build it: machine scope, then
+    user scope, PATH concatenated machine;user, REG_EXPAND_SZ expanded."""
+    import winreg  # type: ignore[import-not-found]
+    out: dict[str, str] = {}
+    path_parts: list[str] = []
+    for hive, key in ((winreg.HKEY_LOCAL_MACHINE, r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment"),
+                      (winreg.HKEY_CURRENT_USER, "Environment")):
+        try:
+            with winreg.OpenKey(hive, key) as k:
+                i = 0
+                while True:
+                    try:
+                        name, value, kind = winreg.EnumValue(k, i)
+                    except OSError:
+                        break
+                    i += 1
+                    if not isinstance(value, str):
+                        continue
+                    if kind == winreg.REG_EXPAND_SZ:
+                        value = os.path.expandvars(value)
+                    if name.upper() == "PATH":
+                        path_parts.append(value)
+                    else:
+                        out[name] = value
+        except OSError:
+            continue
+    if path_parts:
+        out["PATH"] = ";".join(p for p in path_parts if p)
+    return out
+
+
+def pane_env(base: dict[str, str] | None = None, *, registry: dict[str, str] | None = None) -> dict[str, str]:
+    """Environment for a pane Convoy opens. On Windows: the user's registry
+    environment plus the logon-time process variables and Convoy's own
+    CONVOY_* settings; never the launcher's shell identity or PATH.
+
+    Live 2026-09-10, evco-equity, cursor-agent 2026.09.02-2026.09.08: the
+    hook runner builds a PowerShell pipeline (`Get-Content -LiteralPath ...
+    -Raw | & { $input | <hook> }`) and runs it in the shell it picks from the
+    environment. Panes launched from a Git Bash tool call inherited
+    SHELL=bash and a PATH with Git's usr/bin first; removing SHELL alone still
+    failed (`eval: syntax error near unexpected token '&'`), and the same
+    pane launched with the registry-built environment ran the hook and
+    printed `hookcheck`. A pane sees what a user launching the harness by
+    hand would see. Windows Terminal is single-instance: wt.exe hands the
+    command to the running host, which spawns the pane with the environment
+    the launcher passed, so this is the one place it can be set."""
+    src = dict(os.environ if base is None else base)
+    if os.name != "nt":
+        return src
+    env = dict(_registry_env() if registry is None else registry)
+    for name in _WIN_PROCESS_VARS:
+        if name not in env and name in src:
+            env[name] = src[name]
+    for name, value in src.items():
+        if name.upper().startswith("CONVOY_"):
+            env[name] = value
+    env.pop("SHELL", None)
     return env
 
 
