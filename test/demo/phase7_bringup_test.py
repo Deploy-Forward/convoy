@@ -661,3 +661,15 @@ class BootPromptReadsThreadOnce(unittest.TestCase):
         self.assertNotIn(" and ", p.split(". Then run")[0])
         q = _boot_prompt(root, "s", "tok", "handoff.md")
         self.assertIn(" and " + str(root / "handoff.md"), q)
+
+
+class PaneEnvDropsTheLaunchersShell(unittest.TestCase):
+    def test_shell_is_dropped_on_windows_and_kept_elsewhere(self):
+        from convoy.bringup import pane_env
+        base = {"PATH": "x", "SHELL": "C:/Program Files/Git/usr/bin/bash.exe", "HOME": "h"}
+        with mock.patch.object(os, "name", "nt"):
+            env = pane_env(base)
+        self.assertNotIn("SHELL", env); self.assertEqual(env["PATH"], "x")
+        with mock.patch.object(os, "name", "posix"):
+            self.assertEqual(pane_env(base)["SHELL"], base["SHELL"])
+        self.assertIn("SHELL", base, "the caller's mapping is not mutated")
