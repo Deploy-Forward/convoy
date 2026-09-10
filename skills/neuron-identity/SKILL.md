@@ -16,6 +16,7 @@ Grok Bot is the conductor: one chat, own memory, own cloud computer. It orchestr
 1. Read `thread.md` if present. `bind` writes `convoy_id` then the thread key. Missing file means those fields are unknown. Never invent a `cvy_` id or a session id.
 2. Read `.convoy/id` and `.convoy/thread` the same way (one line each). Unknown is JSON `null`.
 3. Persona is `role.md` in this worktree, not `--append-system-prompt`.
+4. The record is `.convoy/`: `feed.jsonl`, `inbox/`, `brief.md`, `handoff/`. Write briefs to `.convoy/brief.md` and handoffs to `.convoy/handoff/` (or run `convoy end --push --all` from the lead). `.ola/` belongs to another product: never write it; `convoy context` lists any legacy `.ola/` file still being read under `legacy_ola`.
 4. **Pane:** on grok-bot-local, pane identity is the Windows Terminal title plus this worktree. On grok-bot-cloud there is no WT pane — identity is `to` + worktree + thread. Do not invent a window. Grok Bot "each Bot gets its own screen" is a conductor screen, not your pane.
 
 ## How you talk
