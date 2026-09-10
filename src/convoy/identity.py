@@ -358,6 +358,51 @@ def _merge_claude_inbox_hooks(data: dict[str, Any], command: str) -> tuple[dict[
     return data, changed
 
 
+def _strip_convoy_entries(data: dict[str, Any], marker: str) -> tuple[dict[str, Any], bool]:
+    """Remove every Convoy-owned entry (by command marker) from every event
+    list, keeping foreign entries. Live 2026-09-09: evco-equity commits a
+    .claude/settings.json carrying bare `convoy inbox --hook-pretooluse`; on
+    a box where no hook-shell interpreter imports convoy, resolution fails and
+    the installer used to return without touching the file, so two
+    cursor-agent seats booted with a hook that exits 127 under Git Bash and
+    every tool was refused. No hook (cli-drain) beats a dead hook."""
+    hooks = data.get("hooks")
+    if not isinstance(hooks, dict):
+        return data, False
+    changed = False
+    for event, events in list(hooks.items()):
+        if not isinstance(events, list):
+            continue
+        kept = [e for e in events if not _commands_in(e, marker)]
+        if kept != events:
+            changed = True
+            if kept:
+                hooks[event] = kept
+            else:
+                del hooks[event]
+    data["hooks"] = hooks
+    return data, changed
+
+
+def _strip_dead_hook_file(dest: Path, prev_text: str | None, markers: tuple[str, ...]) -> bool:
+    """Rewrite dest without Convoy's entries for the given markers. True when written."""
+    if prev_text is None or not dest.is_file():
+        return False
+    try:
+        raw = json.loads(prev_text)
+    except json.JSONDecodeError:
+        return False
+    if not isinstance(raw, dict):
+        return False
+    data, changed = raw, False
+    for m in markers:
+        data, c = _strip_convoy_entries(data, m)
+        changed = changed or c
+    if changed:
+        dest.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    return changed
+
+
 def _existing_hook_commands(text: str | None, marker: str = INBOX_HOOK_ARGS) -> list[str]:
     """Every matching command inside an existing hook document, or []."""
     if not text:
@@ -436,6 +481,11 @@ def _ensure_end_hook_file(
     command = resolved.get("command")
     if not command:
         out.update({"ok": False, "error": resolved.get("error")})
+        try:
+            if _strip_dead_hook_file(dest, prev_text, (END_HOOK_ARGS, INBOX_HOOK_ARGS)):
+                out["removed_dead"] = str(dest)
+        except OSError as e:
+            out["error"] = str(out["error"]) + "; and could not strip the dead hook: " + str(e)
         return out
     try:
         dest.parent.mkdir(parents=True, exist_ok=True)
@@ -511,6 +561,12 @@ def ensure_grok_inbox_hook(worktree: Path | str, root: Path | str | None = None)
                            "resolved_via": res["resolved_via"], "kept_existing": res.get("kept_existing")}
     if not res["command"]:
         out.update({"ok": False, "error": res["error"]})
+        if dest.is_file():
+            try:
+                dest.unlink()
+                out["removed_dead"] = str(dest)
+            except OSError as e:
+                out["error"] = str(out["error"]) + "; and could not remove the dead hook: " + str(e)
         return out
     doc = grok_inbox_hook_document(res["command"])
     payload = json.dumps(doc, indent=2) + "\n"
@@ -555,6 +611,11 @@ def ensure_claude_inbox_hook(worktree: Path | str, root: Path | str | None = Non
                            "resolved_via": res["resolved_via"], "kept_existing": res.get("kept_existing")}
     if not command:
         out.update({"ok": False, "error": res["error"]})
+        try:
+            if _strip_dead_hook_file(dest, prev_text, (INBOX_HOOK_ARGS,)):
+                out["removed_dead"] = str(dest)
+        except OSError as e:
+            out["error"] = str(out["error"]) + "; and could not strip the dead hook: " + str(e)
         return out
     try:
         dest.parent.mkdir(parents=True, exist_ok=True)

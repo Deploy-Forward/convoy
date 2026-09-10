@@ -126,6 +126,19 @@ def crew(
         return _mark_partial(card, root, sids, "launch failed: " + str(e))
     card["windows"] = up.get("windows") or []
     card["cloud"] = up.get("cloud") or []
+    # Live 2026-09-09: two cursor-agent seats launched with dead hook files (the
+    # resolver found no hook-shell interpreter that imports convoy) and the card
+    # said nothing at the top; the caller reported "live" seats whose every tool
+    # was refused. Per-window errors now ride the card as warnings.
+    warnings: list[str] = []
+    for w in card["windows"]:
+        if not isinstance(w, dict):
+            continue
+        for k in ("inbox_hook_error", "identity_error", "agent_error"):
+            if w.get(k):
+                warnings.append(str(w.get("session_id") or "?") + ": " + k + ": " + str(w[k]))
+    if warnings:
+        card["warnings"] = warnings
     if up.get("error"):
         card["error"] = str(up["error"])
     else:

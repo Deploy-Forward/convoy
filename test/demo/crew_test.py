@@ -530,3 +530,22 @@ class CrewCli(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CrewCardSurfacesHookErrors(unittest.TestCase):
+    def test_window_hook_error_rides_the_card_as_a_warning(self):
+        import tempfile
+        from unittest import mock
+        from convoy.convoy import bind, ensure_id
+        from convoy import crew as crew_mod
+        root = Path(tempfile.mkdtemp()); ensure_id(root); bind(root, "t")
+        fake_up = {"ok": True, "windows": [{"session_id": "codex-1-t", "ok": True, "argv": [],
+                                             "inbox_hook_error": "no convoy command resolves in the hook shell"}], "cloud": []}
+        fake_mint = {"ok": True, "checkout": str(root), "worktrees": [{"name": "codex-1", "path": str(root), "branch": "convoy/codex-1", "created": True}]}
+        with mock.patch.object(crew_mod, "bring_up", return_value=fake_up), \
+             mock.patch.object(crew_mod, "mint_worktrees", return_value=fake_mint), \
+             mock.patch.object(crew_mod, "pane_host_available", return_value=True):
+            card = crew_mod.crew(root, [{"harness": "codex"}], runner=lambda argv: {"ok": True, "pid": 1},
+                                 mint_runner=lambda *a, **k: None)
+        self.assertIn("warnings", card)
+        self.assertIn("inbox_hook_error", card["warnings"][0])
