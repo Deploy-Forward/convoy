@@ -978,6 +978,20 @@ def dry_runner(*_a: Any, **_k: Any) -> dict[str, Any]:
 CREATE_NEW_CONSOLE = 0x00000010
 
 
+def pane_env(base: dict[str, str] | None = None) -> dict[str, str]:
+    """Environment for a pane Convoy opens: the launcher's, minus the launcher's
+    shell identity on Windows. Live 2026-09-10: cursor-agent's hook runner on
+    Windows always builds a PowerShell pipeline (`Get-Content -LiteralPath ...
+    -Raw | & { $input | <hook> }`) but executes it in the shell named by
+    SHELL; panes launched from a Git Bash tool call inherited SHELL=bash, so
+    every PreToolUse hook failed and every tool was refused. A pane should
+    see the environment a user double-clicking the harness would see."""
+    env = dict(os.environ if base is None else base)
+    if os.name == "nt":
+        env.pop("SHELL", None)
+    return env
+
+
 def live_spawn_kwargs() -> dict[str, Any]:
     """Popen kwargs for a visible TUI. No spawn. Safe to unit-test with mocked os.name."""
     if os.name == "nt":
@@ -1095,7 +1109,7 @@ def live_runner(argv: list[str], cwd: str | None = None, rect: dict[str, int] | 
     """
     argv = _live_argv(list(argv))
     # Do not pass CREATE_NEW_CONSOLE / startupinfo / MoveWindow / WM_CLOSE.
-    proc = subprocess.Popen(argv, env=os.environ.copy())
+    proc = subprocess.Popen(argv, env=pane_env())
     return {"ok": True, "pid": proc.pid, "argv": argv}
 
 
