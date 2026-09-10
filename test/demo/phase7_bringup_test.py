@@ -663,13 +663,21 @@ class BootPromptReadsThreadOnce(unittest.TestCase):
         self.assertIn(" and " + str(root / "handoff.md"), q)
 
 
-class PaneEnvDropsTheLaunchersShell(unittest.TestCase):
-    def test_shell_is_dropped_on_windows_and_kept_elsewhere(self):
+class PaneEnvIsTheUsersNotTheLaunchers(unittest.TestCase):
+    """Live 2026-09-10: a pane launched with the launcher's env minus SHELL still
+    failed cursor-agent's hooks (Git-first PATH); the registry-built env passed."""
+
+    def test_windows_pane_env_comes_from_the_registry_plus_process_vars_and_convoy_settings(self):
         from convoy.bringup import pane_env
-        base = {"PATH": "x", "SHELL": "C:/Program Files/Git/usr/bin/bash.exe", "HOME": "h"}
+        launcher = {"PATH": "C:/Git/usr/bin;C:/Python314", "SHELL": "C:/Git/usr/bin/bash.exe", "MSYSTEM": "MINGW64",
+                    "USERPROFILE": "C:/Users/m", "TEMP": "C:/t", "CONVOY_HOME": "C:/Users/m/.convoy", "PYTHONPATH": "src"}
+        reg = {"PATH": "C:/Windows;C:/Python314", "TEMP": "C:/regtemp"}
         with mock.patch.object(os, "name", "nt"):
-            env = pane_env(base)
-        self.assertNotIn("SHELL", env); self.assertEqual(env["PATH"], "x")
+            env = pane_env(launcher, registry=reg)
+        self.assertEqual(env["PATH"], "C:/Windows;C:/Python314", "PATH is the registry's, never the launcher's")
+        self.assertNotIn("SHELL", env); self.assertNotIn("MSYSTEM", env); self.assertNotIn("PYTHONPATH", env)
+        self.assertEqual(env["USERPROFILE"], "C:/Users/m", "logon process vars ride along")
+        self.assertEqual(env["TEMP"], "C:/regtemp", "registry wins where both exist")
+        self.assertEqual(env["CONVOY_HOME"], "C:/Users/m/.convoy", "Convoy's own settings ride along")
         with mock.patch.object(os, "name", "posix"):
-            self.assertEqual(pane_env(base)["SHELL"], base["SHELL"])
-        self.assertIn("SHELL", base, "the caller's mapping is not mutated")
+            self.assertEqual(pane_env(launcher)["SHELL"], launcher["SHELL"])
