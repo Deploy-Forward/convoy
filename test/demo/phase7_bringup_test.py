@@ -677,6 +677,9 @@ class PaneEnvIsTheUsersNotTheLaunchers(unittest.TestCase):
         self.assertEqual(env["PATH"], "C:/Windows;C:/Python314", "PATH is the registry's, never the launcher's")
         self.assertNotIn("SHELL", env); self.assertNotIn("MSYSTEM", env); self.assertNotIn("PYTHONPATH", env)
         self.assertEqual(env["USERPROFILE"], "C:/Users/m", "logon process vars ride along")
+        with mock.patch.object(os, "name", "nt"):
+            up = pane_env({"SYSTEMROOT": "C:/Windows", "PATH": "x"}, registry={"PATH": "y"})
+        self.assertEqual(up.get("SystemRoot"), "C:/Windows", "os.environ uppercases keys on Windows; the copy must not care")
         self.assertEqual(env["TEMP"], "C:/regtemp", "registry wins where both exist")
         self.assertEqual(env["CONVOY_HOME"], "C:/Users/m/.convoy", "Convoy's own settings ride along")
         with mock.patch.object(os, "name", "posix"):
