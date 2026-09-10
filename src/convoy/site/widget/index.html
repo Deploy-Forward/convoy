@@ -30,8 +30,12 @@ header .brand { display: flex; flex-direction: column; line-height: 1.15; }
 header .word { font: 600 15px var(--mono); }
 header .tag { font-size: 11px; color: var(--blue); text-decoration: none; }
 header .spacer { flex: 1; }
-.dots { display: flex; align-items: center; gap: 6px; font: 12px var(--mono); color: var(--ink-3); }
-.dot { display: inline-flex; align-items: center; gap: 5px; cursor: pointer; padding: 3px 7px; border-radius: 8px; }
+.dots { display: flex; align-items: center; gap: 6px; font: 12px var(--mono); color: var(--ink-3); min-width: 0; flex: 0 1 auto; overflow-x: auto; overflow-y: hidden; scrollbar-width: thin; padding-bottom: 2px; }
+.dots::-webkit-scrollbar { height: 4px; } .dots::-webkit-scrollbar-thumb { background: var(--hair-2); border-radius: 2px; }
+.dot { display: inline-flex; align-items: center; gap: 5px; cursor: pointer; padding: 3px 7px; border-radius: 8px; flex: none; white-space: nowrap; position: relative; }
+.dot .x { font: 500 12px var(--mono); color: var(--ink-3); opacity: 0; margin-left: 2px; padding: 0 2px; border-radius: 4px; } .dot:hover .x { opacity: 1; } .dot .x:hover { color: var(--red); background: rgba(192,57,43,.08); }
+.dot.more { border: 1px dashed var(--hair-2); color: var(--ink-3); } .dot.more.on { border-style: solid; }
+.dot.hid { opacity: .55; } .dot.hid:hover { opacity: 1; }
 .dot:hover { background: var(--panel-2); }
 .dot i { width: 7px; height: 7px; border-radius: 50%; background: var(--ink-3); display: inline-block; }
 .dot.on { color: var(--ink); background: var(--panel-2); } .dot.on i { background: var(--blue); }

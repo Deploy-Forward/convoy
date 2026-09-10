@@ -20,7 +20,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-FIELDS = ("convoy_id", "thread", "root", "updated_at")
+FIELDS = ("convoy_id", "thread", "root", "updated_at", "hidden")
 
 
 def index_path() -> Path:
@@ -65,12 +65,35 @@ def record(root: str | Path, convoy_id: str, thread: str | None) -> dict[str, An
     row = {"convoy_id": convoy_id, "thread": thread, "root": str(Path(root)),
            "updated_at": datetime.now(timezone.utc).isoformat(timespec="microseconds").replace("+00:00", "Z")}
     try:
+        prev = [r for r in _load() if r.get("convoy_id") == convoy_id]
+        if prev and prev[0].get("hidden"):
+            row["hidden"] = True   # a thread you archived stays archived across writes
         rows = [r for r in _load() if r.get("convoy_id") != convoy_id]
         rows.append(row)
         _save(rows)
     except OSError:
         pass
     return row
+
+
+def set_hidden(convoy_id: str, hidden: bool) -> dict[str, Any]:
+    """Archive (hide) or unarchive a thread on the widget strip. The index
+    row, the root, and every seat stay exactly as they are; only the strip
+    stops showing it. Marco 2026-09-10: the strip clipped past four threads
+    and offered no way to put one away."""
+    rows = _load()
+    hit = [r for r in rows if r.get("convoy_id") == convoy_id]
+    if not hit:
+        return {"ok": False, "error": "unknown thread: " + str(convoy_id)}
+    for r in hit:
+        r["hidden"] = bool(hidden)
+    _save(rows)
+    return {"ok": True, "convoy_id": convoy_id, "hidden": bool(hidden), "thread": hit[0].get("thread")}
+
+
+def hidden_threads() -> list[dict[str, Any]]:
+    """Present, non-temp rows that are hidden, newest first (stubs for the strip)."""
+    return [r for r in list_threads() if r.get("hidden") and r.get("present") and not is_temp_root(str(r.get("root") or ""))]
 
 
 def _disk_id(root: Path) -> str | None:
@@ -101,6 +124,8 @@ def recent(limit: int) -> list[dict[str, Any]]:
         if not r.get("present"):
             continue
         if is_temp_root(str(r.get("root") or "")):
+            continue
+        if r.get("hidden"):
             continue
         out.append(r)
     return out
