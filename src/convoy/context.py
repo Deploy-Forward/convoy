@@ -44,10 +44,31 @@ def pack(root: Path, instance_id: str | None = None) -> dict[str, Any]:
     out: dict[str, Any] = {}
     for key, rel in POINTER_FILES:
         out[key] = _pointer(root / rel)
+    out["brief_source"] = "convoy" if out.get("brief") else None
     if out.get("brief") is None:
         # labelled legacy fallback; new writes go to .convoy/brief.md
         out["brief"] = _pointer(root / ".ola" / "brief.md")
+        out["brief_source"] = "legacy-ola" if out["brief"] else None
     out["handoff"] = newest_handoff(root)
+    out["handoff_source"] = None if out["handoff"] is None else (
+        "convoy" if str(out["handoff"]).startswith(str(root / ".convoy")) else "legacy-ola")
+    # Marco 2026-09-10: a conductor kept writing briefs and handoffs under .ola/
+    # (another product's directory) because the fallback read them silently and
+    # nothing said where new writes belong. The record is .convoy/; say so, and
+    # name every legacy file still being read so the drift is visible.
+    out["canonical"] = {"brief": str(root / ".convoy" / "brief.md"),
+                        "handoff_dir": str(root / ".convoy" / "handoff"),
+                        "feed": str(root / ".convoy" / "feed.jsonl"),
+                        "inbox_dir": str(root / ".convoy" / "inbox")}
+    legacy_dir = root / ".ola"
+    legacy: list[str] = []
+    if legacy_dir.is_dir():
+        for cand in sorted(legacy_dir.glob("*")):
+            if cand.is_file() and (cand.name == "brief.md" or "handoff" in cand.name):
+                legacy.append(str(cand))
+    out["legacy_ola"] = legacy
+    out["advice"] = ("write briefs to .convoy/brief.md and handoffs to .convoy/handoff/; "
+                     ".ola/ is legacy, read only, and will stop being read") if legacy else None
     out["instance_id"] = instance_id
     out["convoy_id"] = _one_line(root / ".convoy" / "id")
     out["thread_key"] = _one_line(root / ".convoy" / "thread")
