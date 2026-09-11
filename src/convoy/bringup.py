@@ -1293,6 +1293,11 @@ def bring_up(root: Path, convoy_id: str | None = None, thread: str | None = None
     hops = _pane_seats(_only(_hop_seats(root, cid), session_ids))
     tile_fn = tiler or tile_rects
     rects = tile_fn(len(hops))
+    try:
+        from .conductor import ensure_contract_copy
+        ensure_contract_copy(root)   # the conductor's counterpart to the seats' AGENTS block
+    except Exception:  # a missing mirror must never block a launch
+        pass
     windows: list[dict[str, Any]] = []
     effective: list[dict[str, Any]] = []
     for i, s in enumerate(hops):
