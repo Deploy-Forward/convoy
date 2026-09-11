@@ -17,7 +17,7 @@ convoy = "convoy.cli:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-convoy = ["harness_skills/**", "harness_effort.json", "site/**"]
+convoy = ["harness_skills/**", "harness_effort.json", "site/**", "conductor.md"]
 
 [project.optional-dependencies]
 widget = ["pywebview>=5"]

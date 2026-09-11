@@ -56,10 +56,16 @@ def pack(root: Path, instance_id: str | None = None) -> dict[str, Any]:
     # (another product's directory) because the fallback read them silently and
     # nothing said where new writes belong. The record is .convoy/; say so, and
     # name every legacy file still being read so the drift is visible.
+    from .conductor import contract_pointer, ensure_contract_copy
+    if (root / ".convoy").is_dir():
+        ensure_contract_copy(root)   # idempotent: rewrites only when the shipped text changed
+    ptr = contract_pointer(root)
     out["canonical"] = {"brief": str(root / ".convoy" / "brief.md"),
                         "handoff_dir": str(root / ".convoy" / "handoff"),
                         "feed": str(root / ".convoy" / "feed.jsonl"),
-                        "inbox_dir": str(root / ".convoy" / "inbox")}
+                        "inbox_dir": str(root / ".convoy" / "inbox"),
+                        "contract": ptr["path"]}
+    out["contract_sha"] = ptr["sha"]
     legacy_dir = root / ".ola"
     legacy: list[str] = []
     if legacy_dir.is_dir():
