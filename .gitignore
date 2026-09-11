@@ -38,7 +38,7 @@ PRIOR_THREAD.md
 
 # Conductor/neuron message drops that live untracked in a seat checkout.
 CHIP.md
-CONDUCTOR*.md
+/CONDUCTOR*.md
 CONFIRM.md
 GREEN.md
 LATENCY.md

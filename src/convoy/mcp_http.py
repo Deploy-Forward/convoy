@@ -57,6 +57,7 @@ from .panes import bodies
 from .gitstate import git_state
 from .layer import SCHEMA_VERSION, conductor_stamp, feed_since, neuron_note, parse_since
 from .synapse import fake_runner, native_runner, send_one
+from .convoy import CONDUCTOR as CONDUCTOR_ID
 from .usage import CachedProbe, normalize_usage_remaining, probe as _live_probe
 
 # Live 2026-09-09 on the production origin: roster took 20.5 s and glance 19.7 s
@@ -301,6 +302,16 @@ TOOLS: list[dict[str, Any]] = [
             },
             required=["to", "body"],
         ),
+    },
+    {
+        "name": "replies",
+        "description": "The conductor's mail: feed rows addressed to it (`to`), newer than `since`, plus a `cursor` to pass back next turn; or the rows citing one send `token` with `delivered` true|false. Read-only. `wait` holds the request up to 600 s and returns on the first landing row; like await_seated it is behind the write gate because it holds a request. Contract: <root>/.convoy/conductor.md.",
+        "inputSchema": _schema({
+            "since": {"type": "string", "description": "ISO UTC lower bound or a window (10m | 2h); default epoch"},
+            "token": {"type": "string", "description": "a send token; returns the rows citing it and delivered"},
+            "wait": {"type": "number", "description": "seconds to hold for the first row, max 600 (gated)"},
+            "conductor": {"type": "string", "description": "conductor id; default grok-bot"},
+        }),
     },
     {
         "name": "feed",
@@ -641,7 +652,9 @@ def build_roster(root: Path) -> dict[str, Any]:
             "branch": branch,
             "pr": pr,
         })
-    return {"ok": True, "agents": agents, "path": path_card, "contract": _roster_contract_view()}
+    from .conductor import contract_pointer
+    return {"ok": True, "agents": agents, "path": path_card, "contract": _roster_contract_view(),
+            "conductor": {"to": CONDUCTOR_ID, "contract": {k: x for k, x in contract_pointer(root).items() if k in ("path", "sha", "current")}}}
 
 
 def _default_since() -> str:
@@ -798,6 +811,24 @@ def _call_tool(root: Path, name: str, arguments: dict[str, Any] | None) -> dict[
             return resume_neuron(root, neuron, go=go)
         except ValueError as e:
             return {"ok": False, "error": str(e)}
+    if name == "replies":
+        from .conductor import replies as _replies
+        wait_raw = args.get("wait")
+        wait = 0.0
+        if wait_raw is not None:
+            if isinstance(wait_raw, bool) or not isinstance(wait_raw, (int, float, str)):
+                return {"ok": False, "rows": [], "error": "replies wait must be a number of seconds, got " + repr(wait_raw)}
+            try:
+                wait = float(str(wait_raw).strip())
+            except ValueError:
+                return {"ok": False, "rows": [], "error": "replies wait must be a number of seconds, got " + repr(wait_raw)}
+            if wait > 0 and not _write_tools_enabled():
+                return {"ok": False, "rows": [], "error": _gate_text("replies wait")}
+        try:
+            return _replies(root, _opt_str(args, "conductor") or CONDUCTOR_ID, since=_opt_str(args, "since"),
+                            token=_opt_str(args, "token"), wait=wait)
+        except ValueError as e:
+            return {"ok": False, "rows": [], "error": str(e)}
     if name == "feed":
         since = _opt_str(args, "since") or _default_since()
         try:
@@ -1118,6 +1149,14 @@ def handle_rpc(root: Path, msg: dict[str, Any]) -> dict[str, Any] | None:
                 "capabilities": {"tools": {"listChanged": False}},
                 "serverInfo": {"name": SERVER_NAME, "version": SERVER_VERSION},
             }
+            # The conductor reads this at attach: the ten rules and the pointer to
+            # the full contract. A client may ignore `instructions`; glance, roster
+            # and context carry the same pointer.
+            try:
+                from .conductor import initialize_instructions
+                result["instructions"] = initialize_instructions()
+            except OSError:
+                pass
             if is_notification:
                 return None
             return {"jsonrpc": "2.0", "id": rpc_id, "result": result}

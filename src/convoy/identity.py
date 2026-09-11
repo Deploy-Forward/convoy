@@ -90,6 +90,8 @@ _AGENTS_BLOCK = (
     "`hook note ... --as-me --to <sender>`; a message is delivered only when YOU write that row. "
     "END: Codex/Claude Stop hooks run `convoy end --hook` as a heartbeat; this never pushes. "
     "Only explicit Codex `$convoy-end --push` or Claude `/convoy-end --push` grants one plain git push. "
+    "CONDUCTOR: grok-bot speaks to you only through `send` (a row in your inbox carrying a token) and `stamp` rows; "
+    "answer with `convoy hook note \"<text>\" --as-me --to grok-bot` citing that token; your own note row is the receipt, nothing else is; the conductor's contract is <root>/.convoy/conductor.md. "
     "RECORD: everything Convoy reads lives under .convoy/ (feed.jsonl, inbox/, brief.md, handoff/); "
     "write briefs to .convoy/brief.md and handoffs to .convoy/handoff/. .ola/ belongs to another product: never write it. "
     "If usage is dying, ask the user to bring_up a "
