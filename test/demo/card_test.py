@@ -214,7 +214,8 @@ class CardWire(unittest.TestCase):
         self._env.start()
         self.addCleanup(self._env.stop)
         self.probe = mock.Mock(return_value=dict(NULL_PROBE))
-        for target, kw in (("convoy.card.probe", {"new": self.probe}),
+        # PR #87 moved the usage seam to mcp_http.probe (one CachedProbe per process); card gets it as probe_fn
+        for target, kw in (("convoy.mcp_http.probe", {"new": self.probe}),
                            ("convoy.card.which", {"new": _which("claude", "codex")})):
             p = mock.patch(target, **kw)
             p.start()

@@ -270,6 +270,8 @@ def build_glance(
     fn = probe_fn or probe
     wf = which_fn or shutil.which
     conductor = _conductor_view(fn)
+    from .conductor import contract_pointer
+    conductor["contract"] = {k: v for k, v in contract_pointer(root).items() if k in ("path", "sha", "current")}
     overall = build_overall(root, probe_fn=fn, which_fn=wf)
     if thread is not None or convoy_id is not None:
         by_thread = build_by_thread(
