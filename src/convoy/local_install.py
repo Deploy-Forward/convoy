@@ -117,15 +117,21 @@ def _verify_task(task: str, runner: Runner) -> dict[str, Any]:
 def install_local(root: Path | str, *, token_file: Path | str | None = None, port: int = DEFAULT_PORT,
                   metrics: str = DEFAULT_METRICS, live: bool = False, opt_in: bool = False,
                   verify_only: bool = False, runner: Runner | None = None, windows: bool | None = None,
-                  cloudflared: str | None = None) -> dict[str, Any]:
+                  cloudflared: str | None = None, migrate_token: bool = False) -> dict[str, Any]:
     """Plan (default), register (--live --opt-in), or verify (--verify) this machine's
-    Convoy supervisors. Every claim in the card comes from a read-back."""
+    Convoy supervisors. Every claim in the card comes from a read-back.
+
+    migrate_token: copy the bytes of `token_file` into CONVOY_HOME/tunnel/run.token
+    and plan from there, so the live task and the verify card agree on one home
+    (grok-bot 2026-09-12: the tunnel still read C:/.grok while the verb planned
+    CONVOY_HOME). Bytes only; the token is never read into the card."""
     r = Path(root).resolve()
     run = runner or _powershell
     is_win = (os.name == "nt") if windows is None else bool(windows)
     home = _home()
-    tok = Path(token_file) if token_file else home / "tunnel" / "run.token"
     log_dir = home / "tunnel"
+    default_tok = log_dir / "run.token"
+    tok = Path(token_file) if token_file else default_tok
     wrapper = log_dir / "Run-ConvoyBotTunnel.ps1"
     cf_exe = cloudflared or r"C:\Program Files (x86)\cloudflared\cloudflared.exe"
     card: dict[str, Any] = {"ok": True, "root": str(r), "dry_run": not live and not verify_only, "live": bool(live),
@@ -134,6 +140,30 @@ def install_local(root: Path | str, *, token_file: Path | str | None = None, por
     if not is_win:
         card.update({"ok": False, "error": "install --local is Windows-only today (scheduled tasks); a systemd user unit and a launchd agent are the missing adapters, not built"})
         return card
+    if migrate_token:
+        mig: dict[str, Any] = {"from": str(tok), "to": str(default_tok), "copied": False}
+        if tok.resolve() == default_tok.resolve():
+            mig["note"] = "already in CONVOY_HOME"
+        elif not tok.is_file():
+            card.update({"ok": False, "error": "migrate-token: no token file at " + str(tok)})
+            card["migrated"] = mig
+            return card
+        else:
+            try:
+                data = tok.read_bytes()
+                if default_tok.is_file() and default_tok.read_bytes() == data:
+                    mig["note"] = "identical file already there"
+                else:
+                    log_dir.mkdir(parents=True, exist_ok=True)
+                    default_tok.write_bytes(data)
+                    mig["copied"] = True
+                del data
+            except OSError as e:
+                card.update({"ok": False, "error": "migrate-token: " + type(e).__name__ + ": " + str(e)})
+                card["migrated"] = mig
+                return card
+        card["migrated"] = mig
+        tok = default_tok
     plan = [
         {"name": "origin", "task": ORIGIN_TASK, "execute": sys.executable,
          "arguments": "-m convoy.cli --root " + _ps_dq(str(r)) + " mcp --host 127.0.0.1 --port " + str(int(port)),

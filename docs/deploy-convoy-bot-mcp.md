@@ -138,6 +138,24 @@ to `1` would expose thread mutation, repository inventory and process spawning
 to public callers. The complete wizard is GREEN only on an authenticated or
 gated loopback deployment.
 
+## Identity on the wire (2026-09-12)
+
+The way a conductor writes over the public edge is a bearer, not the flag:
+
+1. On the origin's machine, in your own terminal (never in a chat or a transcript):
+   `convoy conductor mint --label "<connector name>"`. The card shows the bearer
+   once. Only its sha256 is kept, in `<CONVOY_HOME>/conductors.jsonl`.
+2. Put it on the connector as the header `Authorization: Bearer <bearer>`.
+3. The origin checks it on every POST. Wrong or revoked is a 401 before the body
+   is parsed. No header is an anonymous read-only caller.
+4. `roster.conductor.write_gate` reports `bearer`, `legacy-flag`, or `closed`, and
+   `bearers` counts the live ones. A stamp that arrived with a bearer carries
+   `principal: {bearer: <id>}`; one that did not carries `principal: null`.
+5. `convoy conductor list` and `convoy conductor revoke <id>` manage them.
+
+`tools/list` shows the write tools whenever a live bearer exists, because the
+process can accept writes from its holder; each call is still checked.
+
 Prove the origin directly on that host before touching the Worker:
 
 ```powershell

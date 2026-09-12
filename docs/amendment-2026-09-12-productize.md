@@ -41,7 +41,12 @@ a stranger named `convoy` on PATH, the launcher's shell leaking into panes.
 2. **Identity on the wire.** A conductor bearer minted by `convoy conductor mint` and
    checked at the origin. `from` is set from the bearer and never from an argument.
    The global `CONVOY_MCP_WRITE_TOOLS` flag is retired. Precondition for anyone but the
-   machine's owner touching a thread. This is step 3 of the grok-bot rebase.
+   machine's owner touching a thread. This is step 3 of the grok-bot rebase. Landed
+   2026-09-12: `convoy conductor mint | list | revoke`, `Authorization: Bearer` checked
+   on every request (401 when wrong or revoked), `principal: {bearer: id}` on stamps,
+   `roster.conductor.write_gate` in `bearer | legacy-flag | closed`. The flag is still
+   honored in code for loopback-only deploys and named `legacy-flag` when it is; the
+   public origin retires it by unsetting the variable and restarting.
 3. **Many roots per origin.** Every call carries a thread id; the origin resolves the
    root from the thread index instead of a startup flag. One process serves every
    thread on the machine. Most tool schemas already carry `root`.
