@@ -7,6 +7,7 @@ One MCP process is bound to one convoy root (and its bound thread).
 from __future__ import annotations
 
 import argparse
+import contextvars
 import json
 import os
 import shutil
@@ -58,6 +59,7 @@ from .gitstate import git_state
 from .layer import SCHEMA_VERSION, conductor_stamp, feed_since, neuron_note, parse_since
 from .synapse import fake_runner, native_runner, send_one
 from .convoy import CONDUCTOR as CONDUCTOR_ID
+from . import bearer as _bearer
 from .usage import CachedProbe, normalize_usage_remaining, probe as _live_probe
 
 # Live 2026-09-09 on the production origin: roster took 20.5 s and glance 19.7 s
@@ -141,8 +143,32 @@ _IRREVERSIBLE_TOOLS = frozenset({"send", "stamp", "note"})
 AWAIT_SEATED_MAX_S = 600.0
 
 
-def _write_tools_enabled() -> bool:
+# The principal of the request being served: {id, conductor, label} from a
+# checked bearer (bearer.py), else None. Set by the HTTP handler (or handle_rpc's
+# `principal` argument) for the duration of one dispatch. A contextvar so the
+# twenty-odd gate checks below stay one call and read the right request even on
+# the threading server.
+_PRINCIPAL: contextvars.ContextVar[dict[str, Any] | None] = contextvars.ContextVar("convoy_principal", default=None)
+
+
+def _legacy_flag() -> bool:
+    """The pre-bearer gate: one process-wide flag. Still honored for loopback
+    deploys and tests; roster names it `legacy-flag` so nobody mistakes it for
+    identity. Retired on the public origin by unsetting it (Marco 2026-09-12)."""
     return os.environ.get("CONVOY_MCP_WRITE_TOOLS", "").strip() == "1"
+
+
+def _write_tools_enabled() -> bool:
+    return _PRINCIPAL.get() is not None or _legacy_flag()
+
+
+def _write_gate() -> str:
+    """How this process admits writes: legacy-flag | bearer | closed."""
+    if _legacy_flag():
+        return "legacy-flag"
+    if _bearer.live_count() > 0:
+        return "bearer"
+    return "closed"
 
 
 def _listed_tools() -> list[dict[str, Any]]:
@@ -152,7 +178,9 @@ def _listed_tools() -> list[dict[str, Any]]:
     OpenAI's plugin scanner consumes these annotations from the live endpoint,
     so they must reflect the process gate rather than an imagined deployment.
     """
-    writes = _write_tools_enabled()
+    # A process with a live bearer minted accepts writes from that bearer's
+    # holder, so it lists the write tools; each call is still checked.
+    writes = _write_tools_enabled() or _bearer.live_count() > 0
     tools = TOOLS if writes else [t for t in TOOLS if t["name"] not in _WRITE_TOOLS]
     listed: list[dict[str, Any]] = []
     for tool in tools:
@@ -654,7 +682,8 @@ def build_roster(root: Path) -> dict[str, Any]:
         })
     from .conductor import contract_pointer
     return {"ok": True, "agents": agents, "path": path_card, "contract": _roster_contract_view(),
-            "conductor": {"to": CONDUCTOR_ID, "contract": {k: x for k, x in contract_pointer(root).items() if k in ("path", "sha", "current")}}}
+            "conductor": {"to": CONDUCTOR_ID, "write_gate": _write_gate(), "bearers": _bearer.live_count(),
+                          "contract": {k: x for k, x in contract_pointer(root).items() if k in ("path", "sha", "current")}}}
 
 
 def _default_since() -> str:
@@ -857,6 +886,7 @@ def _call_tool(root: Path, name: str, arguments: dict[str, Any] | None) -> dict[
                 effort=_opt_str(args, "effort"),
                 instance_id=_opt_str(args, "instance_id"),
                 transcript=_opt_str(args, "transcript"),
+                principal=_PRINCIPAL.get(),
             )
         except ValueError as e:
             return {"ok": False, "error": str(e)}
@@ -1118,8 +1148,9 @@ def _shape(raw: Any, harness: Any) -> dict[str, Any]:
 
 
 def _gate_text(verb: str) -> str:
-    return (verb + " is behind the write gate on this process (set CONVOY_MCP_WRITE_TOOLS=1 "
-            "on a gated/loopback deploy); nothing was written or spawned")
+    return (verb + " is behind the write gate: send `Authorization: Bearer <bearer>` from "
+            "`convoy conductor mint` on the origin's machine (or CONVOY_MCP_WRITE_TOOLS=1 on a "
+            "loopback-only deploy); nothing was written or spawned")
 
 
 def _dumps(obj: Any) -> str:
@@ -1130,8 +1161,21 @@ def _json_default(_o: Any) -> Any:
     return None
 
 
-def handle_rpc(root: Path, msg: dict[str, Any]) -> dict[str, Any] | None:
-    """Return a JSON-RPC response dict, or None for notifications."""
+def handle_rpc(root: Path, msg: dict[str, Any], principal: dict[str, Any] | None = None) -> dict[str, Any] | None:
+    """Return a JSON-RPC response dict, or None for notifications.
+
+    principal: the checked bearer record for this request ({id, conductor, label})
+    or None for an anonymous caller. It is the only thing that opens the write
+    tools besides the legacy loopback flag, and `from` on conductor rows is read
+    from it, never from an argument."""
+    token = _PRINCIPAL.set(principal)
+    try:
+        return _handle_rpc(root, msg)
+    finally:
+        _PRINCIPAL.reset(token)
+
+
+def _handle_rpc(root: Path, msg: dict[str, Any]) -> dict[str, Any] | None:
     if not isinstance(msg, dict) or msg.get("jsonrpc") != "2.0":
         return {"jsonrpc": "2.0", "id": None, "error": {"code": -32600, "message": "Invalid Request"}}
     method = msg.get("method")
@@ -1190,7 +1234,7 @@ def handle_rpc(root: Path, msg: dict[str, Any]) -> dict[str, Any] | None:
                     payload["seat"] = sid
                 is_err = True
             elif name in _WRITE_TOOLS and not _write_tools_enabled():
-                payload = {"ok": False, "error": "write tool disabled on this process: " + name + " (set CONVOY_MCP_WRITE_TOOLS=1 on a gated/loopback deploy)"}
+                payload = {"ok": False, "error": "write tool refused without identity: " + name + "; " + _gate_text(name)}
                 is_err = True
             else:
                 payload = call_tool(root, name, arguments)
@@ -1291,6 +1335,17 @@ class McpHandler(BaseHTTPRequestHandler):
         if length < 0:
             length = 0
         raw = self.rfile.read(length) if length else b""
+        # Identity first: a presented bearer that does not check is a 401 before
+        # any body is parsed. No header is an anonymous read-only caller. The
+        # bearer itself is never logged (log_message prints the request line only).
+        principal: dict[str, Any] | None = None
+        presented = _bearer.parse_authorization(self.headers.get("Authorization"))
+        if presented is not None:
+            principal = _bearer.check(presented)
+            if principal is None:
+                body = _dumps({"ok": False, "error": "bearer not recognized or revoked; mint one with `convoy conductor mint` on the origin's machine"}).encode("utf-8")
+                self._send(401, body, "application/json; charset=utf-8", extra=[("WWW-Authenticate", "Bearer realm=\"convoy\"")])
+                return
         try:
             msg = json.loads(raw.decode("utf-8") or "null")
         except (UnicodeDecodeError, json.JSONDecodeError):
@@ -1301,7 +1356,7 @@ class McpHandler(BaseHTTPRequestHandler):
             replies = []
             for item in msg:
                 if isinstance(item, dict):
-                    r = handle_rpc(self._root(), item)
+                    r = handle_rpc(self._root(), item, principal=principal)
                     if r is not None:
                         replies.append(r)
             if not replies:
@@ -1311,7 +1366,7 @@ class McpHandler(BaseHTTPRequestHandler):
                 return
             payload = replies
         elif isinstance(msg, dict):
-            reply = handle_rpc(self._root(), msg)
+            reply = handle_rpc(self._root(), msg, principal=principal)
             if reply is None:
                 self.send_response(202)
                 _cors(self)

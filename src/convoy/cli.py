@@ -288,6 +288,14 @@ def main(argv: list[str] | None = None) -> int:
     ins.add_argument("--token-file", default=None, help="with --local: the cloudflared tunnel token FILE the wrapper reads at run time (default CONVOY_HOME/tunnel/run.token)")
     ins.add_argument("--port", type=int, default=8788, help="with --local: the origin's loopback port")
 
+    ins.add_argument("--migrate-token", action="store_true", help="with --local: copy the token FILE named by --token-file into CONVOY_HOME/tunnel/run.token (bytes only, never printed) so the plan and the live task share one home")
+
+    cd = sub.add_parser("conductor", help="the conductor's identity on the wire: mint a bearer (shown once, only its hash kept), list, revoke")
+    cd.add_argument("action", choices=["mint", "list", "revoke"])
+    cd.add_argument("id", nargs="?", help="with revoke: the bearer id from `conductor list`")
+    cd.add_argument("--label", default=None, help="with mint: what holds this bearer (a connector name); never the bearer itself")
+    cd.add_argument("--conductor", default=None, help="with mint: the conductor id this bearer speaks as (default grok-bot)")
+
     gl = sub.add_parser("glance")
     gl.add_argument("--thread")
     gl.add_argument("--convoy-id")
@@ -727,11 +735,25 @@ def main(argv: list[str] | None = None) -> int:
         card = hide_windows(root, convoy_id=args.convoy_id, thread=args.thread, mode=mode, applier=applier)
         print(json.dumps(card))
         return 0 if card.get("ok") else 1
+    if args.cmd == "conductor":
+        from . import bearer
+        if args.action == "mint":
+            # The card is the one and only place the bearer appears. Marco runs this
+            # in his own terminal and hands it to the connector; it is never on the
+            # record, in a log, or in a transcript by Convoy's doing.
+            card = bearer.mint(conductor=args.conductor or CONDUCTOR, label=args.label)
+        elif args.action == "revoke":
+            card = bearer.revoke(args.id or "") if args.id else {"ok": False, "error": "revoke needs the bearer id (see `convoy conductor list`)"}
+        else:
+            card = {"ok": True, "path": str(bearer.conductors_path()), "conductors": bearer.list_conductors()}
+        print(json.dumps(card))
+        return 0 if card.get("ok") else 1
     if args.cmd == "install":
         if getattr(args, "local", False):
             from .local_install import install_local
             card = install_local(root, token_file=args.token_file, port=int(args.port), live=bool(args.live),
-                                 opt_in=bool(args.opt_in), verify_only=bool(args.verify))
+                                 opt_in=bool(args.opt_in), verify_only=bool(args.verify),
+                                 migrate_token=bool(getattr(args, "migrate_token", False)))
             print(json.dumps(card))
             return 0 if card.get("ok") else 1
         if not args.to:
