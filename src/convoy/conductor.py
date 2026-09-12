@@ -64,7 +64,8 @@ def initialize_instructions() -> str:
     end = text.find("## ", start + 5) if start >= 0 else -1
     rules = text[start:end].strip() if start >= 0 and end > start else text[:1500]
     return (rules + "\n\nFull contract: <root>/.convoy/conductor.md (sha " + contract_sha()[:12] + "). "
-            "Read it before your first write. Your mail is the `replies` tool.")
+            "Read it before your first write. Your mail is the `replies` tool. Writes need your identity: "
+            "`Authorization: Bearer <bearer>` on every request, minted once by `convoy conductor mint`.")
 
 
 def _addressed_to(row: dict[str, Any], conductor: str) -> bool:

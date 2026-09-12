@@ -34,10 +34,15 @@ seat's AGENTS block.
   Read them as lead rows, not as yours.
 - Seats are chairs in `.convoy/seats.jsonl`, identified by `session_id`. You address a
   chair by its `session_id`. The harness name is where it runs, not who it is.
-- The conductor token (one bearer per conductor, checked at the origin) is not built yet.
-  Until it lands, write tools are exposed by a deploy flag, and a stamp cannot be told
-  from a forged one. `rail.last_stamp` is your last decision; if it is not what you
-  decided, someone stamped as you. Say so.
+- Your identity on the wire is a bearer: `convoy conductor mint` on the origin's machine
+  prints it once; only its hash is kept, in `<CONVOY_HOME>/conductors.jsonl`. You send
+  `Authorization: Bearer <bearer>` on every MCP request. Without it you are a read-only
+  caller and every write tool refuses. A wrong or revoked bearer is a 401.
+- A stamp that arrived with your bearer carries `principal: {bearer: <id>}`. A stamp
+  without one (the legacy deploy flag, or the CLI on the box) carries `principal: null`
+  and cannot be told from a forged one. `roster.conductor.write_gate` says which gate
+  this origin runs: `bearer`, `legacy-flag`, or `closed`. `rail.last_stamp` is your
+  last decision; if it is not what you decided, someone stamped as you. Say so.
 
 ## The record
 
@@ -113,9 +118,10 @@ These thresholds are the rail's default window, not measured from live behavior.
 
 ## Not built yet
 
-Named here so a conductor does not call them: the conductor bearer token, `send_status`
-as a verb, stamp deduplication, and quota policy as code. `warnings` on the crew card,
-`replies`, and this file are built.
+Each of these is not built yet, named here so a conductor does not call them: `send_status` as a verb, stamp
+deduplication, quota policy as code, and the tenant record that maps one identity to
+the threads it may see. `warnings` on the crew card, `replies`, identity on the wire
+(`convoy conductor mint`), and this file are built.
 
 ## Where this contract lives
 
