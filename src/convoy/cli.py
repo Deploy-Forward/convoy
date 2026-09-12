@@ -279,10 +279,14 @@ def main(argv: list[str] | None = None) -> int:
             hd.add_argument("--mode", default="minimize", choices=["minimize", "hide"])
 
     ins = sub.add_parser("install")
-    ins.add_argument("--to", required=True)
+    ins.add_argument("--to", default=None, help="a vendor harness to install (grok, claude, codex, cursor-agent, agy)")
     ins.add_argument("--opt-in", action="store_true")
     ins.add_argument("--dry-run", action="store_true", default=True)
     ins.add_argument("--live", action="store_true", help="run installer; still requires --opt-in")
+    ins.add_argument("--local", action="store_true", help="this machine's Convoy supervisors: origin task, tunnel task, console script; dry by default, --live --opt-in registers, --verify reads back")
+    ins.add_argument("--verify", action="store_true", help="with --local: read back the supervisors and the console script, register nothing")
+    ins.add_argument("--token-file", default=None, help="with --local: the cloudflared tunnel token FILE the wrapper reads at run time (default CONVOY_HOME/tunnel/run.token)")
+    ins.add_argument("--port", type=int, default=8788, help="with --local: the origin's loopback port")
 
     gl = sub.add_parser("glance")
     gl.add_argument("--thread")
@@ -724,6 +728,15 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(card))
         return 0 if card.get("ok") else 1
     if args.cmd == "install":
+        if getattr(args, "local", False):
+            from .local_install import install_local
+            card = install_local(root, token_file=args.token_file, port=int(args.port), live=bool(args.live),
+                                 opt_in=bool(args.opt_in), verify_only=bool(args.verify))
+            print(json.dumps(card))
+            return 0 if card.get("ok") else 1
+        if not args.to:
+            print(json.dumps({"ok": False, "error": "install needs --to <harness> or --local"}))
+            return 1
         dry = True
         if getattr(args, "live", False):
             dry = False
