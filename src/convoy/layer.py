@@ -108,6 +108,7 @@ def conductor_stamp(
     instance_id: str | None = None,
     transcript: str | None = None,
     usage_remaining: Any = None,
+    principal: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """One compact conductor line into the thread feed (kind=conductor).
 
@@ -115,10 +116,18 @@ def conductor_stamp(
     null, never filled from memory. The summary is clamped to one line of at
     most STAMP_MAX_CHARS (truncated=true marks a clamp — no silent loss).
     transcript is a pointer to where the bubble lives, never its bytes.
+    principal: the checked bearer record ({id, conductor, ...}) when the stamp
+    arrived over the wire with identity; `from` is read from it and the row
+    carries principal={bearer: id}. None (CLI on the box, or the legacy flag)
+    leaves principal null: such a stamp cannot be told from a forged one.
     """
     text, truncated = _compact(summary, "conductor")
+    who = _CONDUCTOR
+    if isinstance(principal, dict) and principal.get("conductor"):
+        who = str(principal["conductor"])
     extra: dict[str, Any] = {
-        "from": _CONDUCTOR,
+        "from": who,
+        "principal": {"bearer": str(principal.get("id"))} if isinstance(principal, dict) and principal.get("id") else None,
         "agent": _blank_to_none(agent),
         "model": _blank_to_none(model),
         "effort": _blank_to_none(effort),
