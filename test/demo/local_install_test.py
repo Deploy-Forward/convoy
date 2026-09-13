@@ -120,3 +120,26 @@ class LocalInstall(unittest.TestCase):
             rc = main(["--root", str(self.root), "install", "--local", "--token-file", str(self.tok)])
         card = json.loads(buf.getvalue())
         self.assertEqual(rc, 0); self.assertTrue(card["dry_run"]); self.assertEqual(len(card["plan"]), 3)
+
+
+class RootMustBeAThread(unittest.TestCase):
+    """2026-09-13: `install --local --live` run from the home directory bound the public
+    origin to C:/Users/marco, a place with no thread, and the conductor's first
+    authenticated stamp landed in CONVOY_HOME/feed.jsonl. The root must be a bound
+    thread; a bare directory is refused with the roots the index knows."""
+    def setUp(self):
+        self.home = Path(tempfile.mkdtemp())
+        self.env = mock.patch.dict(os.environ, {"CONVOY_HOME": str(self.home)}); self.env.start(); self.addCleanup(self.env.stop)
+
+    def test_a_root_without_a_thread_is_refused_before_anything_is_planned(self):
+        from convoy.local_install import install_local
+        bare = Path(tempfile.mkdtemp())
+        card = install_local(bare, runner=FakeRunner(), windows=True, live=True, opt_in=True)
+        self.assertFalse(card["ok"]); self.assertIn("not a Convoy thread", card["error"]); self.assertEqual(card["plan"], [])
+        self.assertIn("known_roots", card)
+
+    def test_convoy_home_itself_is_refused_even_when_it_looks_like_a_thread(self):
+        from convoy.local_install import install_local
+        ensure_id(self.home); bind(self.home, "oops")
+        card = install_local(self.home, runner=FakeRunner(), windows=True)
+        self.assertFalse(card["ok"]); self.assertIn("CONVOY_HOME", card["error"])
