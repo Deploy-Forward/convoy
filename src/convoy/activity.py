@@ -135,3 +135,37 @@ def neuron_activity(
         "note": ("active means the chair authored a row inside the window, or a process was placed. "
                  "A chair Convoy cannot place is never reported dead."),
     }
+
+
+def neurons_everywhere(since: str | None = None) -> dict[str, Any]:
+    """One flat table across every thread the machine index knows:
+    harness | model | neuron | thread (Marco 2026-09-13, `/convoy-list`).
+    Deterministic: the index, then each root's seats and feed. Hidden threads
+    and roots that are gone are skipped and named, never silently dropped."""
+    from .index import list_threads
+    rows: list[dict[str, Any]] = []
+    skipped: list[dict[str, Any]] = []
+    for t in list_threads():
+        thread = t.get("thread")
+        if t.get("hidden"):
+            skipped.append({"thread": thread, "reason": "hidden"})
+            continue
+        if not t.get("present"):
+            skipped.append({"thread": thread, "reason": "root gone", "root": t.get("root")})
+            continue
+        root = Path(str(t.get("root")))
+        try:
+            card = neuron_activity(root, since=since)
+        except (OSError, ValueError) as e:
+            skipped.append({"thread": thread, "reason": type(e).__name__, "root": str(root)})
+            continue
+        for n in card.get("neurons") or []:
+            rows.append({"harness": n.get("harness"), "model": n.get("model"), "neuron": n.get("session_id"),
+                         "thread": thread, "root": str(root), "active": bool(n.get("active")),
+                         "evidence": n.get("evidence"), "last_authored": n.get("last_authored"),
+                         "inbox_pending": n.get("inbox_pending"), "send_command": n.get("send_command")})
+    rows.sort(key=lambda r: (not r["active"], str(r.get("last_authored") or "")), reverse=False)
+    rows.sort(key=lambda r: str(r.get("last_authored") or ""), reverse=True)
+    rows.sort(key=lambda r: not r["active"])
+    return {"ok": True, "columns": ["harness", "model", "neuron", "thread"], "rows": rows,
+            "active_count": sum(1 for r in rows if r["active"]), "skipped": skipped}
