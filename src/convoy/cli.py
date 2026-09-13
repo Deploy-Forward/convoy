@@ -236,6 +236,7 @@ def main(argv: list[str] | None = None) -> int:
 
     nr = sub.add_parser("neurons", help="who is active on this thread and the command that messages each: bus recency first, process evidence second, never a token")
     nr.add_argument("--since", help="ISO UTC lower bound for active (default: last 90 minutes)")
+    nr.add_argument("--all", action="store_true", help="every thread the machine index knows, one flat table: harness | model | neuron | thread")
 
     sub.add_parser("panes", help="every body of every neuron on this thread from the OS process table: pid, via token|cwd, duplicates, unassigned harness processes; never a token")
 
@@ -664,6 +665,10 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(bodies(root)))
         return 0
     if args.cmd == "neurons":
+        if getattr(args, "all", False):
+            from .activity import neurons_everywhere
+            print(json.dumps(neurons_everywhere(since=args.since)))
+            return 0
         print(json.dumps(neuron_activity(root, since=args.since)))
         return 0
     if args.cmd == "skills":

@@ -11,8 +11,9 @@ You are one **neuron**: a BYO harness session (`grok`, `claude`, `codex`, `curso
 
 Grok Bot is the conductor: one chat, own memory, own cloud computer. It orchestrates. A Grok Bot skill (`/` in the Bot composer, Settings → Plugins) is conductor-side. This file is a harness skill for the CLI that launched you.
 
-## Who you are (read, do not invent)
+## Who you are (run the verb, do not guess)
 
+0. **`convoy whoami`** is the answer. It walks your own process ancestry to the harness and matches it to a chair by token, then by worktree. It prints the chair or `null` with an ask (`join`, or seat this worktree). It never guesses, so neither do you: quote its card, and if it says `null`, say `null`. Everything below is what it reads; you read those files only when the verb is unavailable.
 1. Read `thread.md` if present. `bind` writes `convoy_id` then the thread key. Missing file means those fields are unknown. Never invent a `cvy_` id or a session id.
 2. Read `.convoy/id` and `.convoy/thread` the same way (one line each). Unknown is JSON `null`.
 3. Persona is `role.md` in this worktree, not `--append-system-prompt`.

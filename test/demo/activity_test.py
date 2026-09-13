@@ -119,3 +119,46 @@ class NeuronActivity(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class EveryThreadOnTheMachine(unittest.TestCase):
+    """Marco 2026-09-13: `/convoy-list` is one table across threads,
+    harness | model | neuron | thread, so a person knows who to message before
+    typing a send. `neurons --all` walks the machine index deterministically;
+    hidden threads and roots that are gone are left out and named as such."""
+    def setUp(self):
+        import os
+        from unittest import mock
+        self.home = Path(tempfile.mkdtemp())
+        p = mock.patch.dict(os.environ, {"CONVOY_HOME": str(self.home)}); p.start(); self.addCleanup(p.stop)
+        self.a = Path(tempfile.mkdtemp()); ensure_id(self.a); bind(self.a, "alpha")
+        seat(self.a, "claude", "c-alpha", worktree=str(self.a), model="claude-fable-5")
+        hook(self.a, "note", "hello", instance_id="c-alpha")
+        self.b = Path(tempfile.mkdtemp()); ensure_id(self.b); bind(self.b, "beta")
+        seat(self.b, "codex", "x-beta", worktree=str(self.b), model="gpt-5.6-sol")
+        from convoy.convoy import read_id
+        from convoy.index import record, set_hidden
+        record(self.a, read_id(self.a), "alpha"); record(self.b, read_id(self.b), "beta")
+        self.c = Path(tempfile.mkdtemp()); ensure_id(self.c); bind(self.c, "gamma"); record(self.c, read_id(self.c), "gamma")
+        set_hidden(read_id(self.c), True)
+
+    def test_all_threads_is_one_flat_table_of_chairs(self):
+        from convoy.activity import neurons_everywhere
+        card = neurons_everywhere()
+        self.assertTrue(card["ok"])
+        rows = {(r["harness"], r["model"], r["neuron"], r["thread"]) for r in card["rows"]}
+        self.assertIn(("claude", "claude-fable-5", "c-alpha", "alpha"), rows)
+        self.assertIn(("codex", "gpt-5.6-sol", "x-beta", "beta"), rows)
+        self.assertFalse(any(r["thread"] == "gamma" for r in card["rows"]), "hidden threads stay off the table")
+        self.assertEqual(card["skipped"], [{"thread": "gamma", "reason": "hidden"}])
+        for r in card["rows"]:
+            self.assertIn("active", r); self.assertIn("root", r); self.assertIn("send_command", r)
+            self.assertNotIn("token", json.dumps(r))
+
+    def test_cli_neurons_all_prints_the_table_card(self):
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            rc = main(["neurons", "--all"])
+        card = json.loads(buf.getvalue())
+        self.assertEqual(rc, 0); self.assertEqual(card["columns"], ["harness", "model", "neuron", "thread"])
+        self.assertGreaterEqual(len(card["rows"]), 2)
