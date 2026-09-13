@@ -140,6 +140,22 @@ def install_local(root: Path | str, *, token_file: Path | str | None = None, por
     if not is_win:
         card.update({"ok": False, "error": "install --local is Windows-only today (scheduled tasks); a systemd user unit and a launchd agent are the missing adapters, not built"})
         return card
+    # The origin serves ONE root for its lifetime, so the root must be a bound
+    # thread, and never CONVOY_HOME (2026-09-13: run from the home directory this
+    # verb bound the public origin to C:/Users/marco and the conductor's first
+    # authenticated stamp landed in CONVOY_HOME/feed.jsonl, a place no seat reads).
+    try:
+        same_as_home = r == home.resolve() or r == home.resolve().parent
+    except OSError:
+        same_as_home = False
+    if same_as_home:
+        card.update({"ok": False, "error": "root " + str(r) + " is CONVOY_HOME or its parent, not a thread; pass --root <a bound thread>"})
+        card["known_roots"] = _known_roots()
+        return card
+    if not (r / ".convoy" / "id").is_file():
+        card.update({"ok": False, "error": "root " + str(r) + " is not a Convoy thread (no .convoy/id); pass --root <a bound thread>"})
+        card["known_roots"] = _known_roots()
+        return card
     if migrate_token:
         mig: dict[str, Any] = {"from": str(tok), "to": str(default_tok), "copied": False}
         if tok.resolve() == default_tok.resolve():
@@ -211,6 +227,22 @@ def install_local(root: Path | str, *, token_file: Path | str | None = None, por
                          "; pip install this checkout so convoy.exe lands in a Scripts dir on PATH"
         card["verify"].append(cs)
     return card
+
+
+def _known_roots() -> list[dict[str, Any]]:
+    """Threads the machine index knows and that still exist, so a refused root
+    comes with the choices instead of a bare no."""
+    try:
+        from .index import list_threads
+        rows = list_threads()
+    except Exception:  # noqa: BLE001 - a broken index must not hide the refusal
+        return []
+    out = []
+    for row in rows if isinstance(rows, list) else []:
+        root = row.get("root") if isinstance(row, dict) else None
+        if root and Path(str(root), ".convoy", "id").is_file() and not row.get("hidden"):
+            out.append({"thread": row.get("thread"), "root": str(root)})
+    return out[:20]
 
 
 def _ps_dq(s: str) -> str:
