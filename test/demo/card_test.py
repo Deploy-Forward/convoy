@@ -200,6 +200,8 @@ def _rpc(url, method, params=None):
 
 class CardWire(unittest.TestCase):
     def setUp(self):
+        # anonymous wire: no bearer of THIS machine may leak into the listing
+        self._home = mock.patch.dict(os.environ, {"CONVOY_HOME": tempfile.mkdtemp()}); self._home.start(); self.addCleanup(self._home.stop)
         self.root = Path(tempfile.mkdtemp())
         ensure_id(self.root)
         bind(self.root, "card-w")
@@ -239,7 +241,7 @@ class CardWire(unittest.TestCase):
         row_keys = set(schema["properties"]["rows"]["items"]["properties"])
         self.assertTrue({"where", "harness", "installed", "usage_remaining", "limited", "models", "effort",
                          "connect_mode", "attach"} <= row_keys, sorted(row_keys))
-        self.assertEqual(tools["card"]["inputSchema"]["properties"], {})
+        self.assertLessEqual(set(tools["card"]["inputSchema"]["properties"]), {"thread", "convoy_id"}, "card takes no input of its own; only the router's thread keys")
 
     def test_card_answers_through_structured_content_matching_its_schema(self):
         result = self._call("card")
