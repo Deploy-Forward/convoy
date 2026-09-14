@@ -1,7 +1,7 @@
 """The conductor's counterpart to the seat's AGENTS block, and its mail.
 
 Marco 2026-09-11 (grok-bot rebase, step 2): the conductor got no contract and
-drifted (handoffs under .ola/, typed into panes, polled the feed). The package
+drifted (handoffs under the legacy .ola/ tree, typed into panes, polled the feed). The package
 ships conductor.md; Convoy mirrors it under <root>/.convoy/, names its path and
 sha wherever the conductor looks, and gives it `replies`: rows addressed to it,
 read by cursor or by token, without scanning the whole feed for its mail.

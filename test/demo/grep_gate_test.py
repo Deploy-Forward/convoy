@@ -192,7 +192,7 @@ class SoTWriterGate(unittest.TestCase):
 
     def test_machine_index_is_finder_fields_only(self):
         from convoy.index import FIELDS
-        self.assertEqual(FIELDS, ("convoy_id", "thread", "root", "updated_at"))
+        self.assertEqual(FIELDS, ("convoy_id", "thread", "root", "updated_at", "hidden"), "finder fields plus the widget archive flag; never a token")
         src = (SRC / "index.py").read_text(encoding="utf-8")
         self.assertNotIn("token", src.split("def record", 1)[-1].split("def ", 1)[0])
 
