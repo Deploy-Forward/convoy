@@ -132,7 +132,10 @@ class InstallServesAllThreadsByDefault(unittest.TestCase):
 
     def test_default_plan_starts_an_unbound_origin_from_any_directory(self):
         from convoy.local_install import install_local
-        from test.demo.local_install_test import FakeRunner
+        try:
+            from test.demo.local_install_test import FakeRunner
+        except ModuleNotFoundError:  # the repo runner discovers test/demo as top level
+            from local_install_test import FakeRunner
         bare = Path(tempfile.mkdtemp())
         card = install_local(bare, runner=FakeRunner(), windows=True)
         self.assertTrue(card["ok"], card)
@@ -142,7 +145,10 @@ class InstallServesAllThreadsByDefault(unittest.TestCase):
 
     def test_bound_pin_still_requires_a_thread(self):
         from convoy.local_install import install_local
-        from test.demo.local_install_test import FakeRunner
+        try:
+            from test.demo.local_install_test import FakeRunner
+        except ModuleNotFoundError:  # the repo runner discovers test/demo as top level
+            from local_install_test import FakeRunner
         bare = Path(tempfile.mkdtemp())
         card = install_local(bare, runner=FakeRunner(), windows=True, bound=True)
         self.assertFalse(card["ok"]); self.assertIn("not a Convoy thread", card["error"])

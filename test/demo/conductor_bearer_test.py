@@ -169,7 +169,10 @@ class TokenHomeMigration(unittest.TestCase):
 
     def test_migrate_token_copies_into_convoy_home_and_plans_from_there(self):
         from convoy.local_install import install_local
-        from test.demo.local_install_test import FakeRunner
+        try:
+            from test.demo.local_install_test import FakeRunner
+        except ModuleNotFoundError:  # the repo runner discovers test/demo as top level
+            from local_install_test import FakeRunner
         card = install_local(self.root, token_file=self.old, migrate_token=True, runner=FakeRunner(), windows=True)
         self.assertTrue(card["ok"], card)
         dest = self.home / "tunnel" / "run.token"
