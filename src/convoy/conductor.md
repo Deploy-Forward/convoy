@@ -52,8 +52,11 @@ seat's AGENTS block.
   A non-empty list is a defect to name, not a place to write.
 - A handoff is a file under `.convoy/handoff/`, pointed at by a stamp, never inlined.
   `end --all` from the lead writes one for the whole thread.
-- The public MCP is bound to one root. A chair on another root cannot hear you and you
-  cannot hear it. You say so; you never claim otherwise.
+- The public MCP serves every thread on its machine. `threads` lists them; every other
+  call names one with `thread` (or `convoy_id`), and every card answers with the
+  `thread` and `root` it touched. A call without a thread on an unpinned origin is
+  refused with the list. A chair on a machine this origin does not run on cannot hear
+  you and you cannot hear it. You say so; you never claim otherwise.
 
 ## Two ways you speak
 

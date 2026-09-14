@@ -7,7 +7,8 @@ each repair was a PowerShell window. This verb plans and, with --live --opt-in,
 registers what those windows did, then proves it by reading it back:
 
   origin   ConvoyBotMcp     at-logon task, restart 99x/1 min, no time limit:
-                            <this interpreter's pythonw> -m convoy.cli --root <root> mcp --port <port>
+                            <this interpreter's pythonw> -m convoy.cli mcp --port <port>
+                            (serves every thread in the machine index; --bound pins --root)
   tunnel   ConvoyBotTunnel  same shape: pythonw -m convoy.tunnel_run, which reads the
                             token FILE at run time and spawns cloudflared with no window
                             (the token is never in a task definition, a card, or a log line)
@@ -111,7 +112,7 @@ def _verify_task(task: str, runner: Runner) -> dict[str, Any]:
 def install_local(root: Path | str, *, token_file: Path | str | None = None, port: int = DEFAULT_PORT,
                   metrics: str = DEFAULT_METRICS, live: bool = False, opt_in: bool = False,
                   verify_only: bool = False, runner: Runner | None = None, windows: bool | None = None,
-                  cloudflared: str | None = None, migrate_token: bool = False) -> dict[str, Any]:
+                  cloudflared: str | None = None, migrate_token: bool = False, bound: bool = False) -> dict[str, Any]:
     """Plan (default), register (--live --opt-in), or verify (--verify) this machine's
     Convoy supervisors. Every claim in the card comes from a read-back.
 
@@ -133,22 +134,26 @@ def install_local(root: Path | str, *, token_file: Path | str | None = None, por
     if not is_win:
         card.update({"ok": False, "error": "install --local is Windows-only today (scheduled tasks); a systemd user unit and a launchd agent are the missing adapters, not built"})
         return card
-    # The origin serves ONE root for its lifetime, so the root must be a bound
-    # thread, and never CONVOY_HOME (2026-09-13: run from the home directory this
-    # verb bound the public origin to C:/Users/marco and the conductor's first
-    # authenticated stamp landed in CONVOY_HOME/feed.jsonl, a place no seat reads).
-    try:
-        same_as_home = r == home.resolve() or r == home.resolve().parent
-    except OSError:
-        same_as_home = False
-    if same_as_home:
-        card.update({"ok": False, "error": "root " + str(r) + " is CONVOY_HOME or its parent, not a thread; pass --root <a bound thread>"})
-        card["known_roots"] = _known_roots()
-        return card
-    if not (r / ".convoy" / "id").is_file():
-        card.update({"ok": False, "error": "root " + str(r) + " is not a Convoy thread (no .convoy/id); pass --root <a bound thread>"})
-        card["known_roots"] = _known_roots()
-        return card
+    # Default (move 3, 2026-09-14): the origin serves every thread the machine
+    # index knows and each call names its thread; nothing is pointed. --bound
+    # pins it to --root, which must then be a thread and never CONVOY_HOME
+    # (2026-09-13: run from the home directory, the pinned form bound the public
+    # origin to C:/Users/marco and the conductor's first authenticated stamp
+    # landed in CONVOY_HOME/feed.jsonl, a place no seat reads).
+    card["bound"] = bool(bound)
+    if bound:
+        try:
+            same_as_home = r == home.resolve() or r == home.resolve().parent
+        except OSError:
+            same_as_home = False
+        if same_as_home:
+            card.update({"ok": False, "error": "root " + str(r) + " is CONVOY_HOME or its parent, not a thread; pass --root <a bound thread> or drop --bound"})
+            card["known_roots"] = _known_roots()
+            return card
+        if not (r / ".convoy" / "id").is_file():
+            card.update({"ok": False, "error": "root " + str(r) + " is not a Convoy thread (no .convoy/id); pass --root <a bound thread> or drop --bound"})
+            card["known_roots"] = _known_roots()
+            return card
     if migrate_token:
         mig: dict[str, Any] = {"from": str(tok), "to": str(default_tok), "copied": False}
         if tok.resolve() == default_tok.resolve():
@@ -175,7 +180,8 @@ def install_local(root: Path | str, *, token_file: Path | str | None = None, por
         tok = default_tok
     plan = [
         {"name": "origin", "task": ORIGIN_TASK, "execute": _windowless_interpreter(),
-         "arguments": "-m convoy.cli --root " + _ps_dq(str(r)) + " mcp --host 127.0.0.1 --port " + str(int(port)),
+         "arguments": ("-m convoy.cli --root " + _ps_dq(str(r)) + " mcp" if bound else "-m convoy.cli mcp") + " --host 127.0.0.1 --port " + str(int(port)),
+         "serves": _thread_key(r) if bound else "all threads",
          "workdir": str(r), "trigger": "at-logon", "restart": "99x / 1 min", "time_limit": "none"},
         {"name": "tunnel", "task": TUNNEL_TASK, "execute": _windowless_interpreter(),
          "arguments": "-m convoy.tunnel_run --token-file " + _ps_dq(str(tok)) + " --log " + _ps_dq(str(log_dir / "cloudflared.log"))
@@ -220,6 +226,13 @@ def install_local(root: Path | str, *, token_file: Path | str | None = None, por
                          "; pip install this checkout so convoy.exe lands in a Scripts dir on PATH"
         card["verify"].append(cs)
     return card
+
+
+def _thread_key(r: Path) -> str | None:
+    try:
+        return (r / ".convoy" / "thread").read_text(encoding="utf-8").strip() or None
+    except OSError:
+        return None
 
 
 def _known_roots() -> list[dict[str, Any]]:

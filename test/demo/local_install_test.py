@@ -51,7 +51,8 @@ class LocalInstall(unittest.TestCase):
         self.assertEqual([p["name"] for p in card["plan"]], ["origin", "tunnel", "console-script"])
         origin = card["plan"][0]
         self.assertEqual(origin["task"], "ConvoyBotMcp")
-        self.assertIn(str(self.root), origin["arguments"]); self.assertIn("--port 8788", origin["arguments"])
+        self.assertNotIn(str(self.root), origin["arguments"], "unbound by default: the origin serves every thread (move 3)"); self.assertIn("--port 8788", origin["arguments"])
+        self.assertEqual(origin["serves"], "all threads")
         self.assertEqual(Path(origin["execute"]).name.lower(), "pythonw.exe", "windowless interpreter so Windows Terminal never opens a window for it (Marco 2026-09-14)")
         self.assertEqual(Path(origin["execute"]).parent, Path(sys.executable).parent, "the origin still runs on the interpreter that installed Convoy")
         tunnel = card["plan"][1]
@@ -133,14 +134,14 @@ class RootMustBeAThread(unittest.TestCase):
     def test_a_root_without_a_thread_is_refused_before_anything_is_planned(self):
         from convoy.local_install import install_local
         bare = Path(tempfile.mkdtemp())
-        card = install_local(bare, runner=FakeRunner(), windows=True, live=True, opt_in=True)
+        card = install_local(bare, runner=FakeRunner(), windows=True, live=True, opt_in=True, bound=True)
         self.assertFalse(card["ok"]); self.assertIn("not a Convoy thread", card["error"]); self.assertEqual(card["plan"], [])
         self.assertIn("known_roots", card)
 
     def test_convoy_home_itself_is_refused_even_when_it_looks_like_a_thread(self):
         from convoy.local_install import install_local
         ensure_id(self.home); bind(self.home, "oops")
-        card = install_local(self.home, runner=FakeRunner(), windows=True)
+        card = install_local(self.home, runner=FakeRunner(), windows=True, bound=True)
         self.assertFalse(card["ok"]); self.assertIn("CONVOY_HOME", card["error"])
 
 
