@@ -177,7 +177,7 @@
       "cloud": {
         "mode": "unverified",
         "cli": null,
-        "evidence": "cursor-agent --help (this box, 2026.08.11-e8db854, 2026-09-08): `worker  Start a private cloud worker that connects to Cursor to run agents in your environment` is a self-hosted worker, not a cloud session; no option creates or attaches a Cursor cloud session from this CLI"
+        "evidence": "unverified 2026-09-08: cursor-agent --help (this box, 2026.08.11-e8db854): `worker  Start a private cloud worker that connects to Cursor to run agents in your environment` is a self-hosted worker, not a cloud session; no option creates or attaches a Cursor cloud session from this CLI"
       },
       "model_flag": "--model",
       "model_flag_evidence": "cursor-agent --help (this box, 2026.08.11-e8db854, 2026-09-08): `--model <model>  Model to use (e.g., gpt-5, sonnet-4-thinking). Parameterized models accept quoted bracket overrides, e.g. 'claude-opus-4-8[context=1m,effort=high,fast=false]'`",
