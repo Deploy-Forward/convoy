@@ -52,14 +52,16 @@ class LocalInstall(unittest.TestCase):
         origin = card["plan"][0]
         self.assertEqual(origin["task"], "ConvoyBotMcp")
         self.assertIn(str(self.root), origin["arguments"]); self.assertIn("--port 8788", origin["arguments"])
-        self.assertEqual(Path(origin["execute"]), Path(sys.executable), "the origin runs on the interpreter that installed Convoy")
+        self.assertEqual(Path(origin["execute"]).name.lower(), "pythonw.exe", "windowless interpreter so Windows Terminal never opens a window for it (Marco 2026-09-14)")
+        self.assertEqual(Path(origin["execute"]).parent, Path(sys.executable).parent, "the origin still runs on the interpreter that installed Convoy")
         tunnel = card["plan"][1]
         self.assertEqual(tunnel["task"], "ConvoyBotTunnel")
-        self.assertTrue(str(tunnel["wrapper"]).startswith(str(self.home)), "the wrapper is Convoy's, under CONVOY_HOME, not C:\\.grok")
+        self.assertEqual(Path(tunnel["execute"]).name.lower(), "pythonw.exe")
+        self.assertIn("-m convoy.tunnel_run", tunnel["arguments"]); self.assertIn(str(self.tok), tunnel["arguments"])
+        self.assertTrue(str(tunnel["log"]).startswith(str(self.home)), "the tunnel's home is Convoy's, under CONVOY_HOME, not C:\\.grok")
         self.assertEqual(Path(tunnel["token_file"]), self.tok)
         self.assertEqual(r.scripts, [], "dry run registers nothing")
         self.assertNotIn("SECRET-TUNNEL-TOKEN", json.dumps(card), "the token never appears in a card")
-        self.assertFalse(Path(tunnel["wrapper"]).exists(), "dry run writes no wrapper")
 
     def test_live_refuses_without_opt_in(self):
         from convoy.local_install import install_local
@@ -79,11 +81,8 @@ class LocalInstall(unittest.TestCase):
             self.assertIn("New-ScheduledTaskTrigger -AtLogOn", s)
             self.assertIn("-RestartCount 99", s); self.assertIn("-RestartInterval", s)
             self.assertIn("ExecutionTimeLimit", s)
-            self.assertNotIn("SECRET-TUNNEL-TOKEN", s, "the token is read by the wrapper at run time, never baked into a task")
-        wrapper = Path(card["plan"][1]["wrapper"])
-        self.assertTrue(wrapper.is_file())
-        w = wrapper.read_text(encoding="utf-8")
-        self.assertIn("--metrics", w); self.assertIn("--logfile", w); self.assertIn(str(self.tok), w); self.assertNotIn("SECRET-TUNNEL-TOKEN", w)
+            self.assertIn("pythonw.exe'", s, "both tasks run on the windowless interpreter")
+            self.assertNotIn("SECRET-TUNNEL-TOKEN", s, "the token is read by the runner at run time, never baked into a task")
         v = {x["name"]: x for x in card["verify"]}
         self.assertEqual(v["origin"]["state"], "Running"); self.assertEqual(v["tunnel"]["state"], "Running")
         self.assertTrue(v["console-script"]["ok"])
@@ -143,3 +142,28 @@ class RootMustBeAThread(unittest.TestCase):
         ensure_id(self.home); bind(self.home, "oops")
         card = install_local(self.home, runner=FakeRunner(), windows=True)
         self.assertFalse(card["ok"]); self.assertIn("CONVOY_HOME", card["error"])
+
+
+class NoWindowEverOpens(unittest.TestCase):
+    """2026-09-14: two blank Windows Terminal windows appeared at 22:59:30, one per
+    supervisor. A console program started by Task Scheduler with no parent console
+    gets a window from the default terminal. conhost --headless hides it but drops
+    the child's exit code (measured: exit 3 came back 0), which would blind the
+    restart supervision. So both tasks run on pythonw.exe, and the tunnel is a
+    Python runner that spawns cloudflared with CREATE_NO_WINDOW and exits with
+    its code."""
+    def test_tunnel_runner_reads_the_token_at_run_time_and_returns_the_child_exit_code(self):
+        from convoy import tunnel_run
+        home = Path(tempfile.mkdtemp()); tok = home / "run.token"; tok.write_text("\ufeffSECRET-TOKEN\n", encoding="utf-8")
+        seen = {}
+        def spawn(argv, **kw):
+            seen["argv"] = argv; seen["kw"] = kw
+            return 7
+        rc = tunnel_run.main(["--token-file", str(tok), "--log", str(home / "cf.log"), "--metrics", "127.0.0.1:20241", "--exe", "C:/cf/cloudflared.exe"], spawn=spawn)
+        self.assertEqual(rc, 7, "the supervisor sees the child's exit code")
+        argv = seen["argv"]
+        self.assertEqual(argv[0], "C:/cf/cloudflared.exe"); self.assertIn("--metrics", argv); self.assertIn("--logfile", argv)
+        self.assertEqual(argv[argv.index("--token") + 1], "SECRET-TOKEN", "BOM stripped, whitespace stripped, read at run time")
+        self.assertEqual(seen["kw"].get("creationflags"), tunnel_run.CREATE_NO_WINDOW)
+        rc2 = tunnel_run.main(["--token-file", str(home / "absent"), "--log", str(home / "x.log"), "--metrics", "m", "--exe", "e"], spawn=spawn)
+        self.assertEqual(rc2, 2, "a missing token file is a non-zero exit, so the task retries and the card says why")
