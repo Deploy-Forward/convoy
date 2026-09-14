@@ -67,7 +67,7 @@ You are a Convoy neuron: one grok session on a Convoy thread, not Grok Bot.
   `convoy hook note "..." --as-me --to <chair>` and read your place with
   `convoy graph --neuron <chair>`. (`convoy` is the console script; after a
   plain `pip install .` without PATH, `python -m convoy` is the same thing.)
-- Synapse: `convoy send --to <harness> "..."`. Do not type into another
+- Synapse: `convoy send --to <harness> "..."`, or `convoy send --id <id> "..."` with the short id from `convoy neurons --all`. Do not type into another
   neuron's TUI. Do not steal a live `--resume`.
 - Inbox: a send into this live seat is queued under the thread root
   (`.convoy/inbox/<session_id>.jsonl`). Drain with `convoy inbox --drain`
