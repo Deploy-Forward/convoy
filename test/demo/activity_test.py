@@ -160,5 +160,57 @@ class EveryThreadOnTheMachine(unittest.TestCase):
         with redirect_stdout(buf):
             rc = main(["neurons", "--all"])
         card = json.loads(buf.getvalue())
-        self.assertEqual(rc, 0); self.assertEqual(card["columns"], ["harness", "model", "neuron", "thread"])
+        self.assertEqual(rc, 0); self.assertEqual(card["columns"], ["id", "harness", "model", "neuron", "thread"])
         self.assertGreaterEqual(len(card["rows"]), 2)
+
+
+class ShortNeuronId(unittest.TestCase):
+    """Marco 2026-09-13: "an additional .id so we can say send --id". A short,
+    stable handle per chair, derived from convoy_id and session_id, so a send
+    names one neuron on one thread without a root path or a harness word."""
+    def setUp(self):
+        import os
+        from unittest import mock
+        self.home = Path(tempfile.mkdtemp())
+        p = mock.patch.dict(os.environ, {"CONVOY_HOME": str(self.home)}); p.start(); self.addCleanup(p.stop)
+        from convoy.convoy import read_id
+        from convoy.index import record
+        self.a = Path(tempfile.mkdtemp()); ensure_id(self.a); bind(self.a, "alpha")
+        seat(self.a, "codex", "x-alpha", worktree=str(self.a), model="gpt-5.6-sol"); record(self.a, read_id(self.a), "alpha")
+        self.b = Path(tempfile.mkdtemp()); ensure_id(self.b); bind(self.b, "beta")
+        seat(self.b, "codex", "x-beta", worktree=str(self.b), model="gpt-5.6-sol"); record(self.b, read_id(self.b), "beta")
+
+    def test_every_row_carries_a_short_stable_id(self):
+        from convoy.activity import neurons_everywhere, neuron_id
+        from convoy.convoy import read_id
+        rows = {r["neuron"]: r for r in neurons_everywhere()["rows"]}
+        nid = rows["x-alpha"]["id"]
+        self.assertRegex(nid, r"^n[0-9a-f]{6}$")
+        self.assertEqual(nid, neuron_id(read_id(self.a), "x-alpha"), "derived, so it never changes and is never stored")
+        self.assertNotEqual(nid, rows["x-beta"]["id"], "same harness, same model, different thread: different id")
+        self.assertEqual(neurons_everywhere()["rows"][0]["id"], rows[neurons_everywhere()["rows"][0]["neuron"]]["id"])
+
+    def test_resolve_finds_the_one_chair_or_says_why_not(self):
+        from convoy.activity import neurons_everywhere, resolve_neuron_id
+        rows = {r["neuron"]: r for r in neurons_everywhere()["rows"]}
+        hit = resolve_neuron_id(rows["x-beta"]["id"])
+        self.assertTrue(hit["ok"]); self.assertEqual(hit["session_id"], "x-beta"); self.assertEqual(Path(hit["root"]), self.b.resolve()); self.assertEqual(hit["to"], "codex")
+        miss = resolve_neuron_id("n000000")
+        self.assertFalse(miss["ok"]); self.assertIn("no neuron", miss["error"]); self.assertIn("convoy neurons --all", miss["error"])
+
+    def test_cli_send_by_id_queues_on_that_chair_in_its_thread(self):
+        from convoy.activity import neurons_everywhere
+        rows = {r["neuron"]: r for r in neurons_everywhere()["rows"]}
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            rc = main(["send", "--id", rows["x-beta"]["id"], "take the importer"])
+        card = json.loads(buf.getvalue())
+        self.assertEqual(rc, 0, card)
+        self.assertEqual(card["session_id"], "x-beta"); self.assertEqual(card["thread"], "beta")
+        inbox = self.b / ".convoy" / "inbox" / "x-beta.jsonl"
+        self.assertTrue(inbox.is_file(), "the row landed in beta's inbox, not the cwd thread")
+        self.assertIn("take the importer", inbox.read_text(encoding="utf-8"))
+        buf2 = io.StringIO()
+        with redirect_stdout(buf2):
+            rc2 = main(["send", "--id", "n000000", "x"])
+        self.assertEqual(rc2, 1); self.assertFalse(json.loads(buf2.getvalue())["ok"])

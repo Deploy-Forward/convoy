@@ -107,7 +107,8 @@ def main(argv: list[str] | None = None) -> int:
     c.add_argument("--instance-id")
 
     s = sub.add_parser("send")
-    s.add_argument("--to", action="append", required=True)
+    s.add_argument("--to", action="append", help="harness of the target chair (repeat for many); or use --id")
+    s.add_argument("--id", dest="neuron_id", help="short neuron id from `convoy neurons --all` (n + 6 hex); resolves the thread root, harness and chair itself, so --root and --to are not needed")
     s.add_argument("body")
     s.add_argument("--live", action="store_true")
     s.add_argument("--dry-run", action="store_true")
@@ -813,6 +814,22 @@ def main(argv: list[str] | None = None) -> int:
         runner = native_runner if args.live else fake_runner
         allow_interactive_resume = not bool(args.live)
         wts = args.worktree
+        if getattr(args, "neuron_id", None):
+            from .activity import resolve_neuron_id
+            hit = resolve_neuron_id(args.neuron_id)
+            if not hit.get("ok"):
+                print(json.dumps(hit))
+                return 1
+            card = send_one(Path(hit["root"]), hit["to"], args.body, instance_id=hit["session_id"], label=args.label,
+                            runner=runner, dry_run=args.dry_run, allow_interactive_resume=allow_interactive_resume)
+            card["id"] = hit["id"]
+            card["thread"] = hit["thread"]
+            card["root"] = hit["root"]
+            print(json.dumps(card))
+            return 0 if card.get("ok") else 1
+        if not args.to:
+            print(json.dumps({"ok": False, "error": "send needs --to <harness> or --id <neuron id>"}))
+            return 2
         if wts and len(wts) != len(args.to):
             print("need one --worktree per --to", file=sys.stderr)
             return 2
