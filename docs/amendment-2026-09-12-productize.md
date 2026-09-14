@@ -49,7 +49,11 @@ a stranger named `convoy` on PATH, the launcher's shell leaking into panes.
    public origin retires it by unsetting the variable and restarting.
 3. **Many roots per origin.** Every call carries a thread id; the origin resolves the
    root from the thread index instead of a startup flag. One process serves every
-   thread on the machine. Most tool schemas already carry `root`.
+   thread on the machine. Landed 2026-09-14: every tool schema carries `thread` and
+   `convoy_id`; `threads` lists what the origin can serve and which thread, if any, it
+   is pinned to; a call without a thread on an unpinned origin is refused with the list;
+   a routed card answers with the `thread` and `root` it touched. `install --local`
+   registers an unpinned origin by default; `--bound` pins `--root`. Nothing is pointed.
 4. **A tenant is a record.** `tenants.jsonl` maps a bearer to the threads it may see and
    write. Two conductors on one machine, or two people, without a shared flag. The
    widget and `roster` read the same record.

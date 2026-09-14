@@ -40,7 +40,7 @@ from .install import install as install_harness
 from .onboard import onboard as run_onboard
 from .repo import checkout_path_for, clone as clone_repo, is_repo_url, list_repos, mint_worktrees
 from .context import pack
-from .convoy import list_seats, read_thread
+from .convoy import list_seats, read_id, read_thread
 from .activity import neuron_activity
 from .convoy import seat as seat_chair
 from .glance import build_glance
@@ -124,6 +124,11 @@ HARNESSES = tuple((row["id"], str(row.get("name") or row["id"])) for row in harn
 # joins N chairs and may spawn the window; seated stamps a chair's proof of
 # life; consent mints a one-time grant. await_seated only reads, but it holds
 # the request thread up to its timeout, which a public endpoint must not offer.
+_THREAD_PROPS = {
+    "thread": {"type": "string", "description": "which thread this call touches: the thread key from the `threads` tool. Required when the origin is not pinned to one root; overrides the pin when it is."},
+    "convoy_id": {"type": "string", "description": "which thread this call touches, by cvy_ id (alternative to `thread`)"},
+}
+_THREAD_IS_A_NAME_NOT_A_ROUTE = frozenset({"onboard", "crew"})
 _WRITE_TOOLS = frozenset({"send", "stamp", "note", "seat", "join", "launch", "onboard", "clone", "mint", "repos",
                           "crew", "seated", "consent", "await_seated", "focus", "nudge"})
 # MCP safety annotations describe what a tool can do on THIS process. Some
@@ -449,7 +454,7 @@ TOOLS: list[dict[str, Any]] = [
     },
     {
         "name": "threads",
-        "description": "Every Convoy thread this machine's index knows (convoy_id, thread, root, updated_at). present=false when the root is gone or its id changed; never a token. prune=true drops temp-dir and absent roots and reports every dropped row (write-gated, like resume go=true).",
+        "description": "Every Convoy thread this machine's index knows (convoy_id, thread, root, updated_at). present=false when the root is gone or its id changed; never a token. `bound` names the thread this origin is pinned to, null when it serves them all and each call names its thread. prune=true drops temp-dir and absent roots and reports every dropped row (write-gated, like resume go=true).",
         "inputSchema": _schema({"prune": {"type": "boolean", "default": False, "description": "drop temp-dir and absent roots from the machine index; reports every dropped row"}}),
     },
     {
@@ -592,6 +597,43 @@ TOOLS: list[dict[str, Any]] = [
                                 "timeout": {"type": "number", "default": 120}}, required=["seats"]),
     },
 ]
+for _t in TOOLS:
+    _props = _t.setdefault("inputSchema", {}).setdefault("properties", {})
+    for _k, _v in _THREAD_PROPS.items():
+        _props.setdefault(_k, _v)
+del _t, _props, _k, _v
+
+
+def _known_threads() -> list[dict[str, Any]]:
+    """Present, unhidden threads from the machine index: what `threads` lists and what a call may name."""
+    from .index import list_threads
+    out = []
+    for t in list_threads():
+        if t.get("present") and not t.get("hidden"):
+            out.append({"thread": t.get("thread"), "convoy_id": t.get("convoy_id"), "root": t.get("root"), "updated_at": t.get("updated_at")})
+    return out
+
+
+def _resolve_root(bound: Path | None, args: dict[str, Any]) -> Path | dict[str, Any]:
+    """The root one call touches. A named thread (key or cvy_ id) wins; else the
+    pinned root; else a refusal that lists the choices. Move 3 (2026-09-14): the
+    origin serves every thread on the machine and nothing is pointed at startup."""
+    want_t = _opt_str(args, "thread")
+    want_id = _opt_str(args, "convoy_id")
+    if want_t or want_id:
+        for t in _known_threads():
+            if (want_t and str(t.get("thread")) == want_t) or (want_id and str(t.get("convoy_id")) == want_id):
+                return Path(str(t["root"])).resolve()
+        if bound is not None and want_id and read_id(bound) == want_id:
+            return bound
+        if bound is not None and want_t and read_thread(bound) == want_t:
+            return bound
+        return {"ok": False, "error": "no thread named " + str(want_t or want_id) + " on this origin (unknown, hidden, or its root is gone); see the `threads` tool",
+                "threads": _known_threads()}
+    if bound is not None:
+        return bound
+    return {"ok": False, "error": "this origin serves every thread on the machine; name one with thread=<key> or convoy_id=<cvy_...> (the `threads` tool lists them)",
+            "threads": _known_threads()}
 
 
 def _null_if_blank(val: Any) -> Any:
@@ -711,27 +753,50 @@ def _opt_bool(args: dict[str, Any], key: str, default: bool) -> bool:
     return bool(val)
 
 
-def call_tool(root: Path, name: str, arguments: dict[str, Any] | None) -> dict[str, Any]:
+def call_tool(root: Path | None, name: str, arguments: dict[str, Any] | None) -> dict[str, Any]:
     card = _call_tool(root, name, arguments)
     if not _write_tools_enabled():
         _redact_public(name, card)
     return card
 
 
-def _call_tool(root: Path, name: str, arguments: dict[str, Any] | None) -> dict[str, Any]:
+def _call_tool(bound: Path | None, name: str, arguments: dict[str, Any] | None) -> dict[str, Any]:
     args = arguments if isinstance(arguments, dict) else {}
+    if name == "threads":
+        card = _call_tool_at(bound if bound is not None else Path.cwd(), name, args)
+        if isinstance(card, dict):
+            card["bound"] = read_thread(bound) if bound is not None else None
+            card["bound_root"] = str(bound) if bound is not None else None
+        return card
+    # onboard and crew take `thread` as the NAME of the thread they create or
+    # validate, not as a route; for them only convoy_id routes.
+    route_args = {k: v for k, v in args.items() if not (name in _THREAD_IS_A_NAME_NOT_A_ROUTE and k == "thread")}
+    named = bool(_opt_str(route_args, "thread") or _opt_str(route_args, "convoy_id"))
+    resolved = _resolve_root(bound, route_args)
+    if isinstance(resolved, dict):
+        return resolved
+    root: Path = resolved
+    card = _call_tool_at(root, name, args)
+    # A card that was routed by name, or served by an unbound origin, says which
+    # thread it touched so a conductor can never mistake one record for another.
+    # A pinned call without a name keeps its CLI shape untouched.
+    if isinstance(card, dict) and (named or bound is None):
+        card.setdefault("thread", read_thread(root))
+        card.setdefault("root", str(root))
+    return card
+
+
+def _call_tool_at(root: Path, name: str, args: dict[str, Any]) -> dict[str, Any]:
     if name == "roster":
         return build_roster(root)
     if name == "glance":
         return build_glance(root, thread=_opt_str(args, "thread"), convoy_id=_opt_str(args, "convoy_id"), probe_fn=probe)
     if name == "onboard":
-        # An MCP process is bound to ONE root for its lifetime (module
-        # docstring). onboard writes the thread at the root its checkout_root
-        # resolves to, so a checkout elsewhere - a git URL, or another local
-        # path - would bind a thread this endpoint can never answer for, and
-        # every later card would describe the wrong place. Found by the e2e
-        # walk 2026-09-04: onboard returned ok=true and the server kept
-        # serving the old root. Refuse, and say where to attach instead.
+        # onboard writes the thread at the root its checkout_root resolves to.
+        # This call was resolved to ONE root (pinned or named); a checkout
+        # elsewhere would bind a thread this call is not about, and every later
+        # card would describe the wrong place (e2e walk 2026-09-04). Refuse,
+        # and say to name that thread on the next call instead.
         want = _opt_str(args, "checkout_root")
         if want:
             try:
@@ -1161,7 +1226,7 @@ def _json_default(_o: Any) -> Any:
     return None
 
 
-def handle_rpc(root: Path, msg: dict[str, Any], principal: dict[str, Any] | None = None) -> dict[str, Any] | None:
+def handle_rpc(root: Path | None, msg: dict[str, Any], principal: dict[str, Any] | None = None) -> dict[str, Any] | None:
     """Return a JSON-RPC response dict, or None for notifications.
 
     principal: the checked bearer record for this request ({id, conductor, label})
@@ -1175,7 +1240,7 @@ def handle_rpc(root: Path, msg: dict[str, Any], principal: dict[str, Any] | None
         _PRINCIPAL.reset(token)
 
 
-def _handle_rpc(root: Path, msg: dict[str, Any]) -> dict[str, Any] | None:
+def _handle_rpc(root: Path | None, msg: dict[str, Any]) -> dict[str, Any] | None:
     if not isinstance(msg, dict) or msg.get("jsonrpc") != "2.0":
         return {"jsonrpc": "2.0", "id": None, "error": {"code": -32600, "message": "Invalid Request"}}
     method = msg.get("method")
@@ -1285,8 +1350,9 @@ class McpHandler(BaseHTTPRequestHandler):
         # request line only; never log bodies or headers (secrets).
         sys.stderr.write("%s %s\n" % (self.address_string(), fmt % args))
 
-    def _root(self) -> Path:
-        return Path(getattr(self.server, "convoy_root"))
+    def _root(self) -> Path | None:
+        r = getattr(self.server, "convoy_root", None)
+        return Path(r) if r is not None else None
 
     def _send(self, code: int, body: bytes, content_type: str, extra: list[tuple[str, str]] | None = None) -> None:
         self.send_response(code)
@@ -1384,19 +1450,23 @@ class McpHTTPServer(ThreadingHTTPServer):
     daemon_threads = True
     allow_reuse_address = True
 
-    def __init__(self, addr: tuple[str, int], root: Path):
-        self.convoy_root = Path(root).resolve()
+    def __init__(self, addr: tuple[str, int], root: Path | None):
+        # None: this origin serves every thread the machine index knows and each
+        # call names its thread (move 3, 2026-09-14). A path: pinned to that root
+        # by default, a named thread still wins.
+        self.convoy_root = Path(root).resolve() if root is not None else None
         super().__init__(addr, McpHandler)
 
 
-def make_server(root: Path | str, host: str = "127.0.0.1", port: int = 8788) -> McpHTTPServer:
-    return McpHTTPServer((host, port), Path(root))
+def make_server(root: Path | str | None, host: str = "127.0.0.1", port: int = 8788) -> McpHTTPServer:
+    return McpHTTPServer((host, port), Path(root) if root is not None else None)
 
 
-def serve(root: Path | str, host: str = "127.0.0.1", port: int = 8788) -> int:
+def serve(root: Path | str | None, host: str = "127.0.0.1", port: int = 8788) -> int:
     srv = make_server(root, host, port)
     bound_host, bound_port = srv.server_address[:2]
-    print("convoy mcp listening on http://%s:%s/mcp (attach RED until Grok Bot catalogs it)" % (bound_host, bound_port), flush=True)
+    scope = ("pinned to " + str(srv.convoy_root)) if srv.convoy_root is not None else "serving every thread in the machine index"
+    print("convoy mcp listening on http://%s:%s/mcp, %s" % (bound_host, bound_port, scope), flush=True)
     try:
         srv.serve_forever()
     except KeyboardInterrupt:
@@ -1408,7 +1478,7 @@ def serve(root: Path | str, host: str = "127.0.0.1", port: int = 8788) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="python -m convoy.mcp_http")
-    p.add_argument("--root", default=".", help="layer root")
+    p.add_argument("--root", default=None, help="pin the origin to one thread root (default: serve every thread in the machine index; each call names its thread)")
     p.add_argument("--host", default="127.0.0.1")
     p.add_argument("--port", type=int, default=8788)
     args = p.parse_args(argv)

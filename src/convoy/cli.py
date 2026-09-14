@@ -290,6 +290,7 @@ def main(argv: list[str] | None = None) -> int:
     ins.add_argument("--token-file", default=None, help="with --local: the cloudflared tunnel token FILE the wrapper reads at run time (default CONVOY_HOME/tunnel/run.token)")
     ins.add_argument("--port", type=int, default=8788, help="with --local: the origin's loopback port")
 
+    ins.add_argument("--bound", action="store_true", help="with --local: pin the origin to --root (must be a bound thread); default serves every thread and each call names its thread")
     ins.add_argument("--migrate-token", action="store_true", help="with --local: copy the token FILE named by --token-file into CONVOY_HOME/tunnel/run.token (bytes only, never printed) so the plan and the live task share one home")
 
     cd = sub.add_parser("conductor", help="the conductor's identity on the wire: mint a bearer (shown once, only its hash kept), list, revoke")
@@ -759,7 +760,7 @@ def main(argv: list[str] | None = None) -> int:
             from .local_install import install_local
             card = install_local(root, token_file=args.token_file, port=int(args.port), live=bool(args.live),
                                  opt_in=bool(args.opt_in), verify_only=bool(args.verify),
-                                 migrate_token=bool(getattr(args, "migrate_token", False)))
+                                 migrate_token=bool(getattr(args, "migrate_token", False)), bound=bool(getattr(args, "bound", False)))
             print(json.dumps(card))
             return 0 if card.get("ok") else 1
         if not args.to:
@@ -809,7 +810,9 @@ def main(argv: list[str] | None = None) -> int:
         return 0 if card.get("ok") else 1
     if args.cmd == "mcp":
         from .mcp_http import serve
-        return serve(root, host=args.host, port=args.port)
+        # No explicit --root: the origin serves every thread the machine index
+        # knows and each call names its thread (move 3). --root pins it.
+        return serve(root if root_explicit else None, host=args.host, port=args.port)
     if args.cmd == "send":
         runner = native_runner if args.live else fake_runner
         allow_interactive_resume = not bool(args.live)
