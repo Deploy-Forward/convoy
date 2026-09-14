@@ -7,10 +7,10 @@ each repair was a PowerShell window. This verb plans and, with --live --opt-in,
 registers what those windows did, then proves it by reading it back:
 
   origin   ConvoyBotMcp     at-logon task, restart 99x/1 min, no time limit:
-                            <this interpreter> -m convoy.cli --root <root> mcp --port <port>
-  tunnel   ConvoyBotTunnel  same shape, running Convoy's own wrapper under CONVOY_HOME
-                            which reads the token FILE at run time (the token is never
-                            in a task definition, a card, or a log line)
+                            <this interpreter's pythonw> -m convoy.cli --root <root> mcp --port <port>
+  tunnel   ConvoyBotTunnel  same shape: pythonw -m convoy.tunnel_run, which reads the
+                            token FILE at run time and spawns cloudflared with no window
+                            (the token is never in a task definition, a card, or a log line)
   console  `convoy` on PATH must be Convoy (cmd._is_convoy_itself), not a stranger
 
 Windows only today (schtasks via PowerShell). Other OSes are refused naming the
@@ -29,6 +29,12 @@ from typing import Any, Callable
 Runner = Callable[[str], dict[str, Any]]
 
 ORIGIN_TASK = "ConvoyBotMcp"
+# Every supervised process runs on the WINDOWLESS interpreter. A console program
+# started by Task Scheduler has no parent console, and when Windows Terminal is
+# the default terminal each one gets its own blank window (2026-09-14: two
+# cascaded cmd windows at 22:59:30, one per task). conhost --headless hides the
+# window but returns 0 whatever the child did (measured), which would blind the
+# restart-on-failure supervision; pythonw.exe keeps the exit code.
 TUNNEL_TASK = "ConvoyBotTunnel"
 DEFAULT_PORT = 8788
 DEFAULT_METRICS = "127.0.0.1:20241"
@@ -59,25 +65,13 @@ def _console_script_ok() -> tuple[bool, str | None]:
     return bool(_is_convoy_itself("convoy")), exe
 
 
-def _wrapper_text(token_file: Path, log_dir: Path, exe_hint: str, metrics: str) -> str:
-    return "\n".join([
-        "# Run-ConvoyBotTunnel.ps1 - written by `convoy install --local`. Supervised cloudflared for the Convoy origin.",
-        "# Reads the tunnel token from a FILE at run time; the token is never in this script, the task, or a log.",
-        '$ErrorActionPreference = "Stop"',
-        "$log = '" + str(log_dir / "cloudflared.log").replace("'", "''") + "'",
-        "$tokFile = '" + str(token_file).replace("'", "''") + "'",
-        "$exe = '" + exe_hint.replace("'", "''") + "'",
-        "if (-not (Test-Path $exe)) { $exe = (Get-Command cloudflared.exe -ErrorAction Stop).Source }",
-        'if (-not (Test-Path $tokFile)) { throw "missing tunnel token file: $tokFile" }',
-        "$token = (Get-Content -Raw $tokFile).Trim()",
-        'if ([string]::IsNullOrWhiteSpace($token)) { throw "empty tunnel token" }',
-        "Get-Process cloudflared -ErrorAction SilentlyContinue | Stop-Process -Force",
-        "Start-Sleep -Seconds 1",
-        "$argList = @('tunnel', '--no-autoupdate', '--metrics', '" + metrics + "', '--logfile', $log, '--loglevel', 'info', 'run', '--token', $token)",
-        "$p = Start-Process -FilePath $exe -ArgumentList $argList -WindowStyle Hidden -PassThru",
-        "$p.WaitForExit()",
-        "exit $p.ExitCode",
-    ]) + "\n"
+
+
+def _windowless_interpreter() -> str:
+    """pythonw.exe beside this interpreter when it exists, else this interpreter."""
+    exe = Path(sys.executable)
+    pw = exe.with_name("pythonw.exe")
+    return str(pw) if pw.is_file() else str(exe)
 
 
 def _ps_quote(s: str) -> str:
@@ -132,7 +126,6 @@ def install_local(root: Path | str, *, token_file: Path | str | None = None, por
     log_dir = home / "tunnel"
     default_tok = log_dir / "run.token"
     tok = Path(token_file) if token_file else default_tok
-    wrapper = log_dir / "Run-ConvoyBotTunnel.ps1"
     cf_exe = cloudflared or r"C:\Program Files (x86)\cloudflared\cloudflared.exe"
     card: dict[str, Any] = {"ok": True, "root": str(r), "dry_run": not live and not verify_only, "live": bool(live),
                             "verify_only": bool(verify_only), "warnings": [], "plan": [], "verify": [],
@@ -181,12 +174,13 @@ def install_local(root: Path | str, *, token_file: Path | str | None = None, por
         card["migrated"] = mig
         tok = default_tok
     plan = [
-        {"name": "origin", "task": ORIGIN_TASK, "execute": sys.executable,
+        {"name": "origin", "task": ORIGIN_TASK, "execute": _windowless_interpreter(),
          "arguments": "-m convoy.cli --root " + _ps_dq(str(r)) + " mcp --host 127.0.0.1 --port " + str(int(port)),
          "workdir": str(r), "trigger": "at-logon", "restart": "99x / 1 min", "time_limit": "none"},
-        {"name": "tunnel", "task": TUNNEL_TASK, "execute": "powershell.exe",
-         "arguments": "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File " + _ps_dq(str(wrapper)),
-         "workdir": str(log_dir), "wrapper": str(wrapper), "token_file": str(tok), "metrics": metrics,
+        {"name": "tunnel", "task": TUNNEL_TASK, "execute": _windowless_interpreter(),
+         "arguments": "-m convoy.tunnel_run --token-file " + _ps_dq(str(tok)) + " --log " + _ps_dq(str(log_dir / "cloudflared.log"))
+                      + " --metrics " + metrics + " --exe " + _ps_dq(cf_exe),
+         "workdir": str(log_dir), "token_file": str(tok), "metrics": metrics,
          "log": str(log_dir / "cloudflared.log"), "trigger": "at-logon", "restart": "99x / 1 min", "time_limit": "none"},
         {"name": "console-script", "check": "`convoy` on PATH answers `convoy inbox --help` as this package",
          "fix": "pip install <this checkout> into the interpreter whose Scripts dir is first on PATH, and rename any other program called convoy"},
@@ -200,9 +194,8 @@ def install_local(root: Path | str, *, token_file: Path | str | None = None, por
     if live:
         try:
             log_dir.mkdir(parents=True, exist_ok=True)
-            wrapper.write_text(_wrapper_text(tok, log_dir, cf_exe, metrics), encoding="utf-8")
         except OSError as e:
-            card.update({"ok": False, "error": "could not write the tunnel wrapper: " + str(e)})
+            card.update({"ok": False, "error": "could not create the tunnel home: " + str(e)})
             return card
         for item in plan[:2]:
             res = run(_register_script(item["task"], item["execute"], item["arguments"], item["workdir"]))
