@@ -137,6 +137,49 @@ def neuron_activity(
     }
 
 
+def neuron_id(convoy_id: str | None, session_id: str | None) -> str | None:
+    """A short, stable handle for one chair on one thread: `n` + 6 hex of
+    sha256(convoy_id:session_id). Derived, never stored, so it cannot drift and
+    needs no registry; `send --id` resolves it by walking the machine index."""
+    if not convoy_id or not session_id:
+        return None
+    import hashlib
+    return "n" + hashlib.sha256((str(convoy_id) + ":" + str(session_id)).encode("utf-8")).hexdigest()[:6]
+
+
+def resolve_neuron_id(nid: str) -> dict[str, Any]:
+    """{ok, root, thread, convoy_id, session_id, to} for one short id, or an
+    error naming the verb that lists them. Two chairs sharing six hex digits is
+    reported as ambiguous, never guessed."""
+    from .index import list_threads
+    from .convoy import list_seats
+    want = str(nid or "").strip().lower()
+    hits: list[dict[str, Any]] = []
+    for t in list_threads():
+        if not t.get("present") or t.get("hidden"):
+            continue
+        root = Path(str(t.get("root")))
+        cid = t.get("convoy_id")
+        try:
+            seats = list_seats(root, convoy_id=cid)
+        except (OSError, ValueError):
+            continue
+        seen: set[str] = set()
+        for s in seats:
+            sid = s.get("session_id")
+            if not sid or sid in seen:
+                continue
+            seen.add(sid)
+            if neuron_id(cid, sid) == want:
+                hits.append({"root": str(root.resolve()), "thread": t.get("thread"), "convoy_id": cid,
+                             "session_id": sid, "to": s.get("to"), "model": s.get("model")})
+    if len(hits) == 1:
+        return {"ok": True, "id": want, **hits[0]}
+    if not hits:
+        return {"ok": False, "id": want, "error": "no neuron with id " + want + " on this machine; see `convoy neurons --all`"}
+    return {"ok": False, "id": want, "error": "ambiguous id " + want + ": " + str(len(hits)) + " chairs; address by --root and --instance-id", "hits": hits}
+
+
 def neurons_everywhere(since: str | None = None) -> dict[str, Any]:
     """One flat table across every thread the machine index knows:
     harness | model | neuron | thread (Marco 2026-09-13, `/convoy-list`).
@@ -160,12 +203,13 @@ def neurons_everywhere(since: str | None = None) -> dict[str, Any]:
             skipped.append({"thread": thread, "reason": type(e).__name__, "root": str(root)})
             continue
         for n in card.get("neurons") or []:
-            rows.append({"harness": n.get("harness"), "model": n.get("model"), "neuron": n.get("session_id"),
+            rows.append({"id": neuron_id(t.get("convoy_id"), n.get("session_id")),
+                         "harness": n.get("harness"), "model": n.get("model"), "neuron": n.get("session_id"),
                          "thread": thread, "root": str(root), "active": bool(n.get("active")),
                          "evidence": n.get("evidence"), "last_authored": n.get("last_authored"),
                          "inbox_pending": n.get("inbox_pending"), "send_command": n.get("send_command")})
     rows.sort(key=lambda r: (not r["active"], str(r.get("last_authored") or "")), reverse=False)
     rows.sort(key=lambda r: str(r.get("last_authored") or ""), reverse=True)
     rows.sort(key=lambda r: not r["active"])
-    return {"ok": True, "columns": ["harness", "model", "neuron", "thread"], "rows": rows,
+    return {"ok": True, "columns": ["id", "harness", "model", "neuron", "thread"], "rows": rows,
             "active_count": sum(1 for r in rows if r["active"]), "skipped": skipped}
