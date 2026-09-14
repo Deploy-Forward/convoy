@@ -174,6 +174,10 @@ class CodexFreshInstallStampsUsage(unittest.TestCase):
     with the inbox hook command (same handler, event from stdin)."""
 
     def setUp(self):
+        # the resolver caches a success per process; an earlier test that saw a
+        # bare `convoy` on PATH must not decide this class's command
+        cmd._RESOLVED = None; cmd._END_RESOLVED = None
+        self.addCleanup(setattr, cmd, "_RESOLVED", None); self.addCleanup(setattr, cmd, "_END_RESOLVED", None)
         self.wt = Path(tempfile.mkdtemp())
         self.root = Path(tempfile.mkdtemp())
         (self.root / ".convoy").mkdir()
