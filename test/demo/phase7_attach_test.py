@@ -162,7 +162,9 @@ class Phase7Attach(unittest.TestCase):
         self.assertNotIn("SECRET_THREAD_BYTES", blob)
         self.assertNotIn("SECRET_BRIEF", blob)
         for v in ptr.values():
-            self.assertTrue(v is None or isinstance(v, (str, int)))
+            # pointers: paths, ids, flags, and nested pointer maps (context.pack's
+            # `canonical` and `legacy_ola` since 2026-09-11); never file contents
+            self.assertTrue(v is None or isinstance(v, (str, int, bool, dict, list)), (type(v), v))
             if isinstance(v, str):
                 self.assertNotIn("SECRET_THREAD_BYTES", v)
 

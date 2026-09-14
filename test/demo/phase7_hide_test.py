@@ -146,7 +146,8 @@ class Phase7Hide(unittest.TestCase):
         abs_claude = r"C:\tmp\fake-claude" if os.name == "nt" else "/tmp/fake-claude"
         with mock.patch("convoy.bringup.shutil.which", return_value=abs_claude):
             argv = resume_argv(self.c)
-        self.assertEqual(argv, [abs_claude, "--resume", "sess-claude"])
+        # the seat's declared model rides argv (harness contract model_flag, 2026-09-09)
+        self.assertEqual(argv, [abs_claude, "--model", "claude-fable-5", "--resume", "sess-claude"])
         self.assertNotIn("-d", argv)
         self.assertNotIn("--", argv)
         self.assertNotIn("ola-brain", " ".join(argv).lower())

@@ -6,7 +6,10 @@ from pathlib import Path
 
 from convoy.convoy import bind, ensure_id, seat, update_seat
 from convoy.end_all import end_all, render_handoff
-from test.demo.end_heartbeat_test import FakeGit
+try:
+    from test.demo.end_heartbeat_test import FakeGit
+except ModuleNotFoundError:  # the repo runner discovers test/demo as top level
+    from end_heartbeat_test import FakeGit
 
 
 class RoutingGit:
