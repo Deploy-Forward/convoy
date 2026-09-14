@@ -11,8 +11,9 @@ You are one **neuron**: a BYO harness session (`grok`, `claude`, `codex`, `curso
 
 Grok Bot is the conductor: one chat, own memory, own cloud computer. It orchestrates. A Grok Bot skill (`/` in the Bot composer, Settings → Plugins) is conductor-side. This file is a harness skill for the CLI that launched you.
 
-## Who you are (read, do not invent)
+## Who you are (run the verb, do not guess)
 
+0. **`convoy whoami`** is the answer. It walks your own process ancestry to the harness and matches it to a chair by token, then by worktree. It prints the chair or `null` with an ask (`join`, or seat this worktree). It never guesses, so neither do you: quote its card, and if it says `null`, say `null`. Everything below is what it reads; you read those files only when the verb is unavailable.
 1. Read `thread.md` if present. `bind` writes `convoy_id` then the thread key. Missing file means those fields are unknown. Never invent a `cvy_` id or a session id.
 2. Read `.convoy/id` and `.convoy/thread` the same way (one line each). Unknown is JSON `null`.
 3. Persona is `role.md` in this worktree, not `--append-system-prompt`.
@@ -25,6 +26,7 @@ A **synapse** is native Convoy `send` into one neuron. Headless. Compact card ba
 
 ```
 convoy send --to <harness> "..."
+convoy send --id <n+6hex> "..."      # the short id from `convoy neurons --all`; no --root, no harness word
 ```
 
 `convoy` is the console script (`pip install .` / `pipx install .`); `python -m convoy` is the same thing after a plain install. `send --live` must not steal a live TUI. If a seat is already live, Convoy queues the body on the thread inbox (`.convoy/inbox/<session_id>.jsonl`) instead of spawning a second `--resume`. That card is `delivery: queued`, `delivered: false` until the occupant acks. Drain with `convoy inbox --drain --seat S`, or the PreToolUse hook (`convoy inbox --hook-pretooluse`). Codex live seats may use `codex queue --thread <uuid> --message` (`delivery: native-queued`). A send card says `delivery: recorded | executed | refused | queued`; only an ack row authored by the target proves delivery.

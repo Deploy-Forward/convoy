@@ -1,9 +1,11 @@
 import io
 import json
+import os
 import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 from contextlib import redirect_stdout
 from pathlib import Path
 
@@ -276,6 +278,8 @@ class PublicWriteToolGate(unittest.TestCase):
     gated/loopback deploy opts in with CONVOY_MCP_WRITE_TOOLS=1."""
 
     def setUp(self):
+        # anonymous wire: no bearer of THIS machine may leak into the listing
+        self._home = mock.patch.dict(os.environ, {"CONVOY_HOME": tempfile.mkdtemp()}); self._home.start(); self.addCleanup(self._home.stop)
         self.root = Path(tempfile.mkdtemp())
 
     def _rpc(self, method, params):
@@ -292,7 +296,7 @@ class PublicWriteToolGate(unittest.TestCase):
     def test_write_tools_refused_over_rpc_by_default(self):
         resp = self._rpc("tools/call", {"name": "stamp", "arguments": {"summary": "gated"}})
         self.assertTrue(resp["result"]["isError"])
-        self.assertIn("disabled", resp["result"]["structuredContent"]["error"])
+        self.assertIn("refused", resp["result"]["structuredContent"]["error"])
         resp = self._rpc("tools/call", {"name": "note", "arguments": {"summary": "gated", "instance_id": "seat-x"}})
         self.assertTrue(resp["result"]["isError"])
         resp = self._rpc("tools/call", {"name": "send", "arguments": {"to": "codex", "body": "must not enqueue"}})
