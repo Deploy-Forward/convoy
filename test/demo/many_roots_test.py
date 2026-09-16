@@ -159,3 +159,30 @@ class InstallServesAllThreadsByDefault(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class OriginSurvivesWithoutStdio(unittest.TestCase):
+    """2026-09-15: the supervised origin moved to pythonw (no console) in #101 and
+    every request then died with EOF: the request-line logger wrote to
+    sys.stderr, which is None under a windowless interpreter, so the handler
+    raised before sending a response and cloudflared reported the origin
+    unreachable (public 502 overnight). The origin must answer with no stdio."""
+    def test_a_request_is_answered_when_stderr_and_stdout_are_none(self):
+        import sys
+        from convoy.mcp_http import make_server
+        httpd = make_server(None, "127.0.0.1", 0)
+        threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        self.addCleanup(httpd.shutdown)
+        url = "http://127.0.0.1:%d/mcp" % httpd.server_address[1]
+        with mock.patch.object(sys, "stderr", None), mock.patch.object(sys, "stdout", None):
+            r = _rpc(url, "initialize", {"protocolVersion": "2025-06-18"})
+        self.assertIn("serverInfo", r["result"])
+
+    def test_serve_banner_and_request_log_go_to_a_file_when_there_is_no_console(self):
+        import sys
+        from convoy import mcp_http
+        home = Path(tempfile.mkdtemp())
+        with mock.patch.dict(os.environ, {"CONVOY_HOME": str(home)}), mock.patch.object(sys, "stderr", None), mock.patch.object(sys, "stdout", None):
+            mcp_http._log_line("hello from a windowless origin")
+        log = home / "origin.log"
+        self.assertTrue(log.is_file()); self.assertIn("hello from a windowless origin", log.read_text(encoding="utf-8"))

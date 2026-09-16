@@ -1319,6 +1319,30 @@ def _handle_rpc(root: Path | None, msg: dict[str, Any]) -> dict[str, Any] | None
         return {"jsonrpc": "2.0", "id": rpc_id, "error": {"code": -32603, "message": type(e).__name__}}
 
 
+def _log_line(text: str) -> None:
+    """One line to stderr when a console exists, else to CONVOY_HOME/origin.log.
+    Under pythonw (the supervised origin since #101) sys.stderr and sys.stdout
+    are None; writing to them raised inside the request handler and every
+    request died with EOF (public 502, 2026-09-15). Logging must never be the
+    reason a request fails, so any failure here is swallowed."""
+    line = text.rstrip("\n") + "\n"
+    stream = sys.stderr
+    if stream is not None:
+        try:
+            stream.write(line)
+            stream.flush()
+            return
+        except (OSError, ValueError, AttributeError):
+            pass
+    try:
+        home = Path(os.environ.get("CONVOY_HOME") or (Path.home() / ".convoy"))
+        home.mkdir(parents=True, exist_ok=True)
+        with (home / "origin.log").open("a", encoding="utf-8") as f:
+            f.write(datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ ") + line)
+    except OSError:
+        pass
+
+
 def _cors(handler: BaseHTTPRequestHandler) -> None:
     handler.send_header("Access-Control-Allow-Origin", "*")
     handler.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
@@ -1348,7 +1372,7 @@ class McpHandler(BaseHTTPRequestHandler):
 
     def log_message(self, fmt: str, *args: Any) -> None:
         # request line only; never log bodies or headers (secrets).
-        sys.stderr.write("%s %s\n" % (self.address_string(), fmt % args))
+        _log_line("%s %s" % (self.address_string(), fmt % args))
 
     def _root(self) -> Path | None:
         r = getattr(self.server, "convoy_root", None)
@@ -1466,7 +1490,7 @@ def serve(root: Path | str | None, host: str = "127.0.0.1", port: int = 8788) ->
     srv = make_server(root, host, port)
     bound_host, bound_port = srv.server_address[:2]
     scope = ("pinned to " + str(srv.convoy_root)) if srv.convoy_root is not None else "serving every thread in the machine index"
-    print("convoy mcp listening on http://%s:%s/mcp, %s" % (bound_host, bound_port, scope), flush=True)
+    _log_line("convoy mcp listening on http://%s:%s/mcp, %s" % (bound_host, bound_port, scope))
     try:
         srv.serve_forever()
     except KeyboardInterrupt:
