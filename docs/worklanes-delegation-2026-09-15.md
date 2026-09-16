@@ -131,3 +131,51 @@ so `delegate` is declared once.
 
 Card state in Convoy. Lane moves by Convoy. Spend computed by Convoy. A second database.
 Any of these arrives only when two consumers need it and the record cannot answer.
+
+## Reconciliation with the Ledger-side map, 2026-09-15
+
+A second map was written from the Ledger side (platform-checkout, main) the same
+day. The two agree on the boundary, on five-valued delivery, on the record never being
+copied, on relational shape over a Firestore store behind one seam, and on card text
+being data. What follows is only where they differ or where one saw what the other did
+not.
+
+**The Ledger map read a checkout 320 commits behind platform origin/main.** It did not
+see `packages/convoy-mcp`, `remote-contracts`, `remote-orchestration`,
+`services/session-relay`, `apps/desktop-agent`, or `functions/src/remoteCommandPlane.ts`:
+a second, platform-native Convoy with `thread_` ids, owned by an account, addressed to
+Grok Bot over stdio, none of it deployed and no lane past review. Both maps' plans put
+the board and its API in the Ledger and delegation in Convoy, which is only consistent
+if that platform lane is retired or re-pointed at `convoy.bot`. That is the one ruling
+that remains, and both maps already assume its answer.
+
+**CardThreadLink needs the machine.** The Ledger map keys the link `cardId + uid` and
+carries `convoyId`, `sendToken`, `delivered`. A user with two machines has two threads
+for one card; the link must carry the origin that can answer for the thread, because
+the cloud names a thread it can never read and someone must resolve it. Identity tuple,
+as both maps ask for on paper before any schema: `(org, user, machine, thread, chair)`.
+Convoy today has only `(thread, chair)`; `machine` arrives with the delegation card,
+`user` and `org` come from the tenant record (move 4), never from a row.
+
+**Per-user conductor means per-user origin.** One Grok Bot per user, each with its own
+bearer, each reaching that user's machine. Today there is one origin at `convoy.bot`
+on one machine. Addressing N origins is a known unknown on the Convoy side: a hostname
+per user, or a relay the Ledger fronts. Nothing in this spec depends on the answer
+except the `machine` field on the link.
+
+**Two words, two fields.** `delivered` is Convoy's five-valued truth about the send.
+`delegation {token}` in this spec answers a different question, the state of the work:
+queued, received, working, progressing, stalled, done, refused. Both ride the report;
+neither replaces the other. And "card" is a result envelope in Convoy
+(`CARD_OUTPUT_SCHEMA`) and a work item in Worklanes: Convoy docs say "result card",
+Worklanes docs say "work card", and CANON names the collision.
+
+**Card text into a neuron is untrusted.** `delegate` writes the brief into the lane's
+`.convoy/brief.md` and the send body. The boot prompt and the contract frame it as
+content to act on, never as instructions that override the seat's rules, the same
+boundary the feed already enforces on notes.
+
+**What this changes in the PR map.** W0 is new: seat rows carry the harness session id,
+so the Ledger join on `(tool, toolSessionId)` exists. W1 adds the `.git/info/exclude`
+write on `bind` and `onboard`, not only on `clone`. W2's delegation card carries
+`machine`. W4's tenant record carries `user` and `org` for the stamps.
