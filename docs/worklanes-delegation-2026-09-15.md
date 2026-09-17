@@ -141,7 +141,7 @@ being data. What follows is only where they differ or where one saw what the oth
 not.
 
 **The Ledger map read a checkout 320 commits behind platform origin/main.** It did not
-see the platform's own earlier remote-orchestration modules:
+see the platform's own earlier attempt at remote orchestration:
 a second, platform-native Convoy with `thread_` ids, owned by an account, addressed to
 Grok Bot over stdio, none of it deployed and no lane past review. Both maps' plans put
 the board and its API in the Ledger and delegation in Convoy, which is only consistent
