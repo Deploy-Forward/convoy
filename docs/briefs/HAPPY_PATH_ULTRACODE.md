@@ -1,7 +1,7 @@
 # Ultracode brief: Happy Path + `/convoy --start` (no ola)
 
 Lead: Fable (claude, chair-less conductor on thread `happy-path`, root
-`C:\Users\marco\ola\convoy-wt-happy`, branch `feat/happy-path-proof`, PR #61).
+`C:\Users\<user>\ola\convoy-wt-happy`, branch `feat/happy-path-proof`, PR #61).
 Implement: `g1-happy-path` (grok). Verify: `g2-happy-path` (grok).
 Fable classifies and monitors (feed / rail / stamp); neurons write the diffs.
 

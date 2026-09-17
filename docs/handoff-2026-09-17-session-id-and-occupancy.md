@@ -4,7 +4,7 @@ Adversarial review of one claim from the platform-side session, folded into a fi
 
 No code has been written for this fix yet. There is nothing to review but the plan.
 
-Sources: Convoy main `06bfd60` (paths under `src/convoy/`), the platform checkout `deploy-forward-canonical` and its `.convoy/` record for thread `cvy_AH96kNbcs0yrgCWJkrs5FQ`, the vendors' own session stores on this machine, and the live process table read at about 2026-09-17T11:00Z. Vendor session ids and inbox tokens are truncated to eight characters on purpose; they must not ride a public document.
+Sources: Convoy main `06bfd60` (paths under `src/convoy/`), the platform checkout and its `.convoy/` record for the platform thread, the vendors' own session stores on this machine, and the live process table read at about 2026-09-17T11:00Z. Vendor session ids and inbox tokens are truncated to eight characters on purpose; they must not ride a public document.
 
 ## 1. Verdict in six lines
 
@@ -101,7 +101,7 @@ Each step is one PR in `Deploy-Forward/convoy`, red test first, gate `python tes
 
 Two rulings for Marco, flagged once:
 
-- **Does the raw vendor id ride the delegation report to the Ledger?** The brief says an id must never leave the machine. The Ledger already keys every session document by it: `functions/src/ingest.ts:296`, `${uid}_${tool}_${toolSessionId}`, uploaded by the tracker from the same machine. Either the report carries it as a local locator, consistent with the tracker (recommended: it resumes nothing without the local log, and the Ledger join is the point of C0), or both sides switch to a keyed hash, which is a platform change.
+- **Does the raw vendor id ride the delegation report to the Ledger?** The brief says an id must never leave the machine. The Ledger's ingest path already keys every session document by user, tool and vendor session id, uploaded by the tracker from the same machine. Either the report carries it as a local locator, consistent with the tracker (recommended: it resumes nothing without the local log, and the Ledger join is the point of C0), or both sides switch to a keyed hash, which is a platform change.
 - **Default on a deaf body: refuse or evict?** Recommended: refuse by default, evict by evidence (step 3). The consent path already exists for close (`pane_host.py:185-244`).
 
 ## 5. Evidence per attack point
@@ -147,7 +147,7 @@ Boot-turn input per Codex life: 25,971; 26,091; 26,091; 26,094; 26,094 tokens, o
 
 ### Point 6, scope
 
-Capture reads vendor files or hook stdin and writes only `.convoy/seats.jsonl`. Three exits from the machine exist today: the public MCP (already shaped by `_redact_public`; `roster` uses seats only to find worktrees, `mcp_http.py:672`), git (B8, open), and the Ledger's own tracker (`ingest.ts:296`, which already ships the raw id). The rule as written in the brief conflicts with the last one; that is the first ruling above.
+Capture reads vendor files or hook stdin and writes only `.convoy/seats.jsonl`. Three exits from the machine exist today: the public MCP (already shaped by `_redact_public`; `roster` uses seats only to find worktrees, `mcp_http.py:672`), git (B8, open), and the Ledger's own tracker (its ingest path, which already ships the raw id). The rule as written in the brief conflicts with the last one; that is the first ruling above.
 
 ## What this changes in the platform fix plan
 

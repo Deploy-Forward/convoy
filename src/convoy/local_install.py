@@ -138,7 +138,7 @@ def install_local(root: Path | str, *, token_file: Path | str | None = None, por
     # index knows and each call names its thread; nothing is pointed. --bound
     # pins it to --root, which must then be a thread and never CONVOY_HOME
     # (2026-09-13: run from the home directory, the pinned form bound the public
-    # origin to C:/Users/marco and the conductor's first authenticated stamp
+    # origin to C:/Users/<user> and the conductor's first authenticated stamp
     # landed in CONVOY_HOME/feed.jsonl, a place no seat reads).
     card["bound"] = bool(bound)
     if bound:

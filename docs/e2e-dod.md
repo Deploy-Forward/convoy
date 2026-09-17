@@ -97,7 +97,7 @@ Attempted in this worktree. None of these were present:
 3. **No path to the Windows origin host.** No SSH config, no RDP, no
    checkout path, no Win32 service name, no supervisor command.
 4. **Sandbox `cloudflare.json` is not convoy.bot.**
-   `/home/box/sand-data/connector-secrets/.../cloudflare.json` is this VM's
+   `/home/<user>/sand-data/connector-secrets/.../cloudflare.json` is this VM's
    tunnel connector token (key `token` only). It was not used as a Wrangler
    API token and cannot restart the Python origin.
 

@@ -1026,7 +1026,7 @@ def pane_env(base: dict[str, str] | None = None, *, registry: dict[str, str] | N
     environment plus the logon-time process variables and Convoy's own
     CONVOY_* settings; never the launcher's shell identity or PATH.
 
-    Live 2026-09-10, evco-equity, cursor-agent 2026.09.02-2026.09.08: the
+    Live 2026-09-10, a private client repo, cursor-agent 2026.09.02-2026.09.08: the
     hook runner builds a PowerShell pipeline (`Get-Content -LiteralPath ...
     -Raw | & { $input | <hook> }`) and runs it in the shell it picks from the
     environment. Panes launched from a Git Bash tool call inherited

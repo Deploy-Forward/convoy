@@ -5,7 +5,7 @@ under load, conducted from the platform-side Fable session on 2026-09-16/17.
 
 ## What the live run proved
 
-- Thread `cvy_AH96kNbcs0yrgCWJkrs5FQ` on deploy-forward-canonical: one `start`, one `crew`
+- The platform thread: one `start`, one `crew`
   that minted five worktrees on their own branches and opened five panes in one window.
   About twenty sends, zero lost, every one acked by a note citing the token. Chairs
   coordinated peer to peer on the feed without the lead (Lane C found Lane B's validator

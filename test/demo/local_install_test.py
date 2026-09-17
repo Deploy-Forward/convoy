@@ -124,7 +124,7 @@ class LocalInstall(unittest.TestCase):
 
 class RootMustBeAThread(unittest.TestCase):
     """2026-09-13: `install --local --live` run from the home directory bound the public
-    origin to C:/Users/marco, a place with no thread, and the conductor's first
+    origin to C:/Users/<user>, a place with no thread, and the conductor's first
     authenticated stamp landed in CONVOY_HOME/feed.jsonl. The root must be a bound
     thread; a bare directory is refused with the roots the index knows."""
     def setUp(self):
