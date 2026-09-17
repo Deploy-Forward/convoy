@@ -156,6 +156,27 @@ The way a conductor writes over the public edge is a bearer, not the flag:
 `tools/list` shows the write tools whenever a live bearer exists, because the
 process can accept writes from its holder; each call is still checked.
 
+### Anonymous callers on the public edge (2026-09-17)
+
+Read back live through the public URL with no bearer: `threads` listed every
+thread on the machine with its filesystem root, and `card` and `roster` carried
+checkout and worktree paths. So identity is the arbiter on the edge:
+
+- A request is *public* when it carries a proxy header (`Cf-Connecting-Ip`,
+  `X-Forwarded-For`, `Forwarded`, `X-Real-Ip`) or comes from a non-loopback
+  peer. A loopback caller with no such header is local and unchanged.
+- Public and anonymous gets the product surface only: `card`, `choices`,
+  `install` (forced dry) and `threads` as a count. Every other tool refuses by
+  name and points at `convoy conductor mint`. `tools/list` shows exactly that set.
+- Every card an anonymous public caller receives has filesystem paths scrubbed
+  to `[redacted]`, and `threads` never enumerates names or ids.
+- `CONVOY_MCP_WRITE_TOOLS=1` is a loopback switch. It opens nothing to a public
+  anonymous caller, reads or writes. Do not set it on a public edge anyway.
+- A bearer holder through the edge sees whole cards, as before.
+
+So the edge proof below differs by identity: anonymous `tools/list` returns the
+four product tools; with `Authorization: Bearer` it returns the full set.
+
 Prove the origin directly on that host before touching the Worker:
 
 ```powershell
@@ -215,7 +236,9 @@ running.
 
 Repeat both `initialize` and `tools/list` against
 `https://convoy.bot/mcp`. Save the exact returned names and version with the
-deployment evidence.
+deployment evidence. Since 2026-09-17 an anonymous `tools/list` on the edge is
+the four product tools; the derived-set comparison above applies to a call that
+carries a bearer (or to loopback), not to an anonymous edge call.
 
 The expected security verdict is:
 
