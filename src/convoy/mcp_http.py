@@ -8,7 +8,9 @@ from __future__ import annotations
 
 import argparse
 import contextvars
+import ipaddress
 import json
+import re
 import os
 import shutil
 import subprocess
@@ -155,6 +157,47 @@ AWAIT_SEATED_MAX_S = 600.0
 # the threading server.
 _PRINCIPAL: contextvars.ContextVar[dict[str, Any] | None] = contextvars.ContextVar("convoy_principal", default=None)
 
+# Did this request arrive from outside the machine? Set per request by handle_rpc.
+_PUBLIC: contextvars.ContextVar[bool] = contextvars.ContextVar("convoy_public", default=False)
+
+# Every edge adds one of these (cloudflared: Cf-Connecting-Ip; any reverse
+# proxy: X-Forwarded-For). A local client sends none and speaks from loopback.
+_PROXY_HEADERS = ("Cf-Connecting-Ip", "X-Forwarded-For", "Forwarded", "X-Real-Ip")
+
+# What an anonymous caller on the public edge may touch: the product, never a
+# record. `install` is forced dry; `threads` answers a count.
+_PRODUCT_SURFACE = frozenset({"card", "choices", "install", "threads"})
+
+# A filesystem path anywhere in a card, whole or embedded in prose (a boot
+# prompt, a summary): drive-letter, UNC, POSIX home-like roots, tilde.
+_PATH_RX = re.compile(
+    r"(?<![A-Za-z0-9])(?:[A-Za-z]:[\\/]|\\\\[^\\/\s]+[\\/]|/(?:Users|home|root|tmp|var|opt|mnt|srv|etc|private)/|~[\\/])"
+    r"[^\s\"'<>|*?`]*"
+)
+
+
+def _is_public_request(peer: str, headers: Any) -> bool:
+    """True when the request came through an edge or from a non-loopback peer.
+
+    Read back live 2026-09-17: an anonymous POST to the public URL returned
+    every thread's root under the operator's home and the client names those
+    roots carry. Nothing a local client sends can be told from a remote one
+    except these two facts, and a local client already owns the disk."""
+    for name in _PROXY_HEADERS:
+        try:
+            if headers.get(name):
+                return True
+        except AttributeError:
+            break
+    try:
+        return not ipaddress.ip_address(str(peer or "").strip()).is_loopback
+    except ValueError:
+        return True
+
+
+def _anonymous_public() -> bool:
+    return bool(_PUBLIC.get()) and _PRINCIPAL.get() is None
+
 
 def _legacy_flag() -> bool:
     """The pre-bearer gate: one process-wide flag. Still honored for loopback
@@ -164,6 +207,8 @@ def _legacy_flag() -> bool:
 
 
 def _write_tools_enabled() -> bool:
+    if _anonymous_public():
+        return False          # the legacy flag is a loopback switch, never an edge one
     return _PRINCIPAL.get() is not None or _legacy_flag()
 
 
@@ -187,6 +232,9 @@ def _listed_tools() -> list[dict[str, Any]]:
     # holder, so it lists the write tools; each call is still checked.
     writes = _write_tools_enabled() or _bearer.live_count() > 0
     tools = TOOLS if writes else [t for t in TOOLS if t["name"] not in _WRITE_TOOLS]
+    if _anonymous_public():
+        writes = False
+        tools = [t for t in TOOLS if t["name"] in _PRODUCT_SURFACE]
     listed: list[dict[str, Any]] = []
     for tool in tools:
         name = tool["name"]
@@ -754,10 +802,52 @@ def _opt_bool(args: dict[str, Any], key: str, default: bool) -> bool:
 
 
 def call_tool(root: Path | None, name: str, arguments: dict[str, Any] | None) -> dict[str, Any]:
+    if _anonymous_public():
+        if name not in _PRODUCT_SURFACE:
+            return _refuse_public(name)
+        args = dict(arguments) if isinstance(arguments, dict) else {}
+        if name == "install":
+            args["dry_run"] = True
+        return _public_shape(name, _call_tool(root, name, args))
     card = _call_tool(root, name, arguments)
     if not _write_tools_enabled():
         _redact_public(name, card)
     return card
+
+
+def _refuse_public(name: str) -> dict[str, Any]:
+    return {
+        "ok": False,
+        "tool": name,
+        "error": name + " reads or writes a thread record; on the public edge that takes identity. Mint a bearer with "
+                 "`convoy conductor mint` on the origin's machine and send it as `Authorization: Bearer`. Anonymous "
+                 "callers get " + ", ".join(sorted(_PRODUCT_SURFACE)) + ".",
+    }
+
+
+def _scrub_paths(value: Any) -> Any:
+    if isinstance(value, str):
+        return _PATH_RX.sub("[redacted]", value)
+    if isinstance(value, list):
+        return [_scrub_paths(v) for v in value]
+    if isinstance(value, dict):
+        return {k: _scrub_paths(v) for k, v in value.items()}
+    return value
+
+
+def _public_shape(name: str, card: Any) -> Any:
+    """The product surface as an anonymous public caller may see it: no
+    enumeration of threads (a count), no filesystem path anywhere."""
+    if not isinstance(card, dict):
+        return card
+    if name == "threads":
+        rows = card.get("threads") if isinstance(card.get("threads"), list) else []
+        card = {"ok": bool(card.get("ok", True)), "count": len(rows),
+                "note": "anonymous callers cannot enumerate threads; name one you already know, or identify with a bearer"}
+    elif isinstance(card.get("threads"), list):
+        # a routing refusal lists the candidates for a local caller; here it counts them
+        card = {**card, "threads": len(card["threads"])}
+    return _scrub_paths(card)
 
 
 def _call_tool(bound: Path | None, name: str, arguments: dict[str, Any] | None) -> dict[str, Any]:
@@ -1226,17 +1316,22 @@ def _json_default(_o: Any) -> Any:
     return None
 
 
-def handle_rpc(root: Path | None, msg: dict[str, Any], principal: dict[str, Any] | None = None) -> dict[str, Any] | None:
+def handle_rpc(root: Path | None, msg: dict[str, Any], principal: dict[str, Any] | None = None, public: bool = False) -> dict[str, Any] | None:
     """Return a JSON-RPC response dict, or None for notifications.
 
     principal: the checked bearer record for this request ({id, conductor, label})
     or None for an anonymous caller. It is the only thing that opens the write
     tools besides the legacy loopback flag, and `from` on conductor rows is read
-    from it, never from an argument."""
+    from it, never from an argument.
+    public: the request came through an edge or from a non-loopback peer
+    (_is_public_request). Anonymous and public together means the product
+    surface only; the legacy flag does not apply."""
     token = _PRINCIPAL.set(principal)
+    pub = _PUBLIC.set(bool(public))
     try:
         return _handle_rpc(root, msg)
     finally:
+        _PUBLIC.reset(pub)
         _PRINCIPAL.reset(token)
 
 
@@ -1442,11 +1537,12 @@ class McpHandler(BaseHTTPRequestHandler):
             body = _dumps({"jsonrpc": "2.0", "id": None, "error": {"code": -32700, "message": "Parse error"}}).encode("utf-8")
             self._send(400, body, "application/json; charset=utf-8")
             return
+        public = _is_public_request(self.client_address[0] if self.client_address else "", self.headers)
         if isinstance(msg, list):
             replies = []
             for item in msg:
                 if isinstance(item, dict):
-                    r = handle_rpc(self._root(), item, principal=principal)
+                    r = handle_rpc(self._root(), item, principal=principal, public=public)
                     if r is not None:
                         replies.append(r)
             if not replies:
@@ -1456,7 +1552,7 @@ class McpHandler(BaseHTTPRequestHandler):
                 return
             payload = replies
         elif isinstance(msg, dict):
-            reply = handle_rpc(self._root(), msg, principal=principal)
+            reply = handle_rpc(self._root(), msg, principal=principal, public=public)
             if reply is None:
                 self.send_response(202)
                 _cors(self)
