@@ -1,7 +1,7 @@
 # Amendment 2026-09-12: productize Convoy
 
 An amendment to the 2026-08-15 Architecture Lock and its authority document
-(`docs/develop-anywhere-web-v1-spec.md` in platform-checkout). It amends; it
+(`docs/develop-anywhere-web-v1-spec.md` in the platform repository). It amends; it
 does not rewrite. Where this file and the Lock disagree, the Lock's objects stand and
 this file records the phase that changes them.
 

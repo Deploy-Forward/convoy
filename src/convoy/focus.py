@@ -24,7 +24,7 @@ WT_FOCUS_EVIDENCE = {
     "evidenced": False,
     "observed": (
         "2026-09-05 this machine: wt.exe is "
-        r"C:\Users\<user>\AppData\Local\Microsoft\WindowsApps\wt.exe "
+        r"%LOCALAPPDATA%\Microsoft\WindowsApps\wt.exe "
         "(WindowsApps stub). `wt.exe --help` and `wt.exe focus-pane --help` "
         "produced no output and no pane-target documentation. No adapter."
     ),

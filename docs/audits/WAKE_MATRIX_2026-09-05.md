@@ -8,7 +8,7 @@ also live in `src/convoy/nudge.py` `WAKE_EVIDENCE`.
 | `grok --help` | 2026-09-05T06:03:21Z | no `queue`; `leader`, `agent` (stdio/headless/serve/leader), `--resume`, `-p`/`-c`. `grok help queue` = unrecognized subcommand. |
 | `grok leader list` | 2026-09-05T06:03:21Z | "No leader candidates found." `~/.grok/leader.sock` missing. |
 | `grok agent --help` | 2026-09-05T06:03:21Z | `--leader` / `--no-leader`. Live TUI `session/prompt` needs a leader; `--no-leader` against a pid-held TUI is a steal. |
-| `~/.grok/active_sessions.json` | 2026-09-05T06:03:21Z | g1 `01a07024-1b5f-7350-9727-c11c25faeb70` cwd=wt-g1 pid 59824; g2 `01a07026-97ec-7621-bdd2-f60141e7a84a` cwd=wt-g2 pid 101288. |
+| `~/.grok/active_sessions.json` | 2026-09-05T06:03:21Z | g1 `01a07024…` cwd=wt-g1 pid 59824; g2 `01a07026…` cwd=wt-g2 pid 101288. |
 | WT `CASCADIA_HOSTING_WINDOW_CLASS` titles | 2026-09-05T06:03:21Z | 3 windows, WT pid 99004. Unique worktree title: `convoy-wt-happy-wt-luna2`. g2 title is the user prompt, not the worktree / seat title. Idle title `grok` is generic. |
 | `codex queue --help` | 2026-09-05T06:03:21Z | `--thread <UUID or exact session name> --message <TEXT>`. |
 | `codex queue --thread 00000000-0000-0000-0000-000000000000 --message convoy-wake-matrix-probe` | 2026-09-05T06:07:27Z | rc 1; `no rollout found for thread id` (code -32603). Seats have `resume=null`. |
