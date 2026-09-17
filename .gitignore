@@ -47,3 +47,8 @@ ORCH_SEND.md
 PUSH.md
 STAMP.md
 ULTRACODE.md
+# secrets and pairing records never belong in git
+*.token
+conductors.jsonl
+tenants.jsonl
+origin.json

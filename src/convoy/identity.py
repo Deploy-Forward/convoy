@@ -364,7 +364,7 @@ def _merge_claude_inbox_hooks(data: dict[str, Any], command: str) -> tuple[dict[
 
 def _strip_convoy_entries(data: dict[str, Any], marker: str) -> tuple[dict[str, Any], bool]:
     """Remove every Convoy-owned entry (by command marker) from every event
-    list, keeping foreign entries. Live 2026-09-09: evco-equity commits a
+    list, keeping foreign entries. Live 2026-09-09: a private client repo commits a
     .claude/settings.json carrying bare `convoy inbox --hook-pretooluse`; on
     a box where no hook-shell interpreter imports convoy, resolution fails and
     the installer used to return without touching the file, so two

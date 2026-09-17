@@ -13,7 +13,7 @@ at the end, with sources.
 
 ## Lanes
 
-Thread: `happy-path`, root `C:\Users\marco\ola\convoy-wt-happy`. One
+Thread: `happy-path`, root `C:\Users\<user>\ola\convoy-wt-happy`. One
 `wt.exe` window, one pane per seat, minted from the root checkout as
 `<root>-wt-<title>` on branch `convoy/<title>` (`repo.mint_worktrees`).
 

@@ -70,7 +70,7 @@ Section 1 `REPO` with a right-aligned `CONNECTED` chip: the repo URL
 a real remote exists; otherwise the chip says `LOCAL` and no URL is shown.
 `LOCAL STORAGE · THREAD`: the mock shows `~/.convoy/threads/cvy-8f2a.json`.
 That is NOT where the truth lives (docs/CONVOY_SOT.md): render the thread
-root's `.convoy/` path (e.g. `C:\Users\marco\ola\convoy-wt-happy\.convoy`)
+root's `.convoy/` path (e.g. `C:\Users\<user>\ola\convoy-wt-happy\.convoy`)
 and, on hover or a second line, the machine index `~/.convoy/threads.json`
 that found it. Under it, exactly as drawn: `convoy_id cvy_… · bound to
 thread <key>`.
