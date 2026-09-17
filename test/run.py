@@ -17,6 +17,10 @@ if str(SRC) not in sys.path:
 def main() -> int:
     # Tests mint temp roots; keep their index rows out of the real ~/.convoy.
     os.environ.setdefault("CONVOY_HOME", tempfile.mkdtemp(prefix="convoy-test-home-"))
+    # The operator's machine may carry the legacy write flag at User scope
+    # (2026-09-17: four "hidden by default" tests failed for that reason alone).
+    # The suite starts with it unset; a test that wants it sets it explicitly.
+    os.environ.pop("CONVOY_MCP_WRITE_TOOLS", None)
     start = ROOT / "test" / "demo"
     guard = os.environ["CONVOY_HOME"]
     suite = unittest.defaultTestLoader.discover(str(start), pattern="*_test.py")
