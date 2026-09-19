@@ -65,7 +65,13 @@ class NeuronIdentity(unittest.TestCase):
         self.assertIn("Raw slash-command arguments", codex_prompt.read_text(encoding="utf-8"))
         self.assertEqual(card["codex_prompt"]["path"], str(codex_prompt))
         self.assertTrue((self.wt / ".agents" / "skills" / "convoy-end" / "SKILL.md").is_file())
-        self.assertTrue((self.wt / ".claude" / "commands" / "end.md").is_file())
+        for name in ("convoy-end", "convoy-start", "convoy-add"):
+            f = self.wt / ".claude" / "commands" / (name + ".md")
+            self.assertTrue(f.is_file(), name)
+            text = f.read_text(encoding="utf-8")
+            self.assertNotIn("{{CONVOY}}", text, "the spelling is resolved at install")
+            self.assertIn(" end " if name == "convoy-end" else (" start " if name == "convoy-start" else " crew "), text)
+        self.assertFalse((self.wt / ".claude" / "commands" / "end.md").exists(), "no bare /end: it would shadow other tools' /end")
 
     def test_install_idempotent_and_preserves_agents_body(self):
         (self.wt / "AGENTS.md").write_text("# keep me\n\nuser rules stay\n", encoding="utf-8")
