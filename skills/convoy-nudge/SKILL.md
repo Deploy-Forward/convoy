@@ -9,7 +9,7 @@ A neuron receives at tool time (PreToolUse), at turn end (the Stop gate), and
 when a background `inbox --wait` completes. It does NOT receive while it sits
 idle at its prompt with no background wait running. That is the only gap left,
 and this skill closes it from the lead's side. Everything here was run live on
-2026-09-05 (docs/briefs/WIDGET.md, slice 5b evidence) and is replicable.
+2026-09-05 (docs/audits/WAKE_MATRIX_2026-09-05.md) and is replicable.
 
 ## 1. Detect from the tape, never by eye
 

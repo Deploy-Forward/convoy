@@ -1,6 +1,6 @@
 # Wake matrix (g2-happy-path, 2026-09-05)
 
-Slice 5b of `docs/briefs/WIDGET.md`. Evidence only. Command / observed / ts
+Wake-path evidence for the idle-chair nudge. Evidence only. Command / observed / ts
 also live in `src/convoy/nudge.py` `WAKE_EVIDENCE`.
 
 | command | ts | observed |

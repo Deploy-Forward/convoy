@@ -1,6 +1,6 @@
 # wt-nudge.ps1: wake an idle neuron pane in Windows Terminal by typing one prompt into it.
 # Evidence: 2026-09-05 05:57-06:00Z, two relaunched grok panes at the welcome screen drained
-# their inboxes within a minute of this exact method (docs/briefs/WIDGET.md, slice 5b).
+# their inboxes within a minute of this exact method (docs/audits/WAKE_MATRIX_2026-09-05.md).
 #
 #   list:    powershell -File scripts\wt-nudge.ps1 -List
 #   dry:     powershell -File scripts\wt-nudge.ps1 -Root <thread root> -TitleMatch grok -DryRun

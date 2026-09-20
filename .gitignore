@@ -52,3 +52,7 @@ ULTRACODE.md
 conductors.jsonl
 tenants.jsonl
 origin.json
+
+# Working briefs: task assignments to agents on a given day, not documentation.
+# Kept on disk, never published - they go stale the moment the branch merges.
+docs/briefs/
