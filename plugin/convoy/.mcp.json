@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "convoy": {
+      "type": "http",
+      "url": "https://convoy.bot/mcp",
+      "note": "Convoy hosted MCP endpoint. The wizard always checks this endpoint's live tools/list and fails closed when required verbs are absent. Public deployments hide write and process-launch tools; use an authenticated or gated endpoint for the complete lifecycle. No API key is read by this plugin."
+    }
+  }
+}

@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "convoy"
+version = "0.1.0"
+description = "Grok Bot MCP + neuron CLI for Deploy-Forward/convoy"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+
+[project.scripts]
+convoy = "convoy.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+convoy = ["harness_skills/**", "harness_effort.json", "site/**", "conductor.md"]
+
+[project.optional-dependencies]
+widget = ["pywebview>=5"]
+tray = ["pywebview>=5", "pystray>=0.19", "pillow>=10"]

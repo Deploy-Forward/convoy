@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "convoy": {
+      "type": "http",
+      "url": "https://convoy.bot/mcp"
+    }
+  }
+}

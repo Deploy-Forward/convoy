@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Deploy Forward">
+  <!-- Canonical Deploy Forward mark — corner-bracket, accent blue, solid so it reads at favicon size -->
+  <rect width="128" height="128" rx="26" fill="#1d4ed8"/>
+  <rect x="22" y="22" width="15" height="15" fill="#ffffff"/>
+  <rect x="91" y="22" width="15" height="15" fill="#ffffff"/>
+  <rect x="22" y="91" width="15" height="15" fill="#ffffff"/>
+  <rect x="91" y="91" width="15" height="15" fill="#ffffff"/>
+  <rect x="46" y="46" width="36" height="36" fill="#ffffff"/>
+</svg>

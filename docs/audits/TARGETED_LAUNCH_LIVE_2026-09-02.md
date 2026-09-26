@@ -1,0 +1,201 @@
+# Targeted one-chair launch: live evidence (2026-09-02)
+
+Status: **Codex launch/seated PASS; Grok launch/seated PASS; grok-to-grok
+managed close GREEN for process teardown; Windows Terminal visual close RED**.
+One-time seated tokens and one-time consent values are excluded from this
+document.
+
+## Implementation lineage
+
+- Repository: `Deploy-Forward/convoy`
+- Feature worktree: `<feature worktree>`
+- Branch: `feat/targeted-neuron-launch`
+- Base: `9e75a9e3f0f54a8ddb8b0b3829195c16a660dcb3`
+- Thread root: `<thread root>`
+- Caller chair: `codex-demo`
+- Caller worktree: `<caller worktree>`
+- Caller Codex process: PID `<pid-caller-codex>`
+
+The feature separates harness argv construction from terminal placement. The
+live path used the `windows-terminal` adapter; no shell, keyboard injection,
+vendor resume token, or root-wide `bring-up` was used.
+
+## Codex proof
+
+Safe command shape (the CLI minted the chair identity):
+
+```text
+python -m convoy --root <thread root> join \
+  --to codex \
+  --worktree <codex proof worktree> \
+  --title codex-proof \
+  --launch
+```
+
+Observed lineage:
+
+| Stage | Evidence |
+| --- | --- |
+| Separate checkout | Detached worktree `<codex proof worktree>` at `9e75a9e` |
+| Chair registration | CLI returned `codex-proof-demo` |
+| Terminal dispatch | `windows-terminal`, target `most-recent-window`, semantics `mru-window-active-pane`; WT launcher PID `<pid-wt-launcher>` |
+| Harness process | New Codex PID `<pid-codex>`, while caller PID `<pid-caller-codex>` remained alive |
+| Vendor TUI identity | Verified session metadata `<codex-session-id>`, originator `codex-tui`, source `cli`, cwd exactly the proof worktree |
+| Join event | `2026-09-02T21:23:28.869555Z` |
+| Independent proof of life | `seated codex-proof-demo` authored by that chair at `2026-09-02T21:24:09.772045Z` |
+
+This proves two concurrent Codex neurons with distinct processes, worktrees,
+chair identities, and vendor TUI sessions. The new chair read the shared thread
+through an absolute pointer; it did not expect `thread.md` to exist in its own
+checkout.
+
+## Safety properties exercised
+
+- `join --launch` selected only the chair returned by that invocation.
+- Only fresh join/swap chairs are eligible; any vendor resume token is refused.
+- An atomic, persistent launch claim prevents a second launcher from opening a
+  duplicate pane for the same chair.
+- The existing caller process remained alive.
+- `convoy choices` reported terminal capability, installed harnesses, known
+  worktrees, and safe seat projections without exposing resume tokens.
+- Windows Terminal targeting is honestly recorded as MRU-window active pane,
+  not as an exact Windows Terminal window identifier.
+
+## Close lineage: process PASS is not pane PASS
+
+At `2026-09-02T21:27:58.235169Z` the process-level close check passed:
+
+- Re-resolved PID `<pid-codex>` as `codex.exe`, whose immediate wrapper was
+  `node.exe` PID `<pid-codex-wrapper>`.
+- Stopped only PID `<pid-codex>`; its wrapper then exited.
+- Verified PID `<pid-codex>` absent, wrapper PID `<pid-codex-wrapper>` absent, and caller Codex PID
+  `<pid-caller-codex>` still alive.
+- Field-preservingly recorded the verified vendor TUI session id,
+  `resume_for=codex`, `launch_state=exited`, and the close timestamp on chair
+  `codex-proof-demo`. No vendor id was guessed, and it was not recorded
+  until the process was no longer live.
+
+Visual verification then disproved the pane-level conclusion. Windows Terminal
+retained the split and displayed the non-zero process exit (`0xffffffff`) with
+"Ctrl+D or Enter to restart". With the profile's graceful/automatic close
+behavior, killing the child is therefore **not** a successful pane close.
+
+Current result: **RED** until the exited proof pane itself disappears. The user
+must press `Ctrl+D` in that exact pane. Windows Terminal's CLI exposes
+`split-pane` and focus movement but not the `closePane` action; Convoy must not
+inject a keystroke into an ambiguously targeted TUI. Future close DoD must
+require visual/pane-topology evidence, not only absent PIDs.
+
+### Managed-host follow-up
+
+A second Codex run used `managed-proof-demo` and the same one-chair
+dispatch. Its host recorded the exact child ownership, accepted a separate
+`close-chair` consent receipt, terminated only that child tree, and exited
+normally. The host/child PIDs were both absent afterward while caller PID
+`<pid-caller-codex>` remained alive. This is **GREEN for owned process teardown** and proves
+the lifecycle host closes its side of the contract; it is not, by itself,
+visual proof that Windows Terminal removed the pane. The old direct pane
+remains a separately tracked **manual-close-required** failure.
+
+## Cross-harness replication
+
+Grok reached a useful intermediate state:
+
+| Stage | Evidence |
+| --- | --- |
+| Separate checkout | Detached worktree `<grok proof worktree>` at `9e75a9e` |
+| Chair registration | `grok-proof-demo` at `2026-09-02T21:28:55.491609Z` |
+| Terminal dispatch | Windows Terminal launcher PID `<pid-wt-launcher>`; exactly one new split requested |
+| Harness process | `grok.exe` PID `<pid-grok>`, while caller Codex PID `<pid-caller-codex>` remained alive |
+| Convoy preparation | `.grok/agents/convoy-neuron.md` and `.grok/skills/neuron-identity/SKILL.md` exist in the proof checkout |
+| Vendor difference | Grok displayed its own repository trust confirmation before accepting the initial boot prompt; `grok inspect` independently reported `Project trusted: no` |
+| Proof of life | Pending: no `seated` event while the trust dialog is open |
+
+This is not a launch failure: terminal placement and native Grok startup both
+succeeded. It is a first-run authorization gate that Convoy must surface and
+leave to the user; it must not silently accept a security/trust prompt.
+
+### Grok seated follow-up (`lead-demo`)
+
+A later Grok chair completed the loop after the user granted worktree trust.
+This is a distinct chair from `grok-proof-demo` (that proof pane
+remains pending seated). Facts from vendor `summary.json` and the thread feed,
+not self-report:
+
+| Stage | Evidence |
+| --- | --- |
+| Separate checkout | `<lead worktree>` |
+| Chair registration | `lead-demo` join `2026-09-02T22:25:12.867692Z` |
+| Vendor session | `<grok-session-id>` (`cwd` matches the checkout) |
+| Live model | `summary.current_model_id=grok-4.6`; assistant turns `model_id=grok-4.6-build`; effort `xhigh` |
+| Trust | seat row `trust_worktree=true` after the user-owned Project trusted gate |
+| Proof of life | `seated lead-demo` at `2026-09-02T22:37:44.356871Z`, authored by that chair |
+
+This is the missing Grok half of DoD items 2/4/5: one chair, one pane, one
+native process, independent `seated` after a surfaced vendor gate. It does
+not convert Windows Terminal visual close to GREEN, and it is not
+stranger-machine evidence.
+
+## Grok-to-grok replication (`lead` → `side`)
+
+Caller chair `lead-demo` (Grok PID `<pid-caller-grok>`, pane host `<pid-caller-host>`)
+invoked the same `join --launch` path Codex used, targeting a second Grok
+neuron. No root-wide `bring-up`, keyboard injection, or vendor resume token.
+
+Safe command shape:
+
+```text
+python -m convoy --root <thread root> join \
+  --to grok \
+  --worktree <side worktree> \
+  --title side \
+  --launch \
+  --as lead-demo
+```
+
+| Stage | Evidence |
+| --- | --- |
+| Separate checkout | Detached worktree `<side worktree>` at `05ada50` |
+| Trust preflight | `grok inspect` in that new folder reported `Project trusted: yes` *before* launch. Convoy therefore did not pause for `trust-worktree` and did **not** pass `--trust`. The earlier `grok-proof` folder, which was `Project trusted: no` at 21:28Z, now also inspects as yes. |
+| Chair registration | `side-demo` join `2026-09-02T22:48:38.627109Z` |
+| Terminal dispatch | `windows-terminal` `split-pane`; launcher PID `<pid-wt-launcher>`; inner argv is `python -m convoy.pane_host --seat side-demo` |
+| Harness process | New `grok.exe` PID `<pid-side>` (`--agent` convoy-neuron, no `--trust`), parent pane host `<pid-side-host>`; caller Grok PID `<pid-caller-grok>` remained alive |
+| Host WT_SESSION | Pane-host state recorded `<wt-session-host>`, distinct from the caller pane's `WT_SESSION=<wt-session-caller>` |
+| Independent proof of life | `seated side-demo` authored by that chair at `2026-09-02T22:49:02.053715Z` (~24s after join) |
+| Vendor TUI identity | After process exit, `summary.json` `id=<side-session-id>`, `cwd` exactly the side worktree, `current_model_id=grok-4.6` |
+| Repeat launch | `launch --seat side-demo` refused: chair is not a fresh join/swap |
+
+Close used the managed-host rail (same as `managed-proof-demo`):
+`close --seat` → scoped `close-chair` consent → host acknowledged and exited.
+At `2026-09-02T22:49:35.987777Z` host status was `close-request-acknowledged`.
+PIDs `<pid-side>`, `<pid-side-host>`, and wrapper `<pid-side-wrapper>` were absent; caller `<pid-caller-grok>` and
+its host `<pid-caller-host>` were still alive. Seat row: `launch_state=closed-by-consent`,
+`process_state=exited`, `pane_state=close-dispatched`. `pane_closed` stayed
+JSON `null` — process teardown is not visual pane proof.
+
+This is **GREEN for grok-to-grok same-harness x2** on create/seated/managed
+process close. It does not change Windows Terminal visual close.
+
+## Knowledge added to the product contract
+
+The first live pass exposed two dimensions that unit-only launch tests miss:
+
+1. **Create capability is not close capability.** `choices` now reports
+   `can_close_exact=false` and an adapter-specific reason. The DoD must keep
+   pane topology separate from process liveness.
+2. **Harness start is not neuron readiness.** Codex consumed the positional
+   boot prompt immediately; Grok first required project trust. The common state
+   machine is `joined -> process-started -> vendor-gate? -> seated`, and only
+   `seated` is cross-harness readiness.
+3. **Grok trust is vendor-sticky, not chair-sticky.** After one Grok worktree
+   is trusted, a *brand-new* git worktree of the same repo can already inspect
+   as `Project trusted: yes`. Convoy must still probe `grok inspect` per
+   worktree and must not inject `--trust` when inspect already says yes. It
+   also must not skip the probe because a sibling Grok chair was trusted.
+
+For Windows Terminal, the next implementation decision is explicit: either
+ship a lifecycle host that owns the child process and exits zero after an exact
+close request, or retain manual close. Killing a child and inferring that its
+pane vanished is forbidden. tmux can eventually capture the pane id returned
+by `split-window -P -F '#{pane_id}'` and use that exact id for close; the current
+prototype does not yet capture it and therefore also reports close as false.
