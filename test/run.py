@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import os
 import sys
-import tempfile
 import unittest
 from pathlib import Path
 
@@ -15,13 +14,15 @@ if str(SRC) not in sys.path:
 
 try:
     from . import harness_guard  # python -m test
+    from .home_guard import ensure_throwaway_home
 except ImportError:  # python test/run.py: test/ is on sys.path
     import harness_guard
+    from home_guard import ensure_throwaway_home
 
 
 def main() -> int:
     # Tests mint temp roots; keep their index rows out of the real ~/.convoy.
-    os.environ.setdefault("CONVOY_HOME", tempfile.mkdtemp(prefix="convoy-test-home-"))
+    ensure_throwaway_home()
     # The operator's machine may carry the legacy write flag at User scope
     # (2026-09-17: four "hidden by default" tests failed for that reason alone).
     # The suite starts with it unset; a test that wants it sets it explicitly.
