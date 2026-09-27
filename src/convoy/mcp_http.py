@@ -1586,6 +1586,15 @@ def serve(root: Path | str | None, host: str = "127.0.0.1", port: int = 8788) ->
     bound_host, bound_port = srv.server_address[:2]
     scope = ("pinned to " + str(srv.convoy_root)) if srv.convoy_root is not None else "serving every thread in the machine index"
     _log_line("convoy mcp listening on http://%s:%s/mcp, %s" % (bound_host, bound_port, scope))
+    # The origin loop rides inside this one supervised process.
+    # Unpaired returns None and nothing starts, so a machine that never opted
+    # in never polls.
+    try:
+        from .origin_loop import start_daemon
+        if start_daemon() is not None:
+            _log_line("convoy origin loop started (paired)")
+    except Exception as exc:        # noqa: BLE001 - the MCP serves with or without it
+        _log_line("convoy origin loop did not start: " + type(exc).__name__)
     try:
         srv.serve_forever()
     except KeyboardInterrupt:

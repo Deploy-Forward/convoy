@@ -295,6 +295,13 @@ def main(argv: list[str] | None = None) -> int:
 
     ins.add_argument("--bound", action="store_true", help="with --local: pin the origin to --root (must be a bound thread); default serves every thread and each call names its thread")
     ins.add_argument("--migrate-token", action="store_true", help="with --local: copy the token FILE named by --token-file into CONVOY_HOME/tunnel/run.token (bytes only, never printed) so the plan and the live task share one home")
+    ins.add_argument("--pair", action="store_true", help="with --local: pair this machine to a Worklanes org; writes CONVOY_HOME/origin.json (a pointer to the credential FILE, never its bytes) and proves it with one beat")
+    ins.add_argument("--unpair", action="store_true", help="with --local: delete CONVOY_HOME/origin.json; the credential file is left alone")
+    ins.add_argument("--org", default=None, help="with --pair: the Worklanes org id")
+    ins.add_argument("--user", default=None, help="with --pair: your platform user id")
+    ins.add_argument("--credential-file", default=None, help="with --pair: the FILE holding the origin credential; read at call time, never copied, never printed")
+    ins.add_argument("--api-base", default=None, help="with --pair: the platform origin, e.g. https://deployforward.dev")
+    ins.add_argument("--machine-id", default=None, help="with --pair: override the derived machine key (hostname+home, hashed)")
 
     cd = sub.add_parser("conductor", help="the conductor's identity on the wire: mint a bearer (shown once, only its hash kept), list, revoke")
     cd.add_argument("action", choices=["mint", "list", "revoke"])
@@ -766,6 +773,24 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(card))
         return 0 if card.get("ok") else 1
     if args.cmd == "install":
+        if getattr(args, "local", False) and getattr(args, "unpair", False):
+            from .local_install import unpair
+            card = unpair()
+            print(json.dumps(card))
+            return 0 if card.get("ok") else 1
+        if getattr(args, "local", False) and getattr(args, "pair", False):
+            from .local_install import pair
+            missing = [n for n, v in (("--org", args.org), ("--user", args.user),
+                                      ("--credential-file", args.credential_file),
+                                      ("--api-base", args.api_base)) if not v]
+            if missing:
+                print(json.dumps({"ok": False, "error": "pair needs " + ", ".join(missing)}))
+                return 1
+            card = pair(org_id=args.org, user_id=args.user,
+                        credential_file=args.credential_file, api_base=args.api_base,
+                        machine_id=getattr(args, "machine_id", None))
+            print(json.dumps(card))
+            return 0 if card.get("ok") else 1
         if getattr(args, "local", False):
             from .local_install import install_local
             card = install_local(root, token_file=args.token_file, port=int(args.port), live=bool(args.live),

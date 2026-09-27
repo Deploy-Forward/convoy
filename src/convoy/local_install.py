@@ -19,6 +19,7 @@ missing adapter (systemd user unit, launchd agent); nothing is faked.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import shutil
@@ -83,7 +84,7 @@ def _register_script(task: str, execute: str, arguments: str, workdir: str) -> s
     return "; ".join([
         "$a = New-ScheduledTaskAction -Execute " + _ps_quote(execute) + " -Argument " + _ps_quote(arguments) + " -WorkingDirectory " + _ps_quote(workdir),
         "$t = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME",
-        "$s = New-ScheduledTaskSettingsSet -RestartCount 99 -RestartInterval (New-TimeSpan -Minutes 1) -ExecutionTimeLimit ([TimeSpan]::Zero) -MultipleInstances IgnoreNew",
+        "$s = New-ScheduledTaskSettingsSet -RestartCount 99 -RestartInterval (New-TimeSpan -Minutes 1) -ExecutionTimeLimit ([TimeSpan]::Zero) -MultipleInstances IgnoreNew -DisallowStartIfOnBatteries $false -StopIfGoingOnBatteries $false",
         "Register-ScheduledTask -TaskName " + _ps_quote(task) + " -Action $a -Trigger $t -Settings $s -Force | Select-Object TaskName, State | ConvertTo-Json -Compress",
     ])
 
@@ -253,3 +254,129 @@ def _known_roots() -> list[dict[str, Any]]:
 
 def _ps_dq(s: str) -> str:
     return '"' + s.replace('"', '\\"') + '"'
+
+
+# --------------------------------------------------------------------------
+# Pairing. One file, no secret in it, proved with one beat.
+# --------------------------------------------------------------------------
+
+ORIGIN_RECORD = "origin.json"
+
+
+def _origin_id(org_id: str, user_id: str, machine_id: str) -> str:
+    """o_ + the first 20 hex of a digest over (org, user, machine).
+
+    Deterministic on purpose: re-pairing the same machine for the same user
+    produces the SAME origin, so the platform's registry does not grow a new
+    row every time someone re-runs the verb, and a machine cannot accidentally
+    orphan the links addressed to it.
+    """
+    raw = "\0".join((str(org_id), str(user_id), str(machine_id)))
+    return "o_" + hashlib.sha256(raw.encode("utf-8")).hexdigest()[:20]
+
+
+def default_machine_id() -> str:
+    """A stable, local, non-identifying machine key. Hostname and home path
+    are hashed rather than sent: the platform needs to tell two machines
+    apart, not to learn their names."""
+    import socket
+    try:
+        node = socket.gethostname()
+    except OSError:
+        node = ""
+    return hashlib.sha256((node + "\0" + str(Path.home())).encode("utf-8")).hexdigest()[:16]
+
+
+def _beat_once(origin: dict[str, Any]) -> dict[str, Any]:
+    from .report import ReportClient
+    return ReportClient(origin).beat({"originId": origin["origin_id"], "threads": []})
+
+
+def pair(*, org_id: str, user_id: str, credential_file: Path | str,
+         api_base: str, machine_id: str | None = None,
+         home: Path | str | None = None,
+         beat: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
+         now: str | None = None) -> dict[str, Any]:
+    """Write origin.json and prove it with one beat.
+
+    The record says WHERE the credential lives and never what it is, so it can
+    be read, pasted into a bug report or committed by accident without leaking
+    anything. The credential file stays the user's; report.py reads it at call
+    time.
+
+    Proved, not declared: the beat goes out BEFORE the file is written, and the
+    card prints the schema that came back rather than the word "success". A
+    pairing that only wrote a file would be a machine that believes it is
+    connected.
+    """
+    from .layer import utc_now
+    base = Path(home) if home is not None else _home()
+    credential = Path(credential_file)
+    card: dict[str, Any] = {"ok": False, "home": str(base), "origin_id": None, "verified": None}
+    for name, value in (("--org", org_id), ("--user", user_id), ("--api-base", api_base)):
+        if not str(value or "").strip():
+            card["error"] = "pair requires " + name
+            return card
+    # Read it once here only to refuse early on a credential that could never
+    # ride a header. The bytes are not kept and never enter the card.
+    try:
+        text = credential.read_text(encoding="utf-8-sig").strip()
+    except OSError as exc:
+        card["error"] = "cannot read the credential file: " + type(exc).__name__
+        return card
+    if not text or not text.isascii() or any(ch.isspace() for ch in text):
+        card["error"] = "the credential file is empty, non-ASCII or contains whitespace"
+        return card
+    del text
+
+    origin = {
+        "origin_id": _origin_id(org_id, user_id, machine_id or default_machine_id()),
+        "org_id": str(org_id),
+        "user_id": str(user_id),
+        "machine_id": str(machine_id or default_machine_id()),
+        "api_base": str(api_base).rstrip("/"),
+        "credential_path": str(credential.resolve()),
+        "paired_at": now or utc_now(),
+    }
+    card["origin_id"] = origin["origin_id"]
+    try:
+        answer = (beat or _beat_once)(origin)
+    except Exception as exc:                 # noqa: BLE001 - report.py's own types
+        # Nothing is written. A machine that could not beat is not paired, and
+        # a half-written record would have it poll with a credential the
+        # platform has already refused.
+        card["error"] = type(exc).__name__ + ": " + str(exc)
+        return card
+    status = int((answer or {}).get("status") or 0)
+    body = (answer or {}).get("body")
+    if not 200 <= status < 300:
+        card["error"] = "the pairing beat returned " + str(status)
+        card["verified"] = {"status": status}
+        return card
+    base.mkdir(parents=True, exist_ok=True)
+    (base / ORIGIN_RECORD).write_text(json.dumps(origin, indent=2, sort_keys=True) + "\n",
+                                      encoding="utf-8")
+    card.update({
+        "ok": True,
+        "record": str(base / ORIGIN_RECORD),
+        # The schema it answered with, not a success message: that is the
+        # evidence a reader can check.
+        "verified": {"status": status,
+                     "schema": sorted(body.keys()) if isinstance(body, dict) else []},
+        "next": "convoy install --local --verify to read the loop back",
+    })
+    return card
+
+
+def unpair(home: Path | str | None = None) -> dict[str, Any]:
+    """Delete the pairing record. Never the credential: that file is the
+    user's, and this verb has no business removing it."""
+    base = Path(home) if home is not None else _home()
+    path = base / ORIGIN_RECORD
+    existed = path.is_file()
+    try:
+        path.unlink(missing_ok=True)
+    except OSError as exc:
+        return {"ok": False, "error": type(exc).__name__ + ": " + str(exc)}
+    return {"ok": True, "unpaired": existed, "record": str(path),
+            "note": "the credential file was not touched"}

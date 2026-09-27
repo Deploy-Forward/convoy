@@ -122,6 +122,33 @@ class LocalInstall(unittest.TestCase):
         self.assertEqual(rc, 0); self.assertTrue(card["dry_run"]); self.assertEqual(len(card["plan"]), 3)
 
 
+class NeverPausedByBattery(unittest.TestCase):
+    """Task Scheduler defaults to `DisallowStartIfOnBatteries=True` and
+    `StopIfGoingOnBatteries=True`. On a machine running on battery the scheduler then holds
+    `ConvoyBotMcp` in Queued and nothing serves, with nobody at a terminal to notice. The
+    registration itself must carry the flags off so no fresh install regresses it."""
+    def setUp(self):
+        self.root = Path(tempfile.mkdtemp()); ensure_id(self.root); bind(self.root, "nb")
+        self.home = Path(tempfile.mkdtemp())
+        self.tok = self.home / "run.token"; self.tok.write_text("SECRET-TUNNEL-TOKEN\n", encoding="utf-8")
+        self.env = mock.patch.dict(os.environ, {"CONVOY_HOME": str(self.home)}); self.env.start(); self.addCleanup(self.env.stop)
+
+    def test_registration_script_turns_both_battery_settings_off_and_keeps_restart_policy(self):
+        from convoy.local_install import install_local
+        r = FakeRunner()
+        with mock.patch("convoy.local_install._console_script_ok", return_value=(True, "C:/x/Scripts/convoy.exe")):
+            card = install_local(self.root, token_file=self.tok, runner=r, live=True, opt_in=True, port=8788, windows=True)
+        self.assertTrue(card["ok"], card)
+        reg = [s for s in r.scripts if "Register-ScheduledTask" in s]
+        self.assertEqual(len(reg), 2, "both ConvoyBotMcp and ConvoyBotTunnel are registered")
+        for s in reg:
+            self.assertIn("-DisallowStartIfOnBatteries $false", s,
+                          "a machine on battery must not leave the origin Queued")
+            self.assertIn("-StopIfGoingOnBatteries $false", s,
+                          "going on battery must not stop a running supervisor")
+            self.assertIn("-RestartCount 99", s); self.assertIn("-RestartInterval", s)
+
+
 class RootMustBeAThread(unittest.TestCase):
     """2026-09-13: `install --local --live` run from the home directory bound the public
     origin to C:/Users/<user>, a place with no thread, and the conductor's first
@@ -168,3 +195,112 @@ class NoWindowEverOpens(unittest.TestCase):
         self.assertEqual(seen["kw"].get("creationflags"), tunnel_run.CREATE_NO_WINDOW)
         rc2 = tunnel_run.main(["--token-file", str(home / "absent"), "--log", str(home / "x.log"), "--metrics", "m", "--exe", "e"], spawn=spawn)
         self.assertEqual(rc2, 2, "a missing token file is a non-zero exit, so the task retries and the card says why")
+
+
+class Pairing(unittest.TestCase):
+    """Pairing is a file with no secret in it.
+
+    origin.json says WHERE the credential lives and never what it is, so the
+    record can be read, copied into a bug report and committed by accident
+    without leaking anything. The credential file itself is the secret, read
+    at call time by report.py.
+
+    And pairing is proved, not declared: one real beat goes out and the card
+    prints the schema that came back. A pairing that only wrote a file would
+    be a machine that believes it is connected.
+    """
+
+    def setUp(self):
+        self.home = Path(tempfile.mkdtemp(prefix="convoy-home-"))
+        self.cred = self.home / "worklanes_credential.txt"
+        self.cred.write_text("o_cred_abcdef0123456789", encoding="utf-8")
+
+    def test_pair_writes_origin_json_without_credential_bytes(self):
+        from convoy.local_install import pair
+
+        beats = []
+
+        def fake_beat(origin):
+            beats.append(origin)
+            return {"status": 200, "body": {"originId": origin["origin_id"], "reachability": "live"}}
+
+        with mock.patch.dict(os.environ, {"CONVOY_HOME": str(self.home)}):
+            card = pair(org_id="org1", user_id="u1", credential_file=self.cred,
+                        api_base="https://example.invalid", machine_id="m1",
+                        beat=fake_beat, now="2026-09-17T00:00:00.000000Z")
+        self.assertTrue(card["ok"], card)
+        row = json.loads((self.home / "origin.json").read_text(encoding="utf-8"))
+        self.assertEqual(sorted(row), ["api_base", "credential_path", "machine_id", "org_id",
+                                       "origin_id", "paired_at", "user_id"])
+        self.assertTrue(row["origin_id"].startswith("o_"))
+        self.assertEqual(len(row["origin_id"]), 22, "o_ plus 20 hex")
+        self.assertEqual(row["credential_path"], str(self.cred.resolve()))
+        raw = (self.home / "origin.json").read_text(encoding="utf-8")
+        self.assertNotIn("o_cred_abcdef0123456789", raw, "the file points at the secret, never holds it")
+        self.assertNotIn("o_cred_abcdef0123456789", json.dumps(card))
+        # Proved, not declared.
+        self.assertEqual(len(beats), 1)
+        self.assertEqual(card["verified"]["status"], 200)
+        self.assertEqual(sorted(card["verified"]["schema"]), ["originId", "reachability"])
+
+    def test_the_origin_id_is_stable_for_the_same_machine_and_user(self):
+        from convoy.local_install import pair
+        ok = lambda origin: {"status": 200, "body": {"originId": origin["origin_id"]}}
+        with mock.patch.dict(os.environ, {"CONVOY_HOME": str(self.home)}):
+            first = pair(org_id="org1", user_id="u1", credential_file=self.cred,
+                         api_base="https://a.invalid", machine_id="m1", beat=ok)
+            second = pair(org_id="org1", user_id="u1", credential_file=self.cred,
+                          api_base="https://a.invalid", machine_id="m1", beat=ok)
+            other = pair(org_id="org1", user_id="u2", credential_file=self.cred,
+                         api_base="https://a.invalid", machine_id="m1", beat=ok)
+        self.assertEqual(first["origin_id"], second["origin_id"])
+        self.assertNotEqual(first["origin_id"], other["origin_id"])
+
+    def test_a_failed_beat_leaves_the_machine_unpaired(self):
+        from convoy.local_install import pair
+        from convoy.report import Revoked
+
+        def angry(_origin):
+            raise Revoked("the platform refused this origin credential (403)")
+
+        with mock.patch.dict(os.environ, {"CONVOY_HOME": str(self.home)}):
+            card = pair(org_id="org1", user_id="u1", credential_file=self.cred,
+                        api_base="https://example.invalid", machine_id="m1", beat=angry)
+        self.assertFalse(card["ok"], card)
+        self.assertFalse((self.home / "origin.json").exists(),
+                         "a machine that could not beat is not paired")
+        self.assertNotIn("o_cred_abcdef0123456789", json.dumps(card))
+
+    def test_an_unreadable_credential_is_refused_before_anything_is_written(self):
+        from convoy.local_install import pair
+        with mock.patch.dict(os.environ, {"CONVOY_HOME": str(self.home)}):
+            card = pair(org_id="org1", user_id="u1", credential_file=self.home / "absent.txt",
+                        api_base="https://example.invalid", machine_id="m1",
+                        beat=lambda _o: {"status": 200, "body": {}})
+        self.assertFalse(card["ok"])
+        self.assertIn("credential", card["error"])
+        self.assertFalse((self.home / "origin.json").exists())
+
+    def test_unpair_removes_the_record_and_never_the_credential(self):
+        from convoy.local_install import pair, unpair
+        with mock.patch.dict(os.environ, {"CONVOY_HOME": str(self.home)}):
+            pair(org_id="org1", user_id="u1", credential_file=self.cred,
+                 api_base="https://example.invalid", machine_id="m1",
+                 beat=lambda o: {"status": 200, "body": {"originId": o["origin_id"]}})
+            card = unpair()
+        self.assertTrue(card["ok"], card)
+        self.assertFalse((self.home / "origin.json").exists())
+        self.assertTrue(self.cred.is_file(), "unpairing is not a deletion of the user's secret")
+
+    def test_the_cli_refuses_an_incomplete_pair_before_it_touches_anything(self):
+        import io
+        from contextlib import redirect_stdout
+        from convoy.cli import main
+        out = io.StringIO()
+        with mock.patch.dict(os.environ, {"CONVOY_HOME": str(self.home)}), redirect_stdout(out):
+            code = main(["install", "--local", "--pair", "--org", "org1"])
+        card = json.loads(out.getvalue())
+        self.assertEqual(code, 1)
+        self.assertIn("--user", card["error"])
+        self.assertIn("--credential-file", card["error"])
+        self.assertFalse((self.home / "origin.json").exists())
