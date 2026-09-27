@@ -175,9 +175,32 @@ def _mark_partial(card: dict[str, Any], root: Path, sids: list[str], error: str)
     return card
 
 
+def _stale_incarnation(row: dict[str, Any], seated_row: dict[str, Any]) -> bool:
+    """Is this ack from a life that is already over?
+
+    Only when BOTH numbers exist and the ack's is lower. A seated row without
+    an incarnation predates the field, and a seat without one was never hosted
+    by a body-owning launch; in either case the token comparison is all the
+    evidence there is and this must not invent more.
+    """
+    acked = seated_row.get("incarnation")
+    current = row.get("incarnation")
+    if acked is None or current is None:
+        return False
+    try:
+        return int(acked) < int(current)
+    except (TypeError, ValueError):
+        return False
+
+
 def _seated_states(root: Path, session_ids: list[str], after: str | None = None) -> list[dict[str, Any]]:
     """after: ISO ts; a seated row stamped BEFORE it is an old life of the
-    chair (pre-relaunch) and does not count. Connected must be proven again."""
+    chair (pre-relaunch) and does not count. Connected must be proven again.
+
+    An ack naming an incarnation older than the seat's current one is skipped
+    the same way: a slow previous body can ack AFTER the relaunch timestamp
+    with the very token this chair's join minted, so the clock alone does not
+    separate the lives."""
     seats = {str(s.get("session_id") or ""): s for s in list_seats(root)}
     unknown = [sid for sid in session_ids if sid not in seats]
     if unknown:
@@ -194,6 +217,8 @@ def _seated_states(root: Path, session_ids: list[str], after: str | None = None)
                 mint = r
             elif r.get("kind") == "seated":
                 if after and str(r.get("ts") or "") < after:
+                    continue
+                if _stale_incarnation(seats[sid], r):
                     continue
                 seated = r
         # connected: the ack cites the token THIS mint issued. seated_ack

@@ -357,6 +357,27 @@ class AwaitSeated(unittest.TestCase):
         with self.assertRaises(ValueError):
             await_seated(self.root, ["nope"], timeout=0, clock=itertools.count().__next__, sleep=lambda _s: None)
 
+    def test_seated_from_older_incarnation_is_rejected(self):
+        """An ack naming a life that is over is not this body's proof.
+
+        The token alone cannot tell the lives apart - a relaunch re-arms the
+        boot prompt with the token the chair's ORIGINAL join minted, so a
+        previous body's ack cites exactly the right token. `after` catches the
+        clock case; the incarnation catches the case where both acks land after
+        the relaunch timestamp, which is what a slow previous body does.
+        """
+        from convoy.convoy import update_seat
+        update_seat(self.root, "g1", incarnation=2)
+        seated_ack(self.root, "g1", self.j1["token"], incarnation=1)
+        card = await_seated(self.root, ["g1"], timeout=0, clock=itertools.count().__next__,
+                            sleep=lambda _s: None)
+        self.assertEqual(card["pending"], ["g1"], card)
+        self.assertEqual(card["connected"], [])
+        seated_ack(self.root, "g1", self.j1["token"], incarnation=2)
+        card = await_seated(self.root, ["g1"], timeout=0, clock=itertools.count().__next__,
+                            sleep=lambda _s: None)
+        self.assertEqual(card["connected"], ["g1"], card)
+
 
 def _rpc(url, method, params=None):
     body = {"jsonrpc": "2.0", "method": method, "id": 1}

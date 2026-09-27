@@ -149,17 +149,30 @@ def pass_lead(root: Path, session_id: str, author: str) -> dict[str, Any]:
     return {"ok": True, "lead_chair": sid, "lead": harness, "convoy_id": out.get("convoy_id"), "row": row}
 
 
-def seated_ack(root: Path, session_id: str, token: str) -> dict[str, Any]:
+def seated_ack(root: Path, session_id: str, token: str,
+               incarnation: Any = None) -> dict[str, Any]:
     """Proof-of-life: the new occupant echoes the token (kind=seated) and the
     one-shot boot prompt clears. The latest seated row per session_id names
-    the chair's current occupant."""
+    the chair's current occupant.
+
+    `incarnation` is the life the occupant booted as, quoted from its boot
+    prompt. The token cannot tell two lives of one chair apart - a relaunch
+    re-arms the prompt with the token the chair's original join minted, so a
+    previous body's ack cites exactly the right token. Optional: rows without
+    it predate the field and crew reads them the way it always did."""
     _require_seat(root, session_id)
     if not (isinstance(token, str) and token.strip()):
         raise ValueError("refuse seated ack without token")
+    extra: dict[str, Any] = {"token": token.strip()}
+    if incarnation is not None:
+        try:
+            extra["incarnation"] = int(incarnation)
+        except (TypeError, ValueError):
+            raise ValueError("refuse seated ack with a non-integer incarnation: " + repr(incarnation))
     row = hook(
         root, "seated", "seated " + session_id,
         instance_id=session_id, author=session_id,
-        extra={"token": token.strip()},
+        extra=extra,
     )
     update_seat(root, session_id, boot_prompt=None)
     return {"ok": True, "row": row}

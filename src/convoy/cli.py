@@ -75,6 +75,7 @@ def main(argv: list[str] | None = None) -> int:
     rlx.add_argument("--timeout", type=float, default=0.0, help="seconds to wait for fresh seated acks; 0 is one snapshot")
     rlx.add_argument("--dry-run", action="store_true", help="show the windows and the per-chair timeline; spawn and write nothing")
     rlx.add_argument("--seat", action="append", help="relaunch only this chair (repeat); default every chair. Use it when some panes are still alive")
+    rlx.add_argument("--take-over", action="store_true", help="evict a chair whose body of the current incarnation is still alive: writes kind=evicted, asks the pane host to close THAT life, and launches only once it is recorded as exited. Without it a live body refuses the relaunch")
     rlx.add_argument("--no-widget", action="store_true", help="do not start the widget service after bring-up")
 
     rl = sub.add_parser("rail", help="the strip under the panes: feed events since, seats connected, usage per harness (null is unknown, never 0), last stamp; reads only the thread, so any neuron sees the same rail")
@@ -225,6 +226,8 @@ def main(argv: list[str] | None = None) -> int:
     sd = sub.add_parser("seated")
     sd.add_argument("--seat", required=True)
     sd.add_argument("--token", required=True, help="token from the join/swap row (proof-of-life echo)")
+    sd.add_argument("--incarnation", type=int, default=None,
+                    help="the life your boot prompt named; an ack from an older life is not this body's proof")
 
     gr = sub.add_parser("graph", help="read-only ontology of the thread: chairs, occupants, talk, resume availability (never tokens)")
     gr.add_argument("--neuron", help="one chair's neighborhood: its connected parties + the thread pointer to resume from")
@@ -406,7 +409,7 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps({"schema_version": SCHEMA_VERSION, "since": args.since, "since_iso": since_iso, "events": rows}))
         return 0
     if args.cmd == "relaunch":
-        card = relaunch(root, thread=args.thread, runner=None if args.dry_run else live_runner, timeout=args.timeout, seats=args.seat)
+        card = relaunch(root, thread=args.thread, runner=None if args.dry_run else live_runner, timeout=args.timeout, seats=args.seat, take_over=args.take_over)
         if card.get("ok") and not args.dry_run:
             card["widget_service"] = auto_widget_service(disabled=bool(args.no_widget))
         print(json.dumps(card))
@@ -556,7 +559,8 @@ def main(argv: list[str] | None = None) -> int:
                 card = swap(root, args.seat, to=args.to, handoff=args.handoff,
                             author=args.author, model=args.model, effort=args.effort)
             else:
-                card = seated_ack(root, args.seat, token=args.token)
+                card = seated_ack(root, args.seat, token=args.token,
+                                  incarnation=getattr(args, "incarnation", None))
         except ValueError as e:
             print(json.dumps({"ok": False, "error": str(e)}))
             return 1
