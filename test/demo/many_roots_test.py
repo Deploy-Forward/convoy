@@ -36,15 +36,24 @@ def _feed(root):
     return [json.loads(x) for x in p.read_text(encoding="utf-8").splitlines()] if p.is_file() else []
 
 
+def _durable_test_root(test):
+    """A discoverable fixture outside the OS Temp index-residue area."""
+    base = Path(__file__).resolve().parent / "_keep_roots"
+    base.mkdir(exist_ok=True)
+    owner = tempfile.TemporaryDirectory(prefix="many-roots-", dir=base)
+    test.addCleanup(owner.cleanup)
+    return Path(owner.name)
+
+
 class _Threads(unittest.TestCase):
     def setUp(self):
         self.home = Path(tempfile.mkdtemp())
         p = mock.patch.dict(os.environ, {"CONVOY_HOME": str(self.home), "CONVOY_MCP_WRITE_TOOLS": "1"}); p.start(); self.addCleanup(p.stop)
-        self.alpha = Path(tempfile.mkdtemp()); ensure_id(self.alpha); bind(self.alpha, "alpha")
+        self.alpha = _durable_test_root(self); ensure_id(self.alpha); bind(self.alpha, "alpha")
         seat(self.alpha, "claude", "c-alpha", worktree=str(self.alpha)); record(self.alpha, read_id(self.alpha), "alpha")
-        self.beta = Path(tempfile.mkdtemp()); ensure_id(self.beta); bind(self.beta, "beta")
+        self.beta = _durable_test_root(self); ensure_id(self.beta); bind(self.beta, "beta")
         seat(self.beta, "codex", "x-beta", worktree=str(self.beta)); record(self.beta, read_id(self.beta), "beta")
-        self.gamma = Path(tempfile.mkdtemp()); ensure_id(self.gamma); bind(self.gamma, "gamma")
+        self.gamma = _durable_test_root(self); ensure_id(self.gamma); bind(self.gamma, "gamma")
         record(self.gamma, read_id(self.gamma), "gamma"); set_hidden(read_id(self.gamma), True)
 
     def _serve(self, root):
@@ -84,7 +93,11 @@ class UnboundOriginServesEveryThread(_Threads):
 
     def test_every_card_says_which_thread_it_touched(self):
         url = self._serve(None)
-        card = _payload(_rpc(url, "tools/call", {"name": "roster", "arguments": {"thread": "alpha"}}))
+        # This case checks thread attribution, not a vendor usage probe or
+        # interactive PATH mutation on the operator's machine.
+        with mock.patch("convoy.mcp_http.probe", return_value={"usage_remaining": None, "limited": False}), \
+             mock.patch("convoy.mcp_http.ensure_interactive_path", return_value={}):
+            card = _payload(_rpc(url, "tools/call", {"name": "roster", "arguments": {"thread": "alpha"}}))
         self.assertEqual(card["thread"], "alpha"); self.assertEqual(Path(card["root"]), self.alpha.resolve())
         card2 = _payload(_rpc(url, "tools/call", {"name": "replies", "arguments": {"thread": "beta"}}))
         self.assertEqual(card2["thread"], "beta")
