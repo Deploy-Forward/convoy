@@ -71,6 +71,22 @@ class TestHomeIsolationContract(unittest.TestCase):
                 if home is not None:
                     self.assertFalse(Path(home).exists())
 
+    def test_production_module_entrypoint_keeps_the_selected_home(self):
+        sentinel = ROOT / "convoy-isolation-sentinel-never-create"
+        env = os.environ.copy()
+        env["CONVOY_HOME"] = str(sentinel)
+        env["PYTHONPATH"] = str(ROOT / "src")
+        env["PYTHONNOUSERSITE"] = "1"
+        completed = subprocess.run(
+            [sys.executable, "-m", "convoy", "threads"],
+            cwd=ROOT, env=env, capture_output=True, text=True,
+            timeout=30, stdin=subprocess.DEVNULL,
+        )
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        card = json.loads(completed.stdout.strip().splitlines()[-1])
+        self.assertEqual(Path(card["index"]), sentinel / "threads.json")
+        self.assertFalse(sentinel.exists(), "the read-only CLI probe must not create the home")
+
 
 if __name__ == "__main__":
     unittest.main()

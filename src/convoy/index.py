@@ -30,6 +30,8 @@ def home_dir() -> Path:
     to Convoy rather than to a chair (the usage probe)."""
     home = os.environ.get("CONVOY_HOME")
     main = sys.modules.get("__main__")
+    # Match unittest's executable module exactly, not any process that merely
+    # imports unittest: CLI and MCP entrypoints must retain the operator home.
     if getattr(getattr(main, "__spec__", None), "name", None) == "unittest.__main__":
         # Direct `python -m unittest discover -s test/demo` imports test
         # modules as top-level names and bypasses their package initializers.

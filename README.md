@@ -349,7 +349,14 @@ convoy send --to claude "Summarize open payment retry bugs and propose a fix pla
 convoy send --to codex --live "Draft unit tests for the retry planner."
 ```
 
-Development: `PYTHONPATH=src python test/run.py` (discovers `test/demo/*_test.py`).  
+Development: the supported source-checkout test entrypoints are
+`PYTHONPATH=src python test/run.py` (PowerShell: `$env:PYTHONPATH='src'; python test/run.py`)
+and `python -m unittest` from the checkout (for example,
+`python -m unittest discover -s test/demo`). Both isolate `CONVOY_HOME` under
+the OS temporary directory, even if it was set to a non-temporary path.
+Other test adapters, including direct top-level discovery by IDEs or pytest,
+must be given their own throwaway `CONVOY_HOME`; their startup shapes are not
+covered by this guard.
 License: MIT.
 
 ## Cloudflare split hosting (static site + MCP proxy)
