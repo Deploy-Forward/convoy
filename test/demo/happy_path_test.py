@@ -218,7 +218,11 @@ class HappyPath(unittest.TestCase):
         self.assertNotIn("token", json.dumps(rail))
 
         # any neuron rehydrates from the thread: the rail from a chair's
-        # worktree is the same rail
+        # worktree is the same rail. This test repo sits under OS Temp, so
+        # make the chair's root pointer explicit rather than relying on
+        # machine-index discovery of a test-temp thread.
+        from convoy.inbox import write_root_pointer
+        write_root_pointer(Path(grok["worktree"]), self.root)
         from_chair = self.run_cli("rail", root=grok["worktree"])
         self.assertEqual(from_chair["convoy_id"], rail["convoy_id"])
         self.assertEqual(from_chair["seats"], rail["seats"])
