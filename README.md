@@ -288,6 +288,33 @@ child tree and exits zero. Legacy panes still require `Ctrl+D` or the configured
 `closePane` binding. First-run harness trust prompts are also user decisions;
 Convoy returns an `awaiting-user-consent` card and never auto-accepts them.
 
+## Resume: what works today, and what is being improved
+
+**Resume is an area to improve.** Convoy only resumes a neuron's conversation when it knows the
+harness's own id for it, and today it learns that id for two harnesses only. For the others, the id
+is recorded only if someone writes it on the neuron's row. So a relaunch may start a fresh
+conversation instead of continuing the old one.
+
+**Before you promise a person that a neuron will resume**, read the dry plan:
+`convoy --root <root> resume --neuron <id>` (without `--go` it launches nothing). If the argv carries
+the harness's resume form with an id, it will resume. If it carries a declare flag (`--session-id`,
+`-s`) or no id at all, it will start a new conversation. Say so.
+
+| Harness | Resume command | Where the id comes from, and when | Evidence |
+| --- | --- | --- | --- |
+| `claude` | `claude --resume <id>` | Convoy mints the id before the first launch and declares it with `--session-id <id>`. Every later launch resumes it once the conversation's file exists at `~/.claude/projects/<worktree slug>/<id>.jsonl`. | ran: a session declared with `--session-id`, then relaunched with the argv Convoy builds, answered from the same conversation |
+| `grok` | `grok --resume <id>` | The same minting: declared with `-s <id>` on the first launch, and resumed once `~/.grok/sessions/<URL-encoded worktree>/<id>/` exists. | help: `-s, --session-id` is for a new conversation only; the resume path is covered by tests, not yet by a live run |
+| `codex` | `codex resume <id>` | Not captured. No launch flag sets the id; record it with `convoy seat --resume <id>`. | help |
+| `cursor-agent` | `cursor-agent --resume <id>` | Not captured. No launch flag sets the id; record it with `convoy seat --resume <id>`. | help |
+| `agy` | `agy --conversation <id>` | Not captured. No launch flag sets the id; record it with `convoy seat --resume <id>`. | help |
+| `hermes` | `hermes --resume <id>` | Not captured; record it by hand as above. | help |
+| `pi` | `pi --resume` | Not captured. `--resume` opens a session picker; resuming a given id directly is unverified. | help |
+
+What is being improved:
+- capturing the harness's own id automatically for every harness, not only the two that let Convoy
+  choose it at launch;
+- recording each harness's resume command, and the evidence for it, in the harness contract.
+
 ## How it works
 
 1. Attach `https://convoy.bot/mcp`.

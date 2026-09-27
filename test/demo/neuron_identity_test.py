@@ -67,6 +67,15 @@ class NeuronIdentity(unittest.TestCase):
         self.assertTrue((self.wt / ".agents" / "skills" / "convoy-end" / "SKILL.md").is_file())
         self.assertTrue((self.wt / ".claude" / "commands" / "end.md").is_file())
 
+    def test_agents_md_warns_that_resume_is_still_being_improved(self):
+        # Resume capture is incomplete for most harnesses, so every neuron is told to read the dry
+        # plan before promising a person a resume, and where the README explains it.
+        install_neuron_identity(self.wt)
+        body = (self.wt / "AGENTS.md").read_text(encoding="utf-8")
+        self.assertIn("Resume is still being improved", body)
+        self.assertIn("`convoy resume --neuron <chair>`", body)
+        self.assertIn("README, Resume", body)
+
     def test_install_idempotent_and_preserves_agents_body(self):
         (self.wt / "AGENTS.md").write_text("# keep me\n\nuser rules stay\n", encoding="utf-8")
         first = install_neuron_identity(self.wt)

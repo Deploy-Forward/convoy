@@ -94,6 +94,8 @@ _AGENTS_BLOCK = (
     "answer with `convoy hook note \"<text>\" --as-me --to grok-bot` citing that token; your own note row is the receipt, nothing else is; the conductor's contract is <root>/.convoy/conductor.md. "
     "RECORD: everything Convoy reads lives under .convoy/ (feed.jsonl, inbox/, brief.md, handoff/); "
     "write briefs to .convoy/brief.md and handoffs to .convoy/handoff/. the legacy .ola/ tree belongs to another product: never write it. "
+    "RESUME: Resume is still being improved: before promising to resume a neuron, run the dry "
+    "`convoy resume --neuron <chair>` and read the command it would run (README, Resume). "
     "If usage is dying, ask the user to bring_up a "
     "pane; do not steal a TUI. Never invent cvy_ or session ids. Never ola-brain.\n"
     + SKILL_END + "\n"
