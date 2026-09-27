@@ -611,8 +611,9 @@ class CursorAgentSeat(unittest.TestCase):
     only a live pane adds --trust --force, before the boot prompt."""
 
     def test_dry_argv_model_resume_boot(self):
-        argv = resume_argv({"to": "cursor-agent", "session_id": "cur1", "model": "gpt-5.6-luna-high", "effort": "high",
-                            "resume": "chat-123", "boot_prompt": "You are the new occupant of seat cur1"})
+        with mock.patch("convoy.cursor_models.read_catalog", return_value=None):  # never a live `cursor-agent models`
+            argv = resume_argv({"to": "cursor-agent", "session_id": "cur1", "model": "gpt-5.6-luna-high", "effort": "high",
+                                "resume": "chat-123", "boot_prompt": "You are the new occupant of seat cur1"})
         self.assertEqual(argv[1:], ["--model", "gpt-5.6-luna-high", "--resume", "chat-123", "You are the new occupant of seat cur1"])
         self.assertNotIn("--trust", argv); self.assertNotIn("high", argv[1:-1])
 

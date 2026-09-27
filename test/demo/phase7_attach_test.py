@@ -150,7 +150,9 @@ class Phase7Attach(unittest.TestCase):
         cid = initd["convoy_id"]
         seat(self.root, "grok", "sess-grok", worktree=str(self.wt_g), model="explicit-grok")
         seat(self.root, "claude", "sess-claude", worktree=str(self.wt_c))
-        rc, d = _run(self.root, "attach")
+        # The CLI takes no probe_fn, and the real probe runs `claude -p /usage` on the operator's account.
+        with mock.patch("convoy.convoy.probe", side_effect=lambda _to: {"usage_remaining": None, "limited": False, "raw": None}):
+            rc, d = _run(self.root, "attach")
         self.assertEqual(rc, 0)
         self.assertTrue(d["ok"])
         self.assertEqual(d["convoy_id"], cid)

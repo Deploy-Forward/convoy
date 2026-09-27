@@ -162,7 +162,8 @@ class EffortValidatedPerHarness(unittest.TestCase):
         self.assertTrue(codex["effort_applied"])
         self.assertFalse(seat(self.root, "codex", "x2", effort="more-reasoning")["effort_applied"], "no vendor value")
         # no vocabulary to check against: recorded, not applied, not refused
-        cursor = seat(self.root, "cursor-agent", "k1", effort="high")
+        with mock.patch("convoy.cursor_models.read_catalog", return_value=None):  # never a live `cursor-agent models`
+            cursor = seat(self.root, "cursor-agent", "k1", effort="high")
         self.assertEqual(cursor["effort"], "high")
         self.assertFalse(cursor["effort_applied"])
         # no effort declared: nothing to apply, and that is null, not false
@@ -235,7 +236,8 @@ class EffortReachesArgvWhereEvidenced(unittest.TestCase):
         self.assertEqual(_flag_pair(resume_argv({"to": "pi", "effort": "high"}), "--thinking"), ["--thinking", "high"])
 
     def test_no_flag_without_evidence(self):
-        cursor = resume_argv({"to": "cursor-agent", "effort": "high"})
+        with mock.patch("convoy.cursor_models.read_catalog", return_value=None):  # never a live `cursor-agent models`
+            cursor = resume_argv({"to": "cursor-agent", "effort": "high"})
         self.assertNotIn("--effort", cursor)
         self.assertNotIn("high", cursor)
         codex = resume_argv({"to": "codex", "effort": "extra-high", "resume": "sid-x"})

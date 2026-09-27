@@ -24,6 +24,7 @@ import tempfile
 import unittest
 import uuid
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 
@@ -75,7 +76,8 @@ class AFirstLaunchIsAlreadyResumable(unittest.TestCase):
 
     def test_a_harness_with_no_such_flag_is_left_on_the_capture_path(self):
         for harness, sid in (("codex", "mint-x1"), ("agy", "mint-a1"), ("cursor-agent", "mint-u1")):
-            with self.subTest(harness=harness):
+            # cursor-agent's argv reads its model catalog: never a live `cursor-agent models`
+            with self.subTest(harness=harness), mock.patch("convoy.cursor_models.read_catalog", return_value=None):
                 seat(self.root, harness, sid, worktree="C:\\w\\" + sid)
                 row = ensure_session_id(self.root, _row(self.root, sid))
                 self.assertIsNone(row.get("resume"))
@@ -172,7 +174,8 @@ class OneMintingPathNotTwo(unittest.TestCase):
         from convoy.harness_contract import session_id_flag
         from convoy.targeted_launch import pane_child_argv
         for harness in ("claude", "grok", "codex", "agy", "cursor-agent"):
-            with self.subTest(harness=harness):
+            # cursor-agent's argv reads its model catalog: never a live `cursor-agent models`
+            with self.subTest(harness=harness), mock.patch("convoy.cursor_models.read_catalog", return_value=None):
                 sid = "mint-c-" + harness
                 seat(self.root, harness, sid, worktree=str(self.root / harness))
                 argv = pane_child_argv(_row(self.root, sid), root=self.root)

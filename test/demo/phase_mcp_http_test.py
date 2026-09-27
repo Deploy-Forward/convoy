@@ -214,8 +214,10 @@ class PhaseMcpHttp(unittest.TestCase):
         def fake_probe(_harness):
             return {"usage_remaining": None, "limited": False, "raw": None}
 
-        # stub probes: real vendor CLIs are slow enough to time out the RPC
-        with mock.patch("convoy.glance.probe", side_effect=fake_probe):
+        # stub probes: real vendor CLIs are slow enough to time out the RPC, and they
+        # run on the operator's account. The server reads usage through mcp_http.probe.
+        with mock.patch("convoy.glance.probe", side_effect=fake_probe), \
+                mock.patch("convoy.mcp_http.probe", side_effect=fake_probe):
             payload = _tool_payload(_rpc(self.mcp, "tools/call", {"name": "glance", "arguments": {}}))
         conductor = payload["conductor"]
         self.assertEqual(conductor["to"], "grok-bot")

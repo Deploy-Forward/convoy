@@ -2,13 +2,19 @@
 
 Importing this package redirects CONVOY_HOME to a throwaway so bare
 `python -m unittest` cannot write ~/.convoy/threads.json. Duplicated in
-`test/__init__.py` so either import path guards the real home.
+`test/__init__.py` so either import path guards the real home. Both also
+install test/harness_guard.py: no test may start a real harness CLI.
 """
 from __future__ import annotations
 
 import os
 import tempfile
 from pathlib import Path
+
+try:
+    from .. import harness_guard  # imported as test.demo
+except ImportError:  # imported as a top-level `demo` (discovery from test/)
+    import harness_guard
 
 _TEST_HOME_PREFIX = "convoy-test-home-"
 
@@ -32,4 +38,5 @@ def ensure_throwaway_home() -> str:
 
 
 ensure_throwaway_home()
+harness_guard.install()
 

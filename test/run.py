@@ -13,6 +13,11 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
+try:
+    from . import harness_guard  # python -m test
+except ImportError:  # python test/run.py: test/ is on sys.path
+    import harness_guard
+
 
 def main() -> int:
     # Tests mint temp roots; keep their index rows out of the real ~/.convoy.
@@ -21,12 +26,18 @@ def main() -> int:
     # (2026-09-17: four "hidden by default" tests failed for that reason alone).
     # The suite starts with it unset; a test that wants it sets it explicitly.
     os.environ.pop("CONVOY_MCP_WRITE_TOOLS", None)
+    # No test may start the operator's real claude, codex or other harness CLI.
+    harness_guard.install()
     start = ROOT / "test" / "demo"
     guard = os.environ["CONVOY_HOME"]
     suite = unittest.defaultTestLoader.discover(str(start), pattern="*_test.py")
     result = unittest.TextTestRunner(verbosity=2).run(suite)
     if os.environ.get("CONVOY_HOME") != guard:
         print("FAIL: a test changed CONVOY_HOME; later tests may have written the real ~/.convoy index", file=sys.stderr)
+        return 1
+    outside = harness_guard.blocked_outside_tests()
+    if outside:
+        print("FAIL: a real harness CLI was started outside any test (blocked): " + ", ".join(outside), file=sys.stderr)
         return 1
     return 0 if result.wasSuccessful() else 1
 

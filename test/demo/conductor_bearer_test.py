@@ -83,6 +83,10 @@ class BearerAtTheOrigin(unittest.TestCase):
         self.home = Path(tempfile.mkdtemp())
         p = mock.patch.dict(os.environ, {"CONVOY_HOME": str(self.home)}); p.start(); self.addCleanup(p.stop)
         os.environ.pop("CONVOY_MCP_WRITE_TOOLS", None)
+        # The server reads usage through mcp_http.probe, and the real one runs
+        # `claude -p /usage` on the operator's account. A null reading is enough here.
+        p = mock.patch("convoy.mcp_http.probe", side_effect=lambda _h: {"usage_remaining": None, "limited": False, "raw": None})
+        p.start(); self.addCleanup(p.stop)
         self.root = Path(tempfile.mkdtemp()); ensure_id(self.root); bind(self.root, "cb")
         seat(self.root, "claude", "c-cb", worktree=str(self.root))
         from convoy.mcp_http import make_server

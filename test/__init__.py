@@ -3,12 +3,15 @@
 Importing this package redirects CONVOY_HOME to a throwaway directory so
 `python -m unittest` cannot write the machine index at ~/.convoy. test/run.py
 does the same via setdefault; this is the belt for every other invocation.
+It also installs test/harness_guard.py: no test may start a real harness CLI.
 """
 from __future__ import annotations
 
 import os
 import tempfile
 from pathlib import Path
+
+from . import harness_guard
 
 _TEST_HOME_PREFIX = "convoy-test-home-"
 
@@ -33,3 +36,4 @@ def ensure_throwaway_home() -> str:
 
 
 ensure_throwaway_home()
+harness_guard.install()
