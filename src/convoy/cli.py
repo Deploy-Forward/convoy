@@ -656,7 +656,8 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.cmd == "graph":
         if args.html:
-            known = [Path(r["root"]) for r in list_threads() if r["present"]]
+            from .index import discoverable_threads
+            known = [Path(r["root"]) for r in discoverable_threads()]
             # the given root counts only when it actually carries a thread (never invent)
             roots = ([root] if read_id(root) else []) + [Path(r) for r in args.also_root]
             roots += [k for k in known if k.resolve() not in {r.resolve() for r in roots}]

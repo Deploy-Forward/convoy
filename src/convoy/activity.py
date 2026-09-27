@@ -151,13 +151,11 @@ def resolve_neuron_id(nid: str) -> dict[str, Any]:
     """{ok, root, thread, convoy_id, session_id, to} for one short id, or an
     error naming the verb that lists them. Two chairs sharing six hex digits is
     reported as ambiguous, never guessed."""
-    from .index import list_threads
+    from .index import discoverable_threads
     from .convoy import list_seats
     want = str(nid or "").strip().lower()
     hits: list[dict[str, Any]] = []
-    for t in list_threads():
-        if not t.get("present") or t.get("hidden"):
-            continue
+    for t in discoverable_threads():
         root = Path(str(t.get("root")))
         cid = t.get("convoy_id")
         try:
@@ -185,7 +183,7 @@ def neurons_everywhere(since: str | None = None) -> dict[str, Any]:
     harness | model | neuron | thread (`/convoy-list`).
     Deterministic: the index, then each root's seats and feed. Hidden threads
     and roots that are gone are skipped and named, never silently dropped."""
-    from .index import list_threads
+    from .index import is_discoverable_thread, list_threads
     rows: list[dict[str, Any]] = []
     skipped: list[dict[str, Any]] = []
     for t in list_threads():
@@ -195,6 +193,9 @@ def neurons_everywhere(since: str | None = None) -> dict[str, Any]:
             continue
         if not t.get("present"):
             skipped.append({"thread": thread, "reason": "root gone", "root": t.get("root")})
+            continue
+        if not is_discoverable_thread(t):
+            skipped.append({"thread": thread, "reason": "temp", "root": t.get("root")})
             continue
         root = Path(str(t.get("root")))
         try:

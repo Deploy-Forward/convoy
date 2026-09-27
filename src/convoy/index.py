@@ -120,21 +120,25 @@ def list_threads() -> list[dict[str, Any]]:
     return out
 
 
+def is_discoverable_thread(row: dict[str, Any]) -> bool:
+    """A row safe for implicit discovery, without changing the raw index."""
+    return bool(row.get("present") and not row.get("hidden")
+                and not is_temp_root(str(row.get("root") or "")))
+
+
+def discoverable_threads() -> list[dict[str, Any]]:
+    """Present user threads for implicit discovery and routing.
+
+    Keep list_threads() lossless for audit and explicit-root operations; old
+    Temp rows remain in the index until a person explicitly prunes them.
+    """
+    return [r for r in list_threads() if is_discoverable_thread(r)]
+
+
 def recent(limit: int) -> list[dict[str, Any]]:
     """Newest N present rows excluding temp roots, for the thread picker."""
     n = max(0, int(limit))
-    out: list[dict[str, Any]] = []
-    for r in list_threads():
-        if len(out) >= n:
-            break
-        if not r.get("present"):
-            continue
-        if is_temp_root(str(r.get("root") or "")):
-            continue
-        if r.get("hidden"):
-            continue
-        out.append(r)
-    return out
+    return discoverable_threads()[:n]
 
 
 def _prune_reason(raw: object) -> str | None:

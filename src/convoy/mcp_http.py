@@ -653,11 +653,10 @@ del _t, _props, _k, _v
 
 def _known_threads() -> list[dict[str, Any]]:
     """Present, unhidden threads from the machine index: what `threads` lists and what a call may name."""
-    from .index import list_threads
+    from .index import discoverable_threads
     out = []
-    for t in list_threads():
-        if t.get("present") and not t.get("hidden"):
-            out.append({"thread": t.get("thread"), "convoy_id": t.get("convoy_id"), "root": t.get("root"), "updated_at": t.get("updated_at")})
+    for t in discoverable_threads():
+        out.append({"thread": t.get("thread"), "convoy_id": t.get("convoy_id"), "root": t.get("root"), "updated_at": t.get("updated_at")})
     return out
 
 

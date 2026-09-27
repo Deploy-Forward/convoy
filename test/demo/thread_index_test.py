@@ -20,7 +20,7 @@ from convoy.cli import main
 from convoy.convoy import bind, ensure_id, seat
 from convoy.activity import neuron_id, neurons_everywhere, resolve_neuron_id
 from convoy.index import find_root, index_path, is_temp_root, list_threads, prune_threads, recent, record
-from convoy.mcp_http import _known_threads
+from convoy.mcp_http import _known_threads, _resolve_root
 from convoy.origin_loop import _roots_from_index
 from convoy.local_install import _known_roots
 from convoy.rail import root_for
@@ -99,8 +99,25 @@ class ThreadIndex(unittest.TestCase):
             self.assertFalse(any(row["root"] == str(self.root) for row in _known_roots()))
         with self.subTest("rail fallback"):
             self.assertIsNone(root_for(worktree), "implicit worktree routing must not select a test-temp root")
+        with self.subTest("explicit root remains usable"):
+            self.assertEqual(_resolve_root(self.root, {}), self.root)
+            self.assertEqual(root_for(self.root), self.root)
         self.assertEqual(index_path().read_bytes(), before, "filtering must not prune existing rows")
         self.assertTrue(list_threads()[0]["present"], "historical temp rows stay in the index")
+
+    def test_durable_thread_stays_discoverable(self):
+        keep = self._durable_root()
+        cid = ensure_id(keep)
+        bind(keep, "synthetic-durable-thread")
+        worktree = Path(tempfile.mkdtemp())
+        seat(keep, "codex", "synthetic-durable-neuron", worktree=str(worktree))
+        self.assertIn(cid, {row["convoy_id"] for row in _known_threads()})
+        self.assertIn(keep, _roots_from_index())
+        self.assertTrue(any(row["root"] == str(keep) for row in _known_roots()))
+        self.assertEqual(root_for(worktree), keep)
+        self.assertTrue(resolve_neuron_id(neuron_id(cid, "synthetic-durable-neuron"))["ok"])
+        self.assertTrue(any(row["thread"] == "synthetic-durable-thread"
+                            for row in neurons_everywhere()["rows"]))
 
     def test_present_requires_the_same_id_on_disk(self):
         ensure_id(self.root)

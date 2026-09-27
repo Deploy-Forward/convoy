@@ -240,8 +240,8 @@ def _known_roots() -> list[dict[str, Any]]:
     """Threads the machine index knows and that still exist, so a refused root
     comes with the choices instead of a bare no."""
     try:
-        from .index import list_threads
-        rows = list_threads()
+        from .index import discoverable_threads
+        rows = discoverable_threads()
     except Exception:  # noqa: BLE001 - a broken index must not hide the refusal
         return []
     out = []

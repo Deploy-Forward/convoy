@@ -19,7 +19,7 @@ from typing import Any, Callable
 from .convoy import list_seats, read_id, read_lead, read_thread
 from .crew import _seated_states
 from .inbox import resolve_root, seats_for_worktree
-from .index import list_threads
+from .index import discoverable_threads
 from .layer import feed_since, parse_since, utc_now
 from .provenance import rail_provenance
 from .pulse import chair_reachable, read_pulse
@@ -40,9 +40,7 @@ def root_for(start: Path | str) -> Path | None:
     if found is not None:
         return found
     hits: list[Path] = []
-    for row in list_threads():
-        if not row.get("present"):
-            continue
+    for row in discoverable_threads():
         root = Path(str(row["root"]))
         if seats_for_worktree(root, here):
             hits.append(root)

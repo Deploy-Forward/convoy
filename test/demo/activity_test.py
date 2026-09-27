@@ -37,6 +37,15 @@ def _run_cli(root, *argv):
     return rc, json.loads(buf.getvalue())
 
 
+def _durable_test_root(test):
+    """A non-OS-Temp fixture for implicit machine-index discovery."""
+    base = Path(__file__).resolve().parent / "_keep_roots"
+    base.mkdir(exist_ok=True)
+    owner = tempfile.TemporaryDirectory(prefix="activity-", dir=base)
+    test.addCleanup(owner.cleanup)
+    return Path(owner.name)
+
+
 class NeuronActivity(unittest.TestCase):
     def setUp(self):
         self.root = Path(tempfile.mkdtemp())
@@ -131,15 +140,15 @@ class EveryThreadOnTheMachine(unittest.TestCase):
         from unittest import mock
         self.home = Path(tempfile.mkdtemp())
         p = mock.patch.dict(os.environ, {"CONVOY_HOME": str(self.home)}); p.start(); self.addCleanup(p.stop)
-        self.a = Path(tempfile.mkdtemp()); ensure_id(self.a); bind(self.a, "alpha")
+        self.a = _durable_test_root(self); ensure_id(self.a); bind(self.a, "alpha")
         seat(self.a, "claude", "c-alpha", worktree=str(self.a), model="claude-fable-5")
         hook(self.a, "note", "hello", instance_id="c-alpha")
-        self.b = Path(tempfile.mkdtemp()); ensure_id(self.b); bind(self.b, "beta")
+        self.b = _durable_test_root(self); ensure_id(self.b); bind(self.b, "beta")
         seat(self.b, "codex", "x-beta", worktree=str(self.b), model="gpt-5.6-sol")
         from convoy.convoy import read_id
         from convoy.index import record, set_hidden
         record(self.a, read_id(self.a), "alpha"); record(self.b, read_id(self.b), "beta")
-        self.c = Path(tempfile.mkdtemp()); ensure_id(self.c); bind(self.c, "gamma"); record(self.c, read_id(self.c), "gamma")
+        self.c = _durable_test_root(self); ensure_id(self.c); bind(self.c, "gamma"); record(self.c, read_id(self.c), "gamma")
         set_hidden(read_id(self.c), True)
 
     def test_all_threads_is_one_flat_table_of_chairs(self):
@@ -175,9 +184,9 @@ class ShortNeuronId(unittest.TestCase):
         p = mock.patch.dict(os.environ, {"CONVOY_HOME": str(self.home)}); p.start(); self.addCleanup(p.stop)
         from convoy.convoy import read_id
         from convoy.index import record
-        self.a = Path(tempfile.mkdtemp()); ensure_id(self.a); bind(self.a, "alpha")
+        self.a = _durable_test_root(self); ensure_id(self.a); bind(self.a, "alpha")
         seat(self.a, "codex", "x-alpha", worktree=str(self.a), model="gpt-5.6-sol"); record(self.a, read_id(self.a), "alpha")
-        self.b = Path(tempfile.mkdtemp()); ensure_id(self.b); bind(self.b, "beta")
+        self.b = _durable_test_root(self); ensure_id(self.b); bind(self.b, "beta")
         seat(self.b, "codex", "x-beta", worktree=str(self.b), model="gpt-5.6-sol"); record(self.b, read_id(self.b), "beta")
 
     def test_every_row_carries_a_short_stable_id(self):
