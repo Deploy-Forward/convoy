@@ -22,6 +22,8 @@ from convoy.activity import neuron_id, neurons_everywhere, resolve_neuron_id
 from convoy.index import find_root, index_path, is_temp_root, list_threads, prune_threads, recent, record
 from convoy.mcp_http import _known_threads
 from convoy.origin_loop import _roots_from_index
+from convoy.local_install import _known_roots
+from convoy.rail import root_for
 
 
 def _run_cli(root, *argv):
@@ -70,6 +72,8 @@ class ThreadIndex(unittest.TestCase):
         cid = ensure_id(self.root)
         bind(self.root, "synthetic-temp-thread")
         seat(self.root, "claude", "synthetic-temp-neuron")
+        worktree = Path(tempfile.mkdtemp())
+        seat(self.root, "codex", "synthetic-temp-worker", worktree=str(worktree))
         before = index_path().read_bytes()
         self.assertTrue(list_threads()[0]["present"])
         self.assertTrue(is_temp_root(self.root))
@@ -91,6 +95,10 @@ class ThreadIndex(unittest.TestCase):
         with self.subTest("board origin root resolution"):
             self.assertNotIn(self.root, _roots_from_index(),
                              "the existing board origin loop must not select a test-temp root")
+        with self.subTest("local install choices"):
+            self.assertFalse(any(row["root"] == str(self.root) for row in _known_roots()))
+        with self.subTest("rail fallback"):
+            self.assertIsNone(root_for(worktree), "implicit worktree routing must not select a test-temp root")
         self.assertEqual(index_path().read_bytes(), before, "filtering must not prune existing rows")
         self.assertTrue(list_threads()[0]["present"], "historical temp rows stay in the index")
 
@@ -107,7 +115,7 @@ class ThreadIndex(unittest.TestCase):
         self.assertEqual(find_root(sub), self.root)
         self.assertIsNone(find_root(Path(tempfile.mkdtemp())))
 
-    def test_cli_threads_lists_index_and_graph_html_uses_it(self):
+    def test_cli_threads_keeps_temp_history_but_graph_needs_an_explicit_temp_root(self):
         ensure_id(self.root)
         bind(self.root, "t1")
         other = Path(tempfile.mkdtemp())
@@ -118,7 +126,12 @@ class ThreadIndex(unittest.TestCase):
         self.assertEqual(sorted(r["thread"] for r in card["threads"]), ["t1", "t2"])
         out = self.root / "g.html"
         rc, card = _run_cli(self.root, "graph", "--html", "--out", str(out))
-        self.assertEqual(card["threads"], 2)
+        self.assertEqual(rc, 0)
+        self.assertEqual(card["threads"], 1)
+        self.assertNotIn("t2", out.read_text(encoding="utf-8"))
+        rc, card = _run_cli(self.root, "graph", "--html", "--also-root", str(other), "--out", str(out))
+        self.assertEqual(rc, 0)
+        self.assertEqual(card["threads"], 2, "explicit --also-root must keep working under Temp")
         self.assertIn("t2", out.read_text(encoding="utf-8"))
 
     def _durable_root(self):
