@@ -106,18 +106,38 @@ probe for that chair.
 
 ## An unanswered message
 
-`replies {token}` empty after the send:
+`replies {token}` empty after the send. Every rung below is MEASURABLE: read the
+named record, do not judge by how long the silence feels.
 
 - Under 10 minutes: queued. Do nothing.
-- After 10 minutes with the inbox row still pending: unreached. The chair has no wait
-  running and no hook fired. Ask the human to wake it, or `bring_up` on a gated deploy.
-  Do not resend the same body.
-- After 10 minutes with the row consumed and no ack: read, no ack. Stamp that once and wait.
+- Row still pending and `reachable` is `waiter-alive`: the chair is listening and
+  working. Wait. A pulse younger than ten minutes is the evidence, not a hunch.
+- Row still pending and `reachable` is `waiter-dead`: something killed the waiter -
+  its wait file has not expired and its pulse has gone cold. That is a machine
+  problem, not a neuron problem. Say so and ask the human to relaunch; do not resend.
+- Row still pending and `reachable` is `no-waiter`: nobody is listening between
+  turns. Ask the human to wake it, or `bring_up` on a gated deploy. Do not resend
+  the same body.
+- Row consumed and no ack: read, no ack. Stamp that once and wait.
 - After 30 minutes in either state: stale for this ask. Stamp it, write a handoff under
   `.convoy/handoff/`, and route the ask to another chair or to the human. The chair keeps
   its seat; only the ask moves.
 
-These thresholds are the rail's default window, not measured from live behavior.
+Three words that are now records, not guesses:
+
+- **Unreachable** is a `kind=unreachable` row, or `reachable` on the chair. It is
+  never "it has not spoken in a while". From outside, a sleeping laptop, a crashed
+  harness and a closed lid are the same silence.
+- **A resume needs a session id.** A chair whose seat carries no `resume` cannot be
+  resumed at all; a relaunch starts a NEW conversation and the relaunch row says
+  `resumed: false`. Never promise continuity the record does not hold.
+- **A `kind=threshold` row** means that chair hit 95% of a quota window in that
+  incarnation. It is written once per (chair, incarnation, resets_at): a second
+  Stop inside the same window is not a second event, and the absence of a new row
+  is not recovery. Route the work elsewhere until `resets_at` passes.
+
+The 10- and 30-minute thresholds are the rail's default window, not measured from
+live behavior.
 
 ## Not built yet
 

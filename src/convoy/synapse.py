@@ -205,8 +205,18 @@ def deliver_to_live_seat(
     label: str | None,
     usage: dict[str, Any],
     extra_state: dict[str, Any] | None = None,
+    card: dict[str, Any] | None = None,
+    origin: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Queue a body for an existing occupant. Never spawn --resume."""
+    """Queue a body for an existing occupant. Never spawn --resume.
+
+    card / origin: what this delivery is ON BEHALF OF. A delegation lands
+    on a chair through a token, for a card, from an origin, and until now
+    none of the three were written down together - the platform could see a
+    message and the board could see a delegation with nothing joining them.
+    Both are null for an ordinary local send; absence is the honest answer and
+    an invented id would be worse than none.
+    """
     sid = str(session_id or "").strip()
     # Mint the token BEFORE any vendor push so it can ride inside the body:
     # a `codex queue` message arrives as an ordinary user turn, which the
@@ -244,6 +254,10 @@ def deliver_to_live_seat(
         "argv0": None,
         "label": label,
         "worktree": packed.get("worktree"),
+        # The three that make the row a join, not a note.
+        "token": item.get("token"),
+        "card": dict(card) if isinstance(card, dict) else None,
+        "origin": dict(origin) if isinstance(origin, dict) else None,
         **state,
     }
     if extra_state:
@@ -298,6 +312,8 @@ def _send_one(
     probe_fn=None,
     resume: str | None = None,
     allow_interactive_resume: bool = True,
+    card: dict[str, Any] | None = None,
+    origin: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     # Address a CHAIR by its name (`send --to codex-1`): a `to` that is a
     # chair session_id resolves to that chair's harness, id and worktree. A
@@ -462,6 +478,8 @@ def _send_one(
             cid=cid,
             label=label,
             usage=usage,
+            card=card,
+            origin=origin,
         )
     if not resolved_instance_id and not resume_token:
         cid = read_id(root)

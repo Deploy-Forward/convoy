@@ -20,8 +20,10 @@ from .convoy import list_seats, read_id, read_lead, read_thread
 from .crew import _seated_states
 from .inbox import resolve_root, seats_for_worktree
 from .index import list_threads
-from .layer import feed_since, parse_since
+from .layer import feed_since, parse_since, utc_now
 from .provenance import rail_provenance
+from .pulse import chair_reachable, read_pulse
+from .wait import read_wait_file
 from .bringup import is_conductor
 from .usage import probe, surface
 
@@ -71,8 +73,15 @@ def build_rail(root: Path | str, *, since: str = "10m", probe_fn: ProbeFn | None
     for st in states:
         counts[st["state"]] = counts.get(st["state"], 0) + 1
     card["seats"] = counts
+    # `state` says whether the chair ever ACKED; `reachable` says whether
+    # anything is listening for it now. They answer different questions and a
+    # rail that showed only the first read a killed waiter as a healthy chair.
+    now = utc_now()
     card["chairs"] = [{"session_id": st["session_id"], "harness": st["to"], "where": st["where"],
-                       "state": st["state"]} for st in states]
+                       "state": st["state"],
+                       "reachable": chair_reachable(read_pulse(root, st["session_id"]),
+                                                    read_wait_file(root, st["session_id"]), now)}
+                      for st in states]
 
     fn = probe_fn or probe
     usage: dict[str, Any] = {}

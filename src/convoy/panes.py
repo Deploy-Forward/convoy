@@ -43,6 +43,10 @@ from .cmd import convoy_root_command
 from .convoy import list_seats, read_id, read_thread
 from .index import find_root
 from .harness_contract import canonical_harness_id
+from .pane_host import read_host_records
+from .layer import utc_now
+from .pulse import chair_reachable, pulse_is_fresh, read_pulse
+from .wait import read_wait_file
 
 HARNESS_EXES = {
     "codex": ("codex", "codex.js", "codex.cmd", "codex.exe"),
@@ -192,13 +196,55 @@ def _same_path(a: Any, b: Any) -> bool:
     return bool(na and nb and na == nb)
 
 
+def _argv_tokens(cmdline: str) -> list[str]:
+    """Split a command line into arguments, honouring double quotes only.
+
+    Backslashes stay literal: these are Windows paths, not POSIX escapes, so
+    shlex is the wrong tool here.
+    """
+    out: list[str] = []
+    current: list[str] = []
+    quoted = False
+    for ch in cmdline:
+        if ch == '"':
+            quoted = not quoted
+        elif ch.isspace() and not quoted:
+            if current:
+                out.append("".join(current))
+                current = []
+        else:
+            current.append(ch)
+    if current:
+        out.append("".join(current))
+    return out
+
+
+def _path_key(value: Any) -> str:
+    return os.path.normcase(str(value)).replace("\\", "/").rstrip("/")
+
+
 def _mentions_path(cmdline: str, worktree: Any) -> bool:
-    """Does the command line carry the worktree path (any separator/case)?"""
+    """Does an ARGUMENT name the worktree - the whole path, never a substring?
+
+    A plain `worktree in cmdline` test is not enough: a crew boot prompt
+    carries the thread root inside one quoted argument, so a crew pane would
+    answer `whoami` as the root's chair, and `--as-me` would author from it. An argument names the
+    worktree when the argument IS that path or sits under it (grok's
+    `--agent <worktree>/.grok/...`); text that merely mentions it does not.
+
+    argv[0] is dropped: a harness installed inside a worktree is not a claim
+    to that worktree's chair.
+    """
     if not worktree or not cmdline:
         return False
-    w = os.path.normcase(str(worktree)).replace("\\", "/").rstrip("/")
-    c = os.path.normcase(cmdline).replace("\\", "/")
-    return bool(w) and (w + "/" in c or c.endswith(w) or (w + " ") in c or (w + '"') in c)
+    w = _path_key(worktree)
+    if not w:
+        return False
+    for arg in _argv_tokens(cmdline)[1:]:
+        a = _path_key(arg)
+        if a == w or a.startswith(w + "/"):
+            return True
+    return False
 
 
 def _collapse(found: list[dict[str, Any]], by_pid: dict[int, dict[str, Any]]) -> list[dict[str, Any]]:
@@ -219,7 +265,7 @@ def _collapse(found: list[dict[str, Any]], by_pid: dict[int, dict[str, Any]]) ->
     return out
 
 
-def match_processes(root: Path, procs: list[dict[str, Any]]) -> dict[str, Any]:
+def match_processes(root: Path, procs: list[dict[str, Any]], *, now: str | None = None) -> dict[str, Any]:
     seats = list_seats(Path(root), require_session=True)
     by_pid = {p["pid"]: p for p in procs}
     bodies_only = [p for p in procs if not _is_helper(str(p.get("cmdline") or ""))]
@@ -230,22 +276,50 @@ def match_processes(root: Path, procs: list[dict[str, Any]]) -> dict[str, Any]:
         harness = canonical_harness_id(s.get("to")) or str(s.get("to") or "")
         tokens = [t for t in (s.get("resume"), s.get("vendor_session_id")) if isinstance(t, str) and t.strip()]
         found: list[dict[str, Any]] = []
-        for p in bodies_only:
-            cmd = str(p.get("cmdline") or "")
-            exe = _exe_harness(cmd)
-            if any(t in cmd for t in tokens):
-                found.append({"pid": p["pid"], "via": "token", "exe": exe or harness})
-            elif exe == harness and _mentions_path(cmd, s.get("worktree")):
-                found.append({"pid": p["pid"], "via": "worktree", "exe": exe})
-            elif exe == harness and _same_path(p.get("cwd"), s.get("worktree")):
-                found.append({"pid": p["pid"], "via": "cwd", "exe": exe})
+        # Rung 'pid': the body the pane host recorded on the seat. A pid
+        # someone wrote down beats any substring of a command line, and it is
+        # the only rung that works for a codex pane on Windows, which carries
+        # neither its token nor its worktree in the command line.
+        recorded_pid = s.get("harness_pid")
+        recorded_gone = str(s.get("process_state") or "") == "exited"
+        pid_value: int | None = None
+        try:
+            pid_value = int(recorded_pid) if recorded_pid is not None else None
+        except (TypeError, ValueError):
+            pid_value = None
+        if pid_value is not None and not recorded_gone and pid_value in by_pid:
+            cmd = str(by_pid[pid_value].get("cmdline") or "")
+            found.append({"pid": pid_value, "via": "pid", "exe": _exe_harness(cmd) or harness})
+        if not found:
+            for p in bodies_only:
+                cmd = str(p.get("cmdline") or "")
+                exe = _exe_harness(cmd)
+                if any(t in cmd for t in tokens):
+                    found.append({"pid": p["pid"], "via": "token", "exe": exe or harness})
+                elif exe == harness and _mentions_path(cmd, s.get("worktree")):
+                    found.append({"pid": p["pid"], "via": "worktree", "exe": exe})
+                elif exe == harness and _same_path(p.get("cwd"), s.get("worktree")):
+                    found.append({"pid": p["pid"], "via": "cwd", "exe": exe})
         found = _collapse(found, by_pid)
         for b in found:
             claimed.add(b["pid"])
+        # Rung 'pulse': something spoke for this chair recently. It names
+        # no pid, so it is not a body - but it is a recorded answer, and a
+        # recorded answer is never 'unknown'.
+        pulse = read_pulse(root, sid)
         chairs.append({
             "session_id": sid, "harness": harness, "worktree": s.get("worktree"),
             "live": bool(found) or None, "bodies": found, "duplicate": len(found) > 1,
             "close": "managed-or-manual" if found else None,
+            "recorded_pid": pid_value if not recorded_gone else None,
+            "pulse": {"ts": pulse.get("ts"), "pulse_source": pulse.get("pulse_source"),
+                      "incarnation": pulse.get("incarnation")} if pulse else None,
+            "pulse_fresh": pulse_is_fresh(pulse) if pulse else None,
+            # Who, if anyone, is listening between turns. A waiter the OS
+            # kills leaves every surface showing the chair as normal, because
+            # nothing asks. 'waiter-dead' is a word
+            # a human can read; silence is something they have to interpret.
+            "reachable": chair_reachable(pulse, read_wait_file(root, sid), now or utc_now()),
         })
     # a helper whose ancestor is claimed belongs to that body; everything else
     # that runs a harness exe and is nobody's is unassigned.
@@ -275,7 +349,28 @@ def match_processes(root: Path, procs: list[dict[str, Any]]) -> dict[str, Any]:
         by_harness[u["harness"]] = by_harness.get(u["harness"], 0) + 1
     for c in chairs:
         if c["live"]:
-            c["live_reason"] = "matched " + str(len(c["bodies"])) + " body/bodies"
+            # live is bool(found) or None, so a truthy live has bodies.
+            c["live_reason"] = ("matched " + str(len(c["bodies"])) + " body/bodies by " +
+                                str(c["bodies"][0]["via"]))
+            continue
+        if c["pulse_fresh"]:
+            c["live"] = True
+            c["live_reason"] = ("pulse from " + str((c["pulse"] or {}).get("pulse_source")) +
+                                " at " + str((c["pulse"] or {}).get("ts")))
+            continue
+        # A record that says the body is gone is an answer. 'Unknown, not
+        # false' exists for chairs nobody ever wrote anything down about; it
+        # must not outrank a pid the host recorded or a pulse that stopped.
+        if c["recorded_pid"] is not None:
+            c["live"] = False
+            c["live_reason"] = ("the recorded body (pid " + str(c["recorded_pid"]) +
+                                ") is not in the process table")
+            continue
+        if c["pulse"] is not None:
+            c["live"] = False
+            c["live_reason"] = ("the chair's pulse is stale: last " +
+                                str((c["pulse"] or {}).get("pulse_source")) + " at " +
+                                str((c["pulse"] or {}).get("ts")))
             continue
         n = by_harness.get(c["harness"], 0)
         if n:
@@ -358,6 +453,30 @@ def identify(root: Path, pid: int | None = None, procs: list[dict[str, Any]] | N
             if any(t in cmd for t in toks):
                 return {"ok": True, "chair": s["session_id"], "via": "token", "harness": s.get("to"),
                         "harness_pid": p["pid"], "on_thread": True, **ctx}
+    # Rung 'pane-host': a pid someone wrote down at launch. It beats every
+    # path rung because a command line can carry any path a prompt mentions,
+    # and the pane host's record cannot be written by the pane's own argv.
+    known = {s["session_id"]: s for s in seats}
+    by_recorded_pid: dict[int, str] = {}
+    for record in read_host_records(root):
+        sid = str(record.get("session_id") or "")
+        # The OS reuses pids: a record whose child has exited is history, not
+        # a claim on whatever holds that pid now.
+        if sid not in known or str(record.get("status") or "") != "running":
+            continue
+        for key in ("child_pid", "host_pid"):
+            try:
+                value = int(record.get(key))
+            except (TypeError, ValueError):
+                continue
+            by_recorded_pid.setdefault(value, sid)
+    pid_hit: tuple[str, int] | None = None
+    for p in chain:
+        sid = by_recorded_pid.get(p["pid"])
+        if sid:
+            pid_hit = (sid, p["pid"])
+            break
+    path_hit: tuple[str, str, int] | None = None
     for p in chain:
         cmd = str(p.get("cmdline") or "")
         exe = _exe_harness(cmd)
@@ -365,16 +484,39 @@ def identify(root: Path, pid: int | None = None, procs: list[dict[str, Any]] | N
             continue
         for s in seats:
             if canonical_harness_id(s.get("to")) == exe and _mentions_path(cmd, s.get("worktree")):
-                return {"ok": True, "chair": s["session_id"], "via": "worktree", "harness": s.get("to"),
-                        "harness_pid": p["pid"], "on_thread": True, **ctx}
-    for p in chain:
-        exe = _exe_harness(str(p.get("cmdline") or ""))
-        if not exe:
-            continue
-        for s in seats:
-            if canonical_harness_id(s.get("to")) == exe and _same_path(here, s.get("worktree")):
-                return {"ok": True, "chair": s["session_id"], "via": "cwd", "harness": s.get("to"),
-                        "harness_pid": p["pid"], "on_thread": True, **ctx}
+                path_hit = (s["session_id"], "worktree", p["pid"])
+                break
+        if path_hit:
+            break
+    if path_hit is None:
+        for p in chain:
+            exe = _exe_harness(str(p.get("cmdline") or ""))
+            if not exe:
+                continue
+            for s in seats:
+                if canonical_harness_id(s.get("to")) == exe and _same_path(here, s.get("worktree")):
+                    path_hit = (s["session_id"], "cwd", p["pid"])
+                    break
+            if path_hit:
+                break
+    # Two records disagreeing is not a tie to break: it is a fact to report.
+    # Answering the path's chair here is how a crew pane authored as the lead.
+    if pid_hit and path_hit and pid_hit[0] != path_hit[0]:
+        out = {"ok": False, "chair": None, "via": "conflict", "harness": None, "harness_pid": None,
+               "on_thread": True, "chairs": [pid_hit[0], path_hit[0]],
+               "ask": ("two records disagree about your body: the pane-host record says " + pid_hit[0] +
+                       " (pid " + str(pid_hit[1]) + ") and the " + path_hit[1] + " path says " + path_hit[0] +
+                       "; pass the chair explicitly and fix the stale record before authoring")}
+        out.update(ctx)
+        return out
+    if pid_hit:
+        seat_row = known[pid_hit[0]]
+        return {"ok": True, "chair": pid_hit[0], "via": "pane-host", "harness": seat_row.get("to"),
+                "harness_pid": pid_hit[1], "on_thread": True, **ctx}
+    if path_hit:
+        seat_row = known[path_hit[0]]
+        return {"ok": True, "chair": path_hit[0], "via": path_hit[1], "harness": seat_row.get("to"),
+                "harness_pid": path_hit[2], "on_thread": True, **ctx}
     out = {"ok": False, "chair": None, "via": None, "harness": None, "harness_pid": None, "on_thread": False,
            "ask": "no chair on this thread matches your body: join (" + convoy_root_command(root) +
                   " join --to <harness> --worktree " + str(here) + ") or seat this worktree, then retry"}

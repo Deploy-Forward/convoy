@@ -48,6 +48,36 @@ class DeliveryLabel(unittest.TestCase):
         self.assertFalse(card["delivered"])
         self.assertFalse(card.get("resume_stolen"))
 
+    def test_synapse_row_carries_token_card_and_origin(self):
+        """The feed row is the join between a card and a chair.
+
+        Before this a synapse row said only "send grok". A delegation lands on
+        a chair through a token, on behalf of a card, from an origin - and none
+        of the three were written down, so the platform could see a message and
+        the board could see a delegation with nothing tying them together.
+        card and origin are null for an ordinary local send: absence is the
+        honest answer, never an invented id."""
+        from convoy.layer import feed_since
+        seat(self.root, "grok", "g-join", resume="grok-uuid")
+        card = send_one(self.root, "grok", "do the thing", runner=fake_runner,
+                        instance_id="g-join", allow_interactive_resume=False,
+                        card={"id": "c1", "link_id": "l1"},
+                        origin={"origin_id": "o_1234567890abcdef1234", "org_id": "org1"})
+        rows = [r for r in feed_since(self.root, "1970-01-01T00:00:00.000000Z")
+                if r.get("kind") == "synapse"]
+        row = rows[-1]
+        self.assertEqual(row["token"], card["token"], "the row cites the token the ack will quote")
+        self.assertEqual(row["card"], {"id": "c1", "link_id": "l1"})
+        self.assertEqual(row["origin"], {"origin_id": "o_1234567890abcdef1234", "org_id": "org1"})
+
+        plain = send_one(self.root, "grok", "local work", runner=fake_runner,
+                         instance_id="g-join", allow_interactive_resume=False)
+        row = [r for r in feed_since(self.root, "1970-01-01T00:00:00.000000Z")
+               if r.get("kind") == "synapse"][-1]
+        self.assertIsNone(row["card"], "an ordinary send belongs to no card")
+        self.assertIsNone(row["origin"])
+        self.assertEqual(row["token"], plain["token"])
+
     def test_live_unknown_resume_is_refused(self):
         card = send_one(self.root, "grok", "hi", runner=fake_runner, instance_id="nobody", allow_interactive_resume=False)
         self.assertTrue(card["refused"])

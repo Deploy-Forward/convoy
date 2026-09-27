@@ -153,6 +153,64 @@ class LivenessHasThreeStates(unittest.TestCase):
         self.assertIn("live", card["error"])
 
 
+class RecordedBodyOutranksGuessing(unittest.TestCase):
+    """Matching by substring is the weakest rung there is: it is why a
+    codex chair on Windows can only ever be 'unknown'. The pane host
+    records the body's pid on the seat and something pulses for the chair, so
+    two stronger rungs exist. They come FIRST, and where they exist 'unknown,
+    not false' no longer applies - a record that says the body is gone is an
+    answer, not a guess."""
+
+    def setUp(self):
+        self.root = Path(tempfile.mkdtemp())
+        ensure_id(self.root)
+        bind(self.root, "t1")
+        seat(self.root, "codex", "c-t1", worktree="/w/codex")
+
+    def _by(self, procs):
+        return {c["session_id"]: c for c in match_processes(self.root, procs)["chairs"]}
+
+    def test_recorded_harness_pid_is_the_first_rung(self):
+        from convoy.convoy import update_seat
+
+        update_seat(self.root, "c-t1", harness_pid=40, incarnation=1, process_state="running")
+        procs = [{"pid": 40, "ppid": 1, "cmdline": "node /x/codex.js", "cwd": None}]
+        row = self._by(procs)["c-t1"]
+        self.assertIs(row["live"], True)
+        self.assertEqual(row["bodies"][0]["via"], "pid")
+        self.assertEqual(row["bodies"][0]["pid"], 40)
+
+    def test_a_recorded_body_that_is_gone_is_false_not_unknown(self):
+        from convoy.convoy import update_seat
+
+        update_seat(self.root, "c-t1", harness_pid=40, incarnation=1, process_state="running")
+        # Another codex process is running and cannot be placed. Before the
+        # pid rung that made the chair 'unknown'; the record says otherwise.
+        procs = [{"pid": 77, "ppid": 1, "cmdline": "node /x/codex.js", "cwd": None}]
+        row = self._by(procs)["c-t1"]
+        self.assertIs(row["live"], False)
+        self.assertIn("40", row["live_reason"])
+
+    def test_a_fresh_pulse_answers_when_no_process_can_be_placed(self):
+        from convoy.pulse import write_pulse
+
+        write_pulse(self.root, "c-t1", pulse_source="wait", incarnation=1)
+        procs = [{"pid": 77, "ppid": 1, "cmdline": "node /x/codex.js", "cwd": None}]
+        row = self._by(procs)["c-t1"]
+        self.assertIs(row["live"], True)
+        self.assertIn("pulse", row["live_reason"])
+
+    def test_a_stale_pulse_is_false_not_unknown(self):
+        from convoy.pulse import write_pulse
+
+        write_pulse(self.root, "c-t1", pulse_source="wait", incarnation=1,
+                    ts="2020-01-01T00:00:00.000000Z")
+        procs = [{"pid": 77, "ppid": 1, "cmdline": "node /x/codex.js", "cwd": None}]
+        row = self._by(procs)["c-t1"]
+        self.assertIs(row["live"], False)
+        self.assertIn("pulse", row["live_reason"])
+
+
 class Whoami(unittest.TestCase):
     """Detect -> if the detected body is a chair on THIS
     thread, let the agent identify itself, then send. `whoami` walks the
@@ -229,6 +287,44 @@ class Whoami(unittest.TestCase):
         finally:
             panes._TEST_PROCS = None
             panes._TEST_PID = None
+
+
+class DeadWaitIsReported(unittest.TestCase):
+    """A killed waiter must be visible on the surface that shows chairs.
+
+    A waiter the OS kills leaves every surface showing the chair as normal,
+    unless something looks at whether anyone is still listening between
+    turns. panes now reports `reachable` from the two
+    files that know - the pulse and the wait file - so 'waiter-dead' is a word
+    a human can read instead of a silence they have to interpret."""
+
+    def setUp(self):
+        self.root = Path(tempfile.mkdtemp())
+        ensure_id(self.root)
+        bind(self.root, "reach")
+        seat(self.root, "codex", "c1", worktree=str(self.root))
+
+    def _chair(self, now):
+        return match_processes(self.root, [], now=now)["chairs"][0]
+
+    def test_dead_wait_is_reported_not_hidden(self):
+        from convoy.pulse import write_pulse
+        from convoy.wait import write_wait_file
+        now = "2026-09-17T12:00:00.000000Z"
+        self.assertEqual(self._chair(now)["reachable"], "no-waiter",
+                         "nobody waiting is a fact, not a failure")
+
+        write_wait_file(self.root, "c1", pid=99, started="2026-09-17T11:59:00.000000Z",
+                        timeout=600.0, incarnation=1)
+        write_pulse(self.root, "c1", pulse_source="wait", incarnation=1,
+                    ts="2026-09-17T11:59:30.000000Z")
+        self.assertEqual(self._chair(now)["reachable"], "waiter-alive")
+
+        # The waiter is killed: its file still says it should be waiting, and
+        # its pulse has gone cold. That pair is the diagnosis.
+        write_pulse(self.root, "c1", pulse_source="wait", incarnation=1,
+                    ts="2026-09-17T11:30:00.000000Z")
+        self.assertEqual(self._chair(now)["reachable"], "waiter-dead")
 
 
 if __name__ == "__main__":
