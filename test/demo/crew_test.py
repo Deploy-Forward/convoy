@@ -38,6 +38,7 @@ from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 
+from convoy.pane_host import read_launch_argv
 from convoy.bringup import bring_up  # noqa: E402
 from convoy.cli import main  # noqa: E402
 from convoy.consent import request_consent  # noqa: E402
@@ -138,8 +139,9 @@ class CrewMintsJoinsAndLaunchesOnce(unittest.TestCase):
         dirs = [argv[i + 1] for i, a in enumerate(argv) if a == "-d"]
         self.assertEqual({_norm(d) for d in dirs}, {_norm(w) for w in wts})
         # the boot prompt rides each pane's argv (it is how the neuron learns to ack)
+        booted = list(argv) + [a for s in card["seats"] for a in (read_launch_argv(self.root, s["session_id"]) or {}).get("argv", [])]
         for s in card["seats"]:
-            self.assertTrue(any(s["session_id"] in a and "seated" in a for a in argv), s["session_id"])
+            self.assertTrue(any(s["session_id"] in a and "seated" in a for a in booted), s["session_id"])
         self.assertEqual([w["session_id"] for w in card["windows"]], sids)
         self.assertTrue(all(w["pid"] == 4242 for w in card["windows"]))
         # launched is not connected: the snapshot says pending for every chair

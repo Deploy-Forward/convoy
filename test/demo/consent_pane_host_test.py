@@ -13,7 +13,7 @@ from convoy.cli import main
 from convoy.consent import consume_consent, grant_consent, request_consent
 from convoy.convoy import bind, ensure_id, list_seats
 from convoy.lifecycle import join
-from convoy.pane_host import close_managed_pane, host_state_path, run_host
+from convoy.pane_host import close_managed_pane, host_state_path, nudge_request_path, request_nudge, run_host
 from convoy.targeted_launch import launch_seat
 
 
@@ -141,7 +141,7 @@ class ConsentRail(unittest.TestCase):
         self.assertTrue(launched["ok"])
         self.assertEqual(len(calls), 1)
         self.assertIn("--trust", launched["harness_argv"])
-        self.assertIn("convoy.pane_host", launched["argv"])
+        self.assertTrue(any(a == "convoy.pane_host" or Path(str(a)).name.lower().startswith("convoy-pane-host") for a in launched["argv"]), launched["argv"])  # the pane runs the Convoy pane host: console script, or python -m on an uninstalled checkout
         self.assertNotIn("--trust", launched["argv"])
         latest = {s["session_id"]: s for s in list_seats(self.root)}["grok-gated"]
         self.assertTrue(latest["trust_worktree"])
@@ -171,7 +171,7 @@ class ConsentRail(unittest.TestCase):
         self.assertTrue(launched["ok"])
         self.assertEqual(len(calls), 1)
         self.assertNotIn("--trust", launched["harness_argv"])
-        self.assertIn("convoy.pane_host", launched["argv"])
+        self.assertTrue(any(a == "convoy.pane_host" or Path(str(a)).name.lower().startswith("convoy-pane-host") for a in launched["argv"]), launched["argv"])  # the pane runs the Convoy pane host: console script, or python -m on an uninstalled checkout
         latest = {s["session_id"]: s for s in list_seats(self.root)}["grok-trusted"]
         self.assertFalse(bool(latest.get("trust_worktree")))
 
@@ -231,6 +231,7 @@ class ManagedPaneHost(unittest.TestCase):
                     "status": "running",
                     "host_pid": 101,
                     "child_pid": 202,
+                    "incarnation": 4,
                 }
             ),
             encoding="utf-8",
@@ -243,6 +244,12 @@ class ManagedPaneHost(unittest.TestCase):
         self.assertTrue(closed["ok"])
         self.assertEqual(closed["state"], "close-requested")
         self.assertEqual(closed["host_pid"], 101)
+        # The request names the life it is for, so a later body can tell it
+        # was not addressed to itself.
+        written = json.loads(host_state_path(self.root, "managed-chair").with_suffix(".close").read_text(encoding="utf-8-sig"))
+        self.assertEqual(written["incarnation"], 4)
+        self.assertEqual(written["session_id"], "managed-chair")
+        self.assertTrue(written["requested_at"])
 
     @mock.patch("convoy.bringup.shutil.which", return_value="C:\\Tools\\codex.exe")
     def test_host_terminates_its_owned_child_and_returns_zero_on_consented_close(
@@ -264,7 +271,12 @@ class ManagedPaneHost(unittest.TestCase):
             def poll(self):
                 self.polls += 1
                 if self.polls == 2:
-                    close_path.write_text("{}\n", encoding="utf-8")
+                    # A consented close during the session cites the life it
+                    # closes; this is the only body, so incarnation 1.
+                    close_path.write_text(
+                        json.dumps({"session_id": "managed-chair", "incarnation": 1}) + "\n",
+                        encoding="utf-8",
+                    )
                 return None
 
         terminated = []
@@ -281,6 +293,132 @@ class ManagedPaneHost(unittest.TestCase):
         self.assertEqual(state["status"], "close-request-acknowledged")
         self.assertFalse(close_path.is_file(), "close request must be consumed")
         self.assertFalse(_claim_path(self.root, "managed-chair").is_file(), "launch claim must be released")
+
+    @mock.patch("convoy.bringup.shutil.which", return_value="C:\\Tools\\codex.exe")
+    def test_stale_close_citing_older_incarnation_never_kills_fresh_host(self, _which_harness):
+        """A relaunched agent could be terminated two seconds after start by
+        the request that had closed its predecessor. Discarding whatever sat
+        on disk before the host started covers only that one race; a request
+        that lands a moment AFTER a fresh body
+        starts is indistinguishable by time. The incarnation is the
+        difference, so the request cites one and the host checks it."""
+        from convoy.layer import feed_since
+
+        close_path = host_state_path(self.root, "managed-chair").with_suffix(".close")
+        close_path.parent.mkdir(parents=True, exist_ok=True)
+
+        class FakeProcess:
+            pid = 808
+            polls = 0
+
+            def poll(self):
+                self.polls += 1
+                if self.polls == 2:
+                    close_path.write_text(
+                        json.dumps({"session_id": "managed-chair", "incarnation": 0,
+                                    "requested_at": "yesterday"}) + "\n",
+                        encoding="utf-8",
+                    )
+                return 0 if self.polls >= 5 else None
+
+        terminated = []
+        rc = run_host(
+            self.root,
+            "managed-chair",
+            popen=lambda *_a, **_k: FakeProcess(),
+            terminate=lambda proc: terminated.append(proc.pid),
+            sleep=lambda _seconds: None,
+        )
+        self.assertEqual(terminated, [], "a request from an older life must never kill this one")
+        self.assertEqual(rc, 0)
+        self.assertFalse(close_path.is_file(), "the stale request is consumed, not left to fire again")
+        rows = [r for r in feed_since(self.root, "1970-01-01T00:00:00.000000Z") if r.get("kind") == "close-ignored"]
+        self.assertEqual(len(rows), 1, rows)
+        self.assertEqual(rows[0]["chair"], "managed-chair")
+        self.assertEqual(rows[0]["incarnation"], 1)
+        self.assertEqual(rows[0]["cited"], 0)
+
+    @mock.patch("convoy.bringup.shutil.which", return_value="C:\\Tools\\codex.exe")
+    def test_child_exit_stamps_pane_row_with_returncode_and_stderr_tail(self, _which_harness):
+        """Death is a row. A body that died at boot left nothing behind:
+        the pane scrolled its error away and closed, and the feed showed a
+        chair that simply never acked. The host owns the child, so it is the
+        only place that can record the exit code and the child's last words.
+        Recorded, never inferred: the tail comes from the child's own stderr."""
+        from convoy.layer import feed_since
+
+        outer = self
+
+        class FakeProcess:
+            pid = 707
+            polls = 0
+
+            def __init__(self, sink):
+                sink.write(b"boot failed: no such model\n")
+                sink.flush()
+
+            def poll(self):
+                self.polls += 1
+                return 3 if self.polls >= 2 else None
+
+        def fake_popen(argv, cwd=None, stderr=None, **_kwargs):
+            outer.assertIsNotNone(stderr, "the host must own the child's stderr to record it")
+            return FakeProcess(stderr)
+
+        rc = run_host(
+            self.root,
+            "managed-chair",
+            popen=fake_popen,
+            terminate=lambda _proc: None,
+            sleep=lambda _seconds: None,
+        )
+        self.assertEqual(rc, 3)
+        rows = [r for r in feed_since(self.root, "1970-01-01T00:00:00.000000Z") if r.get("kind") == "pane"]
+        self.assertEqual(len(rows), 1, rows)
+        row = rows[0]
+        self.assertEqual(row["chair"], "managed-chair")
+        self.assertEqual(row["exit"], 3)
+        self.assertEqual(row["incarnation"], 1)
+        self.assertIn("no such model", row["stderr_tail"])
+        # The origin loop beats on a local transition instead of waiting out
+        # its idle backoff; the exit of a body is one.
+        self.assertTrue((self.root / ".convoy" / "beat-request").exists())
+
+    @mock.patch("convoy.bringup.shutil.which", return_value="C:\\Tools\\codex.exe")
+    def test_host_pulses_while_the_body_is_up(self, _which_harness):
+        """The host is the only voice on a chair's pulse while the body is
+        mid-turn. Stop pulses at a turn end and the waiter pulses between
+        turns; both go quiet during a long one, and a chair working hard used
+        to look exactly like a chair that had died."""
+        from convoy.pulse import read_pulse
+
+        ticks = iter([0.0, 10.0, 61.0, 200.0])
+
+        class FakeProcess:
+            pid = 808
+            polls = 0
+
+            def __init__(self, sink):
+                pass
+
+            def poll(self):
+                self.polls += 1
+                return 0 if self.polls >= 3 else None
+
+        written = []
+        real_write = __import__("convoy.pulse", fromlist=["write_pulse"]).write_pulse
+
+        def spy(root, chair, **kw):
+            written.append(kw.get("pulse_source"))
+            return real_write(root, chair, **kw)
+
+        with mock.patch("convoy.pane_host.write_pulse", side_effect=spy):
+            run_host(self.root, "managed-chair", popen=lambda argv, cwd=None, stderr=None, **k: FakeProcess(stderr),
+                     terminate=lambda _p: None, sleep=lambda _s: None, clock=lambda: next(ticks))
+        # t=0 and t=61 only: 10 s after the first is not a second minute.
+        self.assertEqual(written, ["host", "host"], written)
+        self.assertEqual(read_pulse(self.root, "managed-chair")["pulse_source"], "host")
+        self.assertEqual(read_pulse(self.root, "managed-chair")["incarnation"], 1)
 
     @mock.patch("convoy.bringup.shutil.which", return_value="C:\\Tools\\codex.exe")
     def test_stale_close_request_does_not_kill_a_fresh_host(self, _which_harness):
@@ -316,6 +454,103 @@ class ManagedPaneHost(unittest.TestCase):
         state = json.loads(host_state_path(self.root, "managed-chair").read_text())
         self.assertEqual(state["status"], "child-exited")
         self.assertFalse(_claim_path(self.root, "managed-chair").is_file(), "claim released when the child exits")
+
+    @mock.patch("convoy.bringup.shutil.which", return_value="C:\\Tools\\codex.exe")
+    def test_host_types_a_pending_nudge_request_and_records_typed_at(self, _which_harness):
+        """A live nudge arriving mid-session is typed through the console
+        the host already shares with its child, then the request is consumed
+        and the state row carries proof (nudge_id, typed_at) for the caller
+        to read back -- never a byte of the typed text stays in the record
+        beyond what the caller already sent."""
+        from convoy.layer import feed_since
+
+        root = self.root
+
+        class FakeProcess:
+            pid = 909
+            polls = 0
+
+            def poll(self):
+                self.polls += 1
+                if self.polls == 2:
+                    request_nudge(root, "managed-chair", text="wake nudge=abc123",
+                                  nudge_id="abc123", consent="tok-1")
+                return 0 if self.polls >= 5 else None
+
+        typed = []
+        rc = run_host(
+            self.root, "managed-chair",
+            popen=lambda *_a, **_k: FakeProcess(),
+            terminate=lambda _p: None,
+            sleep=lambda _s: None,
+            console_writer=lambda text: typed.append(text) or {"ok": True, "count": len(text) + 1},
+        )
+        self.assertEqual(rc, 0)
+        self.assertEqual(typed, ["wake nudge=abc123"])
+        state = json.loads(host_state_path(self.root, "managed-chair").read_text())
+        self.assertEqual(state["last_nudge"]["nudge_id"], "abc123")
+        self.assertTrue(state["last_nudge"]["ok"])
+        self.assertTrue(state["last_nudge"]["typed_at"])
+        self.assertFalse(nudge_request_path(self.root, "managed-chair").is_file(), "the request is consumed")
+        rows = [r for r in feed_since(self.root, "1970-01-01T00:00:00.000000Z") if r.get("kind") == "nudge-typed"]
+        self.assertEqual(len(rows), 1, rows)
+        self.assertEqual(rows[0]["nudge_id"], "abc123")
+
+    @mock.patch("convoy.bringup.shutil.which", return_value="C:\\Tools\\codex.exe")
+    def test_host_records_a_failed_type_without_crashing_the_loop(self, _which_harness):
+        root = self.root
+
+        class FakeProcess:
+            pid = 910
+            polls = 0
+
+            def poll(self):
+                self.polls += 1
+                if self.polls == 2:
+                    request_nudge(root, "managed-chair", text="wake nudge=def456",
+                                  nudge_id="def456", consent="tok-2")
+                return 0 if self.polls >= 5 else None
+
+        rc = run_host(
+            self.root, "managed-chair",
+            popen=lambda *_a, **_k: FakeProcess(),
+            terminate=lambda _p: None,
+            sleep=lambda _s: None,
+            console_writer=lambda _text: {"ok": False, "error": "WriteConsoleInputW failed: GetLastError=6"},
+        )
+        self.assertEqual(rc, 0)
+        state = json.loads(host_state_path(self.root, "managed-chair").read_text())
+        self.assertEqual(state["last_nudge"]["nudge_id"], "def456")
+        self.assertFalse(state["last_nudge"]["ok"])
+        self.assertIsNone(state["last_nudge"]["typed_at"])
+        self.assertIn("GetLastError", state["last_nudge"]["error"])
+        self.assertFalse(nudge_request_path(self.root, "managed-chair").is_file())
+
+    @mock.patch("convoy.bringup.shutil.which", return_value="C:\\Tools\\codex.exe")
+    def test_stale_nudge_request_from_a_previous_body_is_discarded_at_start(self, _which_harness):
+        """Same rule as the stale close request: anything on disk before this
+        host started belongs to a body that is already gone."""
+        request_nudge(self.root, "managed-chair", text="stale", nudge_id="old-id", consent="tok-0")
+
+        class FakeProcess:
+            pid = 911
+            polls = 0
+
+            def poll(self):
+                self.polls += 1
+                return 0 if self.polls >= 3 else None
+
+        typed = []
+        rc = run_host(
+            self.root, "managed-chair",
+            popen=lambda *_a, **_k: FakeProcess(),
+            terminate=lambda _p: None,
+            sleep=lambda _s: None,
+            console_writer=lambda text: typed.append(text) or {"ok": True},
+        )
+        self.assertEqual(rc, 0)
+        self.assertEqual(typed, [], "a request written before this body started must never fire")
+        self.assertFalse(nudge_request_path(self.root, "managed-chair").is_file())
 
 
 if __name__ == "__main__":

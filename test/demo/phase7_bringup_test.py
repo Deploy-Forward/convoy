@@ -2,6 +2,7 @@ import io, json, os, sys, tempfile, unittest
 from pathlib import Path
 from unittest import mock
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
+from convoy.pane_host import read_launch_argv
 from convoy.cli import main
 from convoy.convoy import bind, ensure_id, lookup_resume, make_resume_key, seat
 from convoy.bringup import CREATE_NEW_CONSOLE, _pids_for_resume, bring_up, isolated_wt_argv, live_runner, live_spawn_kwargs, resume_argv, terminals, tile_rects
@@ -384,6 +385,28 @@ class Phase7BringUp(unittest.TestCase):
             {**self.c, "exe": r"C:\\abs\\claude.exe"},
         ]
 
+    def test_isolated_wt_argv_uses_managed_host_argv(self):
+        """Every launch is an owned body. Crew and relaunch used to put the
+        harness exe straight into the terminal argv, so no pid was ever
+        recorded and several bodies of one chair could run at once. With a
+        root each pane runs the lifecycle host instead; raw=True keeps the old
+        shape for one release, and the pure argv form (no root) is unchanged
+        so the interpreter gate in grep_gate_test still means what it says."""
+        from convoy.targeted_launch import managed_host_argv
+
+        seats = self._wt_seats()
+        with mock.patch("convoy.bringup.shutil.which", side_effect=self._which_map()):
+            managed = isolated_wt_argv(self.thread, seats, wt=r"C:\\Windows\\System32\\wt.exe", root=self.root)
+            raw = isolated_wt_argv(self.thread, seats, wt=r"C:\\Windows\\System32\\wt.exe", root=self.root, raw=True)
+        for sid in ("sess-grok", "sess-claude"):
+            host = managed_host_argv(self.root, {"session_id": sid})
+            windows = [managed[i:i + len(host)] for i in range(len(managed) - len(host) + 1)]
+            self.assertIn(host, windows, (sid, managed))
+        self.assertNotIn(r"C:\\abs\\grok.exe", managed)
+        self.assertNotIn(r"C:\\abs\\claude.exe", managed)
+        self.assertIn(r"C:\\abs\\grok.exe", raw)
+        self.assertIn(r"C:\\abs\\claude.exe", raw)
+
     def test_bring_up_merges_runner_pid_and_note(self):
         recorded = []
         def fake_runner(argv, cwd=None, rect=None, **k):
@@ -405,7 +428,8 @@ class Phase7BringUp(unittest.TestCase):
             recorded.append({"argv": list(argv), "cwd": cwd, "rect": rect})
             return {"ok": True, "pid": 99}
         with mock.patch("convoy.bringup.shutil.which", side_effect=self._which_map()):
-            expected = isolated_wt_argv(self.thread, self._wt_seats(), wt=r"C:\\Windows\\System32\\wt.exe")
+            # bring_up passes its root so every pane is an owned body
+            expected = isolated_wt_argv(self.thread, self._wt_seats(), wt=r"C:\\Windows\\System32\\wt.exe", root=self.root)
             d = bring_up(self.root, runner=fake_runner)
         self.assertTrue(d["ok"])
         self.assertEqual(len(recorded), 1)
@@ -432,9 +456,11 @@ class Phase7BringUp(unittest.TestCase):
         self.assertNotIn("-p", argv)
         self.assertNotIn("-c", argv)
         self.assertNotIn("--append-system-prompt", argv)
-        self.assertIn("--permission-mode", argv)
-        self.assertIn("bypassPermissions", argv)
-        self.assertIn("--allow-dangerously-skip-permissions", argv)
+        # the claude live flags ride the pane's launch record, which the host consumes
+        pane = [a for s in self._wt_seats() for a in (read_launch_argv(self.root, s["session_id"]) or {}).get("argv", [])]
+        self.assertIn("--permission-mode", pane)
+        self.assertIn("bypassPermissions", pane)
+        self.assertIn("--allow-dangerously-skip-permissions", pane)
         # FileName is wt; ArgumentList is argv[1:]
         self.assertEqual(os.path.basename(str(argv[0]).replace("\\", "/")).lower().replace(".exe", ""), "wt")
         self.assertNotIn("wt", argv[1:])
@@ -684,3 +710,56 @@ class PaneEnvIsTheUsersNotTheLaunchers(unittest.TestCase):
         self.assertEqual(env["CONVOY_HOME"], "C:/Users/m/.convoy", "Convoy's own settings ride along")
         with mock.patch.object(os, "name", "posix"):
             self.assertEqual(pane_env(launcher)["SHELL"], launcher["SHELL"])
+
+
+class OwnedBodyWindowTest(unittest.TestCase):
+    """A pane launched by bring_up runs the Convoy pane host, which spawns the harness
+    as its child and records both pids, so close/nudge/relaunch can reach the body. Before this, every
+    crew/relaunch pane ran the harness bare and `close` answered
+    manual-close-required. The host is a console script, never `python -m` (grep gate)."""
+
+    SEAT = {"to": "grok", "worktree": "C:\w\g", "session_id": "g-1", "resume": "vendor-1", "title": "g",
+            "exe": "C:\Tools\grok.exe"}
+
+    def _which(self, name):
+        key = str(name).lower().removesuffix(".exe")
+        return "C:\Tools\\" + str(name) if key in ("wt", "grok", "convoy-pane-host") else None
+
+    def test_with_root_each_pane_runs_the_pane_host_not_the_bare_harness(self):
+        with tempfile.TemporaryDirectory() as td, \
+             mock.patch("convoy.bringup.shutil.which", side_effect=self._which), \
+             mock.patch("convoy.targeted_launch.shutil.which", side_effect=self._which):
+            argv = isolated_wt_argv("demo", [self.SEAT], root=Path(td))
+            record = read_launch_argv(Path(td), "g-1")
+        self.assertIsNotNone(record, "the pane's validated harness argv is recorded for the host")
+        self.assertIn("grok.exe", " ".join(record["argv"]))
+        blob = " ".join(argv)
+        self.assertIn("convoy-pane-host", os.path.basename(argv[argv.index("-d") + 2]).lower(), argv)
+        self.assertIn("--seat g-1", blob)
+        self.assertIn("--root", blob)
+        self.assertNotIn("grok.exe", blob, "the harness is the host's child, never the pane's own command")
+        self.assertNotIn("python", blob.lower(), "a pane runs a program, never an interpreter")
+        self.assertNotIn("-m convoy", blob)
+
+    def test_without_root_the_pane_still_runs_the_harness_bare(self):
+        with mock.patch("convoy.bringup.shutil.which", side_effect=self._which):
+            argv = isolated_wt_argv("demo", [self.SEAT])
+        self.assertIn("grok.exe", " ".join(argv))
+        self.assertNotIn("convoy-pane-host", " ".join(argv))
+
+    def test_bring_up_passes_its_root_so_live_panes_are_owned(self):
+        seen = {}
+        def runner(argv):
+            seen["argv"] = list(argv)
+            return {"ok": True, "pid": 4242}
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            ensure_id(root); bind(root, "demo")
+            seat(root, to="grok", session_id="g-1", worktree=str(root), resume="vendor-1", title="g")
+            with mock.patch("convoy.bringup.shutil.which", side_effect=self._which), \
+                 mock.patch("convoy.targeted_launch.shutil.which", side_effect=self._which), \
+                 mock.patch("convoy.bringup._absolute_harness", return_value="C:\Tools\grok.exe"):
+                bring_up(root, thread="demo", runner=runner, session_ids=["g-1"])
+        blob = " ".join(seen.get("argv", []))
+        self.assertIn("convoy-pane-host", blob, seen)
+        self.assertIn("--seat g-1", blob)

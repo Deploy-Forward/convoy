@@ -169,7 +169,8 @@ class SwapVerb(unittest.TestCase):
         self.assertEqual(argv[-1], seat_row["boot_prompt"])
         self.assertIn(card["token"], argv[-1])
         agy_argv = resume_argv({"to": "agy", "session_id": "x", "boot_prompt": "hello seat"})
-        self.assertEqual(agy_argv[-2:], ["--prompt", "hello seat"])
+        # agy --prompt is --print; the interactive form keeps the session open
+        self.assertEqual(agy_argv[-2:], ["--prompt-interactive", "hello seat"])
 
     def test_swap_accepts_labelled_legacy_ola_handoff(self):
         legacy = self.root / ".ola" / "handoff-swap.md"
@@ -237,6 +238,128 @@ class LiveOnBranchDedupe(unittest.TestCase):
         rows = live_on_branch(self.root, "feat-x")
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]["to"], "codex")
+
+
+class MintedSessionId(unittest.TestCase):
+    """Claude and Grok both accept a session id at launch (`--session-id`,
+    `-s`), so the seat can carry the id before the pane even opens. That is
+    the deterministic half of "never by recency": reading the newest rollout
+    for a cwd can pick one of Convoy's own `/usage` probe stubs instead.
+
+    Two rules. An id is minted only where it can be recorded, so a pure argv
+    builder never mints - an id in an argv that nobody wrote down is worse
+    than no id. And a mint is a NEW session: it rides as --session-id, never
+    as --resume, which would name a conversation that does not exist yet."""
+
+    def setUp(self):
+        self.root = Path(tempfile.mkdtemp())
+        ensure_id(self.root)
+        self.worktree = Path(tempfile.mkdtemp())
+
+    def test_seat_resume_null_until_observed(self):
+        from convoy.targeted_launch import pane_child_argv
+
+        row = seat(self.root, "claude", "c1", worktree=str(self.worktree))
+        self.assertIsNone(row["resume"])
+        self.assertIsNone(row["resume_for"])
+        argv = pane_child_argv(row)   # no root: a pure builder may not write
+        self.assertNotIn("--session-id", argv)
+        self.assertNotIn("--resume", argv)
+        after = [r for r in list_seats(self.root) if r["session_id"] == "c1"][-1]
+        self.assertIsNone(after["resume"], "nothing may invent an id from an argv build")
+
+    def test_minted_session_id_rides_launch_argv(self):
+        from convoy.targeted_launch import pane_child_argv
+
+        seat(self.root, "claude", "c1", worktree=str(self.worktree))
+        seat(self.root, "grok", "g1", worktree=str(Path(tempfile.mkdtemp())))
+        minted = iter(["11111111-1111-4111-8111-111111111111",
+                       "22222222-2222-4222-8222-222222222222"])
+        rows = {r["session_id"]: r for r in list_seats(self.root)}
+        claude = pane_child_argv(rows["c1"], root=self.root, mint=lambda: next(minted))
+        grok = pane_child_argv(rows["g1"], root=self.root, mint=lambda: next(minted))
+        self.assertIn("--session-id", claude)
+        self.assertEqual(claude[claude.index("--session-id") + 1], "11111111-1111-4111-8111-111111111111")
+        self.assertNotIn("--resume", claude)
+        self.assertIn("-s", grok)
+        self.assertEqual(grok[grok.index("-s") + 1], "22222222-2222-4222-8222-222222222222")
+        after = {r["session_id"]: r for r in list_seats(self.root)}
+        self.assertEqual(after["c1"]["resume"], "11111111-1111-4111-8111-111111111111")
+        self.assertEqual(after["c1"]["resume_for"], "claude")
+        self.assertEqual(after["g1"]["resume"], "22222222-2222-4222-8222-222222222222")
+        self.assertEqual(after["g1"]["resume_for"], "grok")
+
+    def test_codex_is_never_given_a_minted_id(self):
+        """Codex 0.154.0 has no mint flag in --help. Convoy does not invent
+        one: Codex's id arrives from its own Stop payload (end.py)."""
+        from convoy.targeted_launch import pane_child_argv
+
+        row = seat(self.root, "codex", "x1", worktree=str(self.worktree))
+        argv = pane_child_argv(row, root=self.root, mint=lambda: "never-used")
+        self.assertNotIn("--session-id", argv)
+        self.assertNotIn("-s", argv)
+        after = [r for r in list_seats(self.root) if r["session_id"] == "x1"][-1]
+        self.assertIsNone(after["resume"])
+
+    def test_a_seat_that_already_has_an_id_is_not_reminted(self):
+        from convoy.targeted_launch import pane_child_argv
+
+        seat(self.root, "claude", "c2", worktree=str(self.worktree), resume="already-mine")
+        rows = {r["session_id"]: r for r in list_seats(self.root)}
+        argv = pane_child_argv(rows["c2"], root=self.root, mint=lambda: "must-not-be-used")
+        self.assertNotIn("must-not-be-used", argv)
+        self.assertIn("--resume", argv)
+
+
+class LaunchIsAnOwnedBody(unittest.TestCase):
+    """Several bodies of one chair can be alive at once after repeated
+    relaunches, and without a record no row says which life wrote what. The incarnation is that number and the
+    lifecycle host is the only writer of it: a body without a host is a body
+    nobody counted."""
+
+    def setUp(self):
+        self.root = Path(tempfile.mkdtemp())
+        ensure_id(self.root)
+        self.worktree = Path(tempfile.mkdtemp())
+        seat(self.root, "codex", "chair", worktree=str(self.worktree))
+
+    def _host_one_body(self, pid):
+        from convoy.pane_host import run_host
+
+        class FakeProcess:
+            polls = 0
+
+            def __init__(self):
+                self.pid = pid
+
+            def poll(self):
+                self.polls += 1
+                return 0 if self.polls >= 2 else None
+
+        return run_host(
+            self.root,
+            "chair",
+            popen=lambda *_a, **_k: FakeProcess(),
+            terminate=lambda _p: None,
+            sleep=lambda _s: None,
+        )
+
+    def _latest(self):
+        rows = [r for r in list_seats(self.root) if r.get("session_id") == "chair"]
+        return rows[-1]
+
+    def test_relaunch_increments_incarnation(self):
+        self._host_one_body(11)
+        first = self._latest()
+        self.assertEqual(first["incarnation"], 1)
+        self.assertEqual(first["harness_pid"], 11)
+        self.assertTrue(first["launched_at"], first)
+        self.assertEqual(first["process_state"], "exited")
+        self._host_one_body(22)
+        second = self._latest()
+        self.assertEqual(second["incarnation"], 2)
+        self.assertEqual(second["harness_pid"], 22)
+        self.assertNotEqual(second["launched_at"], first["launched_at"])
 
 
 if __name__ == "__main__":

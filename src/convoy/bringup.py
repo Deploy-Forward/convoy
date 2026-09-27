@@ -45,10 +45,11 @@ import subprocess
 import time
 from pathlib import Path
 from typing import Any, Callable
+from urllib.parse import quote
 
 from .identity import ensure_grok_agent, ensure_inbox_hooks, install_neuron_identity
 from .index import is_temp_root
-from .harness_contract import effective_model, effort_argv, model_argv
+from .harness_contract import effective_model, effort_argv, model_argv, session_id_flag
 from .convoy import (
     CONDUCTOR,
     list_seats,
@@ -302,6 +303,28 @@ def resume_target(seat: dict[str, Any]) -> str | None:
     return None
 
 
+def session_store_has(to: Any, worktree: Any, sid: str) -> bool:
+    """Whether the harness's own store already holds conversation `sid` for this worktree.
+    Read, never written. Only the two harnesses whose --session-id Convoy
+    passes have a store to read here; every other harness answers False.
+
+    claude: ~/.claude/projects/<worktree, each non-alphanumeric as ->/<sid>.jsonl. claude
+            --resume looks in the project folder of the cwd it starts in, so only this
+            worktree's folder counts.
+    grok:   ~/.grok/sessions/<worktree, URL-encoded>/<sid>/
+    """
+    if not isinstance(worktree, str) or not worktree.strip() or not sid:
+        return False
+    home = Path.home()
+    bin_ = _harness_bin(to)
+    if bin_ == "claude":
+        slug = "".join(c if c.isascii() and c.isalnum() else "-" for c in worktree)
+        return (home / ".claude" / "projects" / slug / f"{sid}.jsonl").is_file()
+    if bin_ == "grok":
+        return (home / ".grok" / "sessions" / quote(worktree, safe="") / sid).is_dir()
+    return False
+
+
 def resume_argv(seat: dict[str, Any]) -> list[str]:
     """Argv we WOULD exec. No spawn. Native harness resume only.
 
@@ -339,6 +362,22 @@ def resume_argv(seat: dict[str, Any]) -> list[str]:
     # Declared effort rides argv only through the contract's evidenced flag,
     # and only as a value that harness's --help lists (effort_argv re-checks).
     argv.extend(effort_argv(to, seat.get("effort")))
+    # A minted id names a conversation that does not exist yet, so the
+    # first launch DECLARES it (--session-id) and every later one resumes it
+    # (--resume). claude and grok both refuse --session-id for an id that
+    # already exists, so the flag is passed exactly once. The pane host's
+    # `incarnations` never reached a row, so every relaunch re-declared; the
+    # harness's own session store is the fact that decides.
+    if (
+        sid
+        and seat.get("resume_minted")
+        and not seat.get("incarnations")
+        and not session_store_has(to, seat.get("worktree"), sid)
+    ):
+        flag = session_id_flag(to)
+        if flag:
+            argv.extend([flag, sid])
+            sid = None
     # First-run seat: no vendor UUID yet. Do not pass --resume.
     if sid:
         if _harness_bin(to) == "codex":
@@ -355,7 +394,7 @@ def resume_argv(seat: dict[str, Any]) -> list[str]:
     bp = seat.get("boot_prompt")
     if isinstance(bp, str) and bp.strip():
         if _harness_bin(to) == "agy":
-            argv.extend(["--prompt", bp])
+            argv.extend(["--prompt-interactive", bp])
         else:
             argv.append(bp)
     return argv
@@ -858,8 +897,18 @@ def _with_claude_live_flags(argv: list[str], to: Any) -> list[str]:
     return parts
 
 
-def isolated_wt_argv(thread: str | int, seats: list[dict[str, Any]], *, wt: str | None = None) -> list[str]:
+def isolated_wt_argv(thread: str | int, seats: list[dict[str, Any]], *, wt: str | None = None,
+                     root: Path | str | None = None, raw: bool = False) -> list[str]:
     """Pure Windows Terminal argv for n seated neurons. Does not spawn.
+
+    Every launch is an owned body: with `root` each pane runs
+    `convoy.pane_host` instead of the harness exe, so the body's pid,
+    incarnation and exit are recorded. The harness argv is still built and
+    validated exactly as before (absolute exe, no wrapper, no `--`, no
+    --append-system-prompt) and only then handed to the host, so nothing the
+    gates refuse can ride in behind the interpreter. `raw=True` is the escape
+    hatch for one release; without a root there is nothing to host against and
+    the pure form is unchanged.
 
     Live GREEN on WT 1.24.11911.0:
       --window new  nt --title T -d DIR EXE ...  ;  split-pane -V ...
@@ -885,6 +934,16 @@ def isolated_wt_argv(thread: str | int, seats: list[dict[str, Any]], *, wt: str 
             split = "-V" if i == 1 else "-H"
             argv.extend(["split-pane", split])
         cwd = seat.get("worktree") or seat.get("cwd") or ""
+        # Mint BEFORE the argv is built, because the launch record written
+        # below is what run_host actually executes - it WINS over the argv
+        # pane_child_argv rebuilds from the row. Minting only there left the
+        # id on the row and off the command line, so the vendor made its own
+        # session and the row named one that does not exist. Same condition
+        # as the record: a raw or rootless build is a pure builder and writes
+        # nothing, so it mints nothing either.
+        if root is not None and not raw:
+            from .resume_first import ensure_session_id
+            seat = dict(ensure_session_id(Path(root), seat))
         inner = resume_argv(seat)
         override = seat.get("exe")
         if override:
@@ -902,6 +961,16 @@ def isolated_wt_argv(thread: str | int, seats: list[dict[str, Any]], *, wt: str 
         low = " ".join(inner).lower()
         if _is_wrapper_text(low):
             raise ValueError("refuse ola-brain / side-chat / UltraCode-Shim wrap")
+        if root is not None and not raw:
+            # The pane runs the Convoy pane host, which spawns the harness
+            # as its owned child and records host_pid/child_pid, so close, nudge and relaunch can
+            # reach the body. The launch record is written from the argv validated just above
+            # (absolute exe, no wrapper, no --append-system-prompt, live flags, boot prompt) and
+            # BEFORE the swap, so the host executes exactly what the terminal would have.
+            from .pane_host import write_launch_argv
+            from .targeted_launch import managed_host_argv
+            write_launch_argv(Path(root), str(seat.get("session_id") or ""), inner, str(cwd) if cwd else None)
+            inner = managed_host_argv(Path(root), seat)
         title = _pane_title(seat)
         argv.extend(["--title", title])
         if cwd:
@@ -1337,7 +1406,9 @@ def bring_up(root: Path, convoy_id: str | None = None, thread: str | None = None
         ready = _pane_seats(ready)
         if ready:
             try:
-                wt_argv = isolated_wt_argv(bound or "", ready, wt=_resolve_wt_bin())
+                # root=: every pane is an owned body, not a raw exe the
+                # terminal owns and nobody counts.
+                wt_argv = isolated_wt_argv(bound or "", ready, wt=_resolve_wt_bin(), root=root)
                 result = runner(wt_argv)
                 if isinstance(result, dict):
                     for i in ready_idx:

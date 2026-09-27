@@ -12,6 +12,7 @@ license = { text = "MIT" }
 
 [project.scripts]
 convoy = "convoy.cli:main"
+convoy-pane-host = "convoy.pane_host:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

@@ -60,7 +60,9 @@
         "evidence": "unverified 2026-09-04: grok --help (demo box, grok 1.0.13) names remote sessions only on the resume path: `--restore-code  Restore the original session's repository snapshot when resuming. Remote sessions require --worktree (never checks out into the current directory)`; `-w, --worktree ... With --resume of a remote session, pass --restore-code to apply the snapshot codebase`. No option creates or attaches a remote session from this CLI, and Convoy has never resumed one"
       },
       "model_flag": "-m",
-      "model_flag_evidence": "grok --help (demo box, grok 1.0.13, 2026-09-04): -m/--model <MODEL> 'Model ID to use'"
+      "model_flag_evidence": "grok --help (demo box, grok 1.0.13, 2026-09-04): -m/--model <MODEL> 'Model ID to use'",
+      "session_id_flag": "-s",
+      "session_id_flag_evidence": "grok --help (this box, 1.0.34 (3736acbc8658), 2026-09-21) line 121: `-s, --session-id <SESSION_ID>  Use a specific session UUID for a **new** conversation (must be a valid UUID and must not already exist under the target session directory)`. Recorded as the short form because that is what Convoy has always put on grok argv; `--session-id` is the same flag's long spelling"
     },
     {
       "id": "claude",
@@ -96,7 +98,9 @@
         "evidence": "claude --help (demo box, 2.1.260, 2026-09-04): `--cloud [description|session_id|url]  Create a cloud session with the given description, or attach to an existing one by session ID or claude.ai/code URL`; also `--environment <environment_id>  Create a new cloud session that runs on the given self-hosted environment (ccpool_...)`. --cloud is an option of the interactive claude command, not a task subcommand; attach by id/url is stated, whether the create path stays attached is not"
       },
       "model_flag": "--model",
-      "model_flag_evidence": "claude --help (demo box, 2.1.260, 2026-09-04): --model <model> 'Model for the current session'"
+      "model_flag_evidence": "claude --help (demo box, 2.1.260, 2026-09-04): --model <model> 'Model for the current session'",
+      "session_id_flag": "--session-id",
+      "session_id_flag_evidence": "claude --help (this box, 2.1.278, 2026-09-21) line 217: `--session-id <uuid>  Use a specific session ID for the conversation`"
     },
     {
       "id": "codex",
@@ -144,7 +148,9 @@
         "evidence": "codex --help (demo box, codex-cli 0.153.0, 2026-09-04): `cloud  [EXPERIMENTAL] Browse tasks from Codex Cloud and apply changes locally`; codex cloud --help lists `codex cloud exec` as `exec  Submit a new Codex Cloud task without launching the TUI`, plus status, list, apply, diff. A submitted task, not an interactive session. `--remote <ADDR>  Connect the TUI to a remote app server endpoint` is a self-hosted app server, not Codex Cloud"
       },
       "model_flag": "-m",
-      "model_flag_evidence": "codex --help and codex resume --help (demo box, codex-cli 0.153.0, 2026-09-06): -m/--model <MODEL> 'Model the agent should use'; live 2026-09-06 a relaunched codex pane without it booted ~/.codex/config.toml's model (gpt-6-astra) instead of the seat's gpt-5.6"
+      "model_flag_evidence": "codex --help and codex resume --help (demo box, codex-cli 0.153.0, 2026-09-06): -m/--model <MODEL> 'Model the agent should use'; live 2026-09-06 a relaunched codex pane without it booted ~/.codex/config.toml's model (gpt-6-astra) instead of the seat's gpt-5.6",
+      "session_id_flag": null,
+      "session_id_flag_evidence": "codex --help (this box, codex-cli 0.155.1, 2026-09-21): no session-id flag in 134 help lines; resume is the `resume` subcommand over a captured id"
     },
     {
       "id": "cursor-agent",
@@ -189,7 +195,9 @@
         "--trust",
         "--force"
       ],
-      "live_flags_evidence": "cursor-agent --help (this box, 2026.08.11-e8db854, 2026-09-08): `--trust  Trust the current workspace without prompting`; `-f, --force  Force allow commands unless explicitly denied`. Live panes only, the way claude gets --permission-mode bypassPermissions"
+      "live_flags_evidence": "cursor-agent --help (this box, 2026.08.11-e8db854, 2026-09-08): `--trust  Trust the current workspace without prompting`; `-f, --force  Force allow commands unless explicitly denied`. Live panes only, the way claude gets --permission-mode bypassPermissions",
+      "session_id_flag": null,
+      "session_id_flag_evidence": "cursor-agent --help (this box, 2026.09.18-9a7762b, 2026-09-21): no flag to set a session id at launch. Line 32 `--resume [chatId]` resumes an EXISTING chat; line 87 `create-chat  Create a new empty chat and return its ID` is a separate mechanism, not a launch flag"
     },
     {
       "id": "agy",
@@ -221,7 +229,9 @@
         "evidence": "unverified 2026-09-04: agy --help (demo box, 1.1.22) has no line matching cloud or remote; nothing to quote, and absence in --help is not proof the product lacks a surface"
       },
       "model_flag": "--model",
-      "model_flag_evidence": "agy --help (demo box, 1.1.22, 2026-09-04): --model 'Model for the current CLI session'"
+      "model_flag_evidence": "agy --help (demo box, 1.1.22, 2026-09-04): --model 'Model for the current CLI session'",
+      "session_id_flag": null,
+      "session_id_flag_evidence": "agy --help (this box, 1.2.7, 2026-09-21): no session-id flag in 39 help lines; resumes via `--conversation <ID>` over a captured id"
     },
     {
       "id": "hermes",

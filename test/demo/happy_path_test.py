@@ -251,7 +251,14 @@ class HappyPath(unittest.TestCase):
         for c in live["chairs"]:
             self.assertTrue(c["boot_prompt_rearmed"]); self.assertTrue(c["token_found"])
         argv = self.spawns[0]["argv"]
-        self.assertTrue(any("relaunched at" in a and tokens[sids[0]] in a for a in argv), argv[-3:])
+        # The pane runs the lifecycle host, so the re-armed prompt rides
+        # the argv the host executes for that chair, not the terminal's.
+        from convoy.convoy import list_seats
+        from convoy.targeted_launch import pane_child_argv
+        self.assertIn(sids[0], argv)
+        row = [r for r in list_seats(self.root) if r.get("session_id") == sids[0]][-1]
+        child = pane_child_argv(row)
+        self.assertTrue(any("relaunched at" in a and tokens[sids[0]] in a for a in child), child[-3:])
         self.assertEqual(live["seated"]["after"], live["relaunched_at"])
         after = (self.root / ".convoy" / "inbox" / (sids[0] + ".jsonl")).read_text(encoding="utf-8")
         self.assertIn("Relaunched at", after.replace(inbox_before, "", 1))

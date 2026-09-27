@@ -69,6 +69,23 @@ def harness_exec(harness_id: str) -> str:
     return wanted
 
 
+def session_id_flag(harness_id: str) -> str | None:
+    """The flag that DICTATES the session id of a NEW conversation, or None.
+
+    This is what lets Convoy mint an id before the body starts instead
+    of waiting to be told one. Only a flag evidenced in that harness's --help
+    counts; `--resume` is not one of these (it names a conversation that
+    already exists).
+    """
+    wanted = canonical_harness_id(harness_id)
+    for row in harness_entries():
+        if row["id"] != wanted:
+            continue
+        flag = row.get("session_id_flag")
+        return flag.strip() if isinstance(flag, str) and flag.strip() else None
+    return None
+
+
 def usage_probe_key(harness_id: str) -> str:
     wanted = canonical_harness_id(harness_id)
     for row in harness_entries():

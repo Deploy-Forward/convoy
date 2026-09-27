@@ -44,6 +44,7 @@ from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 
+from convoy.pane_host import read_launch_argv
 from convoy.convoy import ensure_id, list_seats, read_github, read_thread
 from convoy.mcp_http import _WRITE_TOOLS, make_server
 from convoy.wizard_preflight import REQUIRED_WIZARD_VERBS
@@ -244,8 +245,9 @@ class WizardE2EGated(unittest.TestCase):
         self.assertEqual(len(self.spawns), 1, "ONE window, not one per chair")
         argv = " ".join(self.spawns[0]["argv"])
         self.assertEqual(argv.count("split-pane"), 2, "three panes = two splits")
-        # The effort the user picked reaches the harness that evidences a flag.
-        self.assertIn("--reasoning-effort high", argv.replace('"', ""))
+        # The effort the user picked reaches the harness that evidences a flag (via the pane's launch record).
+        pane = " ".join(a for sid in sids for a in (read_launch_argv(self.root, sid) or {}).get("argv", []))
+        self.assertIn("--reasoning-effort high", pane.replace('"', ""))
 
         # launched is not connected: the card says pending before any ack.
         self.assertTrue(all(c["state"] == "pending" for c in crew["seated"]["chairs"]),

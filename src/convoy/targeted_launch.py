@@ -13,20 +13,24 @@ import shlex
 import shutil
 import subprocess
 import sys
+import uuid
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping
 
 from .bringup import (
+    _absolute_harness,
     _harness_bin,
     _is_abs_exe,
     _pane_title,
     _seat_with_agent,
+    _with_claude_live_flags,
     ensure_first_run,
     resume_argv,
     resume_target,
 )
 from .consent import consume_consent, request_consent
 from .convoy import list_seats, update_seat
+from .resume_first import ensure_session_id
 from .harness_contract import effort_contract, harness_entries, harness_exec, model_catalog, where_options
 from .inbox import connect_mode
 
@@ -89,28 +93,94 @@ def terminal_capability(
     }
 
 
-def pane_child_argv(seat: dict[str, Any]) -> list[str]:
-    """Native harness argv executed by the lifecycle host."""
+# Harnesses that accept a session id for a NEW conversation, and the flag
+# each one spells it with. Live at claude 2.1.274 (`--session-id <uuid>` in
+# --help) and grok 1.0.34 (`-s, --session-id <uuid>`). Codex 0.154.0 has no
+# such flag, so Codex's id is observed from its own Stop payload instead and
+# nothing here invents one.
+# Which harnesses can be told their session id is the CONTRACT's answer
+# (`session_id_flag`, with the --help line that evidences it), not a dict
+# here, so that adding a harness is a contract edit.
+
+
+def pane_child_argv(seat: dict[str, Any], *, root: Path | str | None = None,
+                    mint: Callable[[], Any] = uuid.uuid4) -> list[str]:
+    """Native harness argv executed by the lifecycle host.
+
+    The host runs every pane, so this argv is what the terminal used
+    to hold: it must be byte-for-byte what `isolated_wt_argv` built, or the
+    move to an owned body would silently change how the harness starts. The
+    absolute exe and Claude's live flags are therefore resolved here and not
+    only there (they were missing, and `bring_up` would have launched Claude
+    without --permission-mode the moment the host took over).
+
+    With a `root`, a chair on a mint-capable harness that carries no
+    usable resume is given one before it starts, and the seat row records it
+    in the same breath. Without a root nothing is minted - an id in an argv
+    that nobody wrote down is worse than no id at all, and this function is
+    also the pure builder that dry-run cards use. A mint is a NEW session, so
+    it rides as the mint flag and never as --resume, which would name a
+    conversation that does not exist yet.
+    """
+    seat = dict(seat)
+    if root is not None:
+        # One minting path: ensure_session_id writes resume, resume_for
+        # and resume_minted together, and resume_argv reads that provenance to
+        # DECLARE the id once. Minting here too would be a second answer.
+        seat = dict(ensure_session_id(Path(root), seat, mint=mint))
     inner = resume_argv(seat)
+    override = seat.get("exe")
+    if override:
+        inner = [str(override), *inner[1:]]
+    else:
+        inner = [_absolute_harness(inner[0]), *inner[1:]]
+    inner = _with_claude_live_flags(inner, seat.get("to"))
     if _harness_bin(str(seat.get("to") or "")) == "grok" and seat.get("trust_worktree"):
         if "--trust" not in inner:
             inner.insert(1, "--trust")
     return inner
 
 
+def _pane_host_program() -> str | None:
+    """The `convoy-pane-host` console script: on PATH, or in the script directory that
+    belongs to THIS interpreter (venv Scripts/bin, or the user-site Scripts/bin that a
+    `pip install --user` writes to and Windows never puts on PATH)."""
+    found = shutil.which("convoy-pane-host") or shutil.which("convoy-pane-host.exe")
+    # A `which` that answers with some other program (a test double, a shim) is not a host.
+    if found and Path(found).name.lower().startswith("convoy-pane-host"):
+        return found
+    import site
+    import sysconfig
+    exe = Path(sys.executable).resolve()
+    candidates = [exe.parent, exe.parent / "Scripts"]
+    try:
+        candidates.append(Path(sysconfig.get_path("scripts")))
+        candidates.append(Path(sysconfig.get_path("scripts", scheme="nt_user" if os.name == "nt" else "posix_user")))
+    except Exception:
+        pass
+    try:
+        ub = Path(site.getuserbase())
+        candidates += [ub / ("Python" + sysconfig.get_python_version().replace(".", "")) / "Scripts", ub / "bin"]
+    except Exception:
+        pass
+    for d in candidates:
+        for name in ("convoy-pane-host.exe", "convoy-pane-host"):
+            p = d / name
+            if p.is_file():
+                return str(p)
+    return None
+
+
 def managed_host_argv(root: Path, seat: dict[str, Any]) -> list[str]:
     sid = str(seat.get("session_id") or "").strip()
     if not sid:
         raise ValueError("managed pane host requires a chair session_id")
-    return [
-        str(Path(sys.executable).resolve()),
-        "-m",
-        "convoy.pane_host",
-        "--root",
-        str(Path(root).resolve()),
-        "--seat",
-        sid,
-    ]
+    # The pane runs a PROGRAM, never an interpreter (grep gate): the console script
+    # `convoy-pane-host` installed beside `convoy`. `python -m` survives only as the
+    # fallback for a checkout that was never installed.
+    host = _pane_host_program()
+    head = [str(Path(host).resolve())] if host else [str(Path(sys.executable).resolve()), "-m", "convoy.pane_host"]
+    return [*head, "--root", str(Path(root).resolve()), "--seat", sid]
 
 
 def active_pane_argv(
@@ -221,19 +291,60 @@ def release_launch_claim(root: Path, session_id: str) -> bool:
     return existed
 
 
-def _claim(root: Path, session_id: str) -> Path:
-    path = _claim_path(root, session_id)
+def read_launch_claim(root: Path, session_id: str) -> dict[str, Any] | None:
+    """The claim on disk, or None. Unreadable is None: a claim nobody can read
+    is not evidence of an occupant."""
+    path = _claim_path(Path(root), session_id)
+    if not path.is_file():
+        return None
+    try:
+        value = json.loads(path.read_text(encoding="utf-8-sig"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    return value if isinstance(value, dict) else None
+
+
+def take_launch_claim(root: Path, session_id: str, *, host_pid: int | None = None) -> Path:
+    """One body per chair, taken with O_EXCL before anything is spawned.
+
+    Two claimants exist and they are not peers. `launch_seat` reserves the
+    chair before it asks the terminal to split, and records no host_pid: that
+    row means "a pane is on its way". The lifecycle host it spawned then takes
+    the same claim WITH its pid, and is allowed to adopt a reservation or a
+    claim whose host is gone — otherwise every managed launch would refuse
+    itself. A claim whose host_pid is alive is never taken: that is the
+    occupancy refusal (it prevents two live bodies on one chair).
+    """
+    path = _claim_path(Path(root), session_id)
     path.parent.mkdir(parents=True, exist_ok=True)
+    payload: dict[str, Any] = {"session_id": session_id}
+    if host_pid is not None:
+        payload["host_pid"] = int(host_pid)
+    data = (json.dumps(payload, separators=(",", ":")) + "\n").encode("utf-8")
     try:
         fd = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     except FileExistsError as exc:
-        raise ValueError("refuse duplicate launch: chair already claimed") from exc
-    payload = json.dumps({"session_id": session_id}, separators=(",", ":")) + "\n"
+        if host_pid is None:
+            raise ValueError("refuse duplicate launch: chair already claimed") from exc
+        held = (read_launch_claim(root, session_id) or {}).get("host_pid")
+        from .pane_host import pid_alive
+
+        if held is not None and pid_alive(held):
+            raise ValueError(
+                "refuse duplicate launch: chair " + str(session_id) +
+                " is already hosted by a live pane host (pid " + str(held) + ")")
+        path.write_bytes(data)   # a reservation, or a host that is gone
+        return path
     try:
-        os.write(fd, payload.encode("utf-8"))
+        os.write(fd, data)
     finally:
         os.close(fd)
     return path
+
+
+def _claim(root: Path, session_id: str) -> Path:
+    """Launcher-side reservation; see take_launch_claim."""
+    return take_launch_claim(root, session_id)
 
 
 def launch_seat(
