@@ -20,6 +20,7 @@ from typing import Any, Callable
 from .consent import consume_consent, request_consent
 from .convoy import list_seats
 from .harness_contract import canonical_harness_id
+from .pane_host import host_state_path, pid_alive, read_host_records, request_nudge
 from .panes import bodies as panes_bodies
 from .wt_walk import BUSY_RE, WtWalkAdapter
 from .synapse import try_codex_queue
@@ -30,6 +31,8 @@ PanesFn = Callable[[Path], dict[str, Any]]
 QueueFn = Callable[[str, str], dict[str, Any] | None]
 LeaderFn = Callable[[], dict[str, Any]]
 SendFn = Callable[[dict[str, Any], str], dict[str, Any]]
+HostRecordsFn = Callable[[Path], list[dict[str, Any]]]
+PidAliveFn = Callable[[Any], bool]
 
 GENERIC_TITLES = frozenset({
     "grok", "codex", "claude", "claude code", "cursor", "cursor-agent",
@@ -138,6 +141,8 @@ def _window_names_chair(text: str, worktree_name: str, seat_title: str) -> bool:
 def _pane_label(window: dict[str, Any] | None, tmux_target: str | None) -> str:
     if tmux_target:
         return "tmux:" + tmux_target
+    if window and "host_pid" in window and "hwnd" not in window:
+        return "pane-host host_pid=" + str(window.get("host_pid")) + " child_pid=" + str(window.get("child_pid"))
     if window and window.get("walk"):
         # names the PANE the focus-only probe found, not just the window
         return ("wt-walk HWND " + str(window.get("hwnd")) + " pane title=" + repr(window.get("title"))
@@ -247,8 +252,21 @@ def identify_target(
     windows_fn: WindowsFn | None = None,
     target: str | None = None,
     leader_fn: LeaderFn | None = None,
+    host_records_fn: HostRecordsFn | None = None,
+    pid_alive_fn: PidAliveFn | None = None,
 ) -> dict[str, Any]:
-    """Prove the pane is this chair, or say why not. Never sends keys."""
+    """Prove the pane is this chair, or say why not. Never sends keys.
+
+    `panes` cannot place a claude body on this OS (no
+    process cwd, and a busy pane's title is its prompt, never the chair), so
+    the window-title path below refuses every claude neuron at its prompt.
+    The pane host already proved this exact body at launch (`host_pid`,
+    `child_pid` on its own state row, written by the process that spawned the
+    child — never a command-line guess). A RUNNING host record for this chair
+    is checked first and, when present, wins outright: it is strictly better
+    proof than a window title, and it is the only proof that exists at all
+    for a harness `panes` cannot place.
+    """
     sid = str(session_id or "").strip()
     card: dict[str, Any] = {
         "ok": True,
@@ -273,6 +291,24 @@ def identify_target(
     card["harness"] = harness
     card["worktree"] = seat.get("worktree")
     card["resume_available"] = bool(str(seat.get("resume") or "").strip())
+
+    alive = pid_alive_fn or pid_alive
+    for record in (host_records_fn or read_host_records)(root):
+        if record.get("session_id") != sid:
+            continue
+        if record.get("status") != "running":
+            continue
+        if not alive(record.get("host_pid")):
+            continue
+        card["host"] = "pane-host"
+        card["identified"] = True
+        card["adapter"] = "pane-host"
+        card["pane"] = {
+            "host_pid": record.get("host_pid"),
+            "child_pid": record.get("child_pid"),
+            "terminal_session": record.get("terminal_session"),
+        }
+        return card
 
     view = (panes_fn or panes_bodies)(root)
     chair = None
@@ -522,6 +558,48 @@ def _record_nudge(root: Path, session_id: str, card: dict[str, Any], nudge_id: s
                 "pane_title_before": pane.get("title"), "hwnd": pane.get("hwnd"), "delivered": False})
 
 
+PANE_HOST_ACK_TIMEOUT_S = 5.0
+
+
+def _await_pane_host_ack(
+    root: Path, session_id: str, nudge_id: str,
+    *, timeout: float = PANE_HOST_ACK_TIMEOUT_S,
+    sleep_fn: Callable[[float], None] | None = None,
+    clock_fn: Callable[[], float] | None = None,
+    state_reader: Callable[[Path, str], dict[str, Any] | None] | None = None,
+) -> dict[str, Any]:
+    """Poll the host's own state row for `last_nudge.nudge_id == nudge_id`,
+    written by the host's poll loop once it has actually typed (or tried and
+    failed). A timeout is not a failure to type: it means the host has not
+    gotten to it yet, and is reported as such, never invented as a typed_at."""
+    import time as _time
+
+    sleep = sleep_fn or _time.sleep
+    clock = clock_fn or _time.monotonic
+
+    def _read(root_: Path, sid: str) -> dict[str, Any] | None:
+        path = host_state_path(root_, sid)
+        if not path.is_file():
+            return None
+        try:
+            import json as _json
+            value = _json.loads(path.read_text(encoding="utf-8-sig"))
+        except (OSError, ValueError):
+            return None
+        return value if isinstance(value, dict) else None
+
+    read = state_reader or _read
+    deadline = clock() + timeout
+    while True:
+        state = read(root, session_id) or {}
+        last = state.get("last_nudge") if isinstance(state.get("last_nudge"), dict) else None
+        if last is not None and str(last.get("nudge_id") or "") == nudge_id:
+            return {"ok": bool(last.get("ok")), "typed_at": last.get("typed_at"), "error": last.get("error")}
+        if clock() >= deadline:
+            return {"ok": False, "typed_at": None, "error": "pane host has not consumed the nudge request yet (timeout)"}
+        sleep(0.1)
+
+
 def _record_nudge_result(root: Path, session_id: str, nudge_id: str, result: dict[str, Any]) -> None:
     from .layer import hook
     ok = bool(result.get("ok"))
@@ -550,6 +628,9 @@ def nudge_seat(
     walk_adapter: WtWalkAdapter | None = None,
     idle_chairs_fn: IdleChairsFn | None = None,
     force: bool = False,
+    host_records_fn: HostRecordsFn | None = None,
+    pid_alive_fn: PidAliveFn | None = None,
+    ack_fn: Callable[[Path, str, str], dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Identify, then (unless dry_run) consent, then wake. Never delivered=true.
 
@@ -564,6 +645,7 @@ def nudge_seat(
     card = identify_target(
         root, session_id,
         panes_fn=panes_fn, windows_fn=windows_fn, target=target, leader_fn=leader_fn,
+        host_records_fn=host_records_fn, pid_alive_fn=pid_alive_fn,
     )
     card["dry_run"] = bool(dry_run)
     if not card.get("ok"):
@@ -692,6 +774,13 @@ def nudge_seat(
         _record_nudge(root, session_id, card, nudge_id, typed, tagged)
         result = sender(pane_info, typed)
         return _finish(dict(result), "wt-sendinput failed: ")
+
+    if adapter == "pane-host":
+        _record_nudge(root, session_id, card, nudge_id, typed, tagged)
+        request_nudge(root, session_id, text=typed, nudge_id=nudge_id, consent=consent)
+        ack = ack_fn(root, session_id, nudge_id) if ack_fn else _await_pane_host_ack(root, session_id, nudge_id)
+        card["typed_at"] = ack.get("typed_at")
+        return _finish(ack, "pane-host nudge failed: ")
 
     card["ok"] = False
     card["reason"] = "no adapter to run"

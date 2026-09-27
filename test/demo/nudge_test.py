@@ -1,4 +1,5 @@
 """nudge --seat: proven pane + consent + exact keys; delivery=nudged never delivered."""
+import json
 import os
 import sys
 import tempfile
@@ -12,6 +13,7 @@ from convoy.consent import grant_consent
 from convoy.convoy import bind, ensure_id, seat
 from convoy.mcp_http import TOOLS, _WRITE_TOOLS, call_tool
 from convoy.nudge import WAKE_EVIDENCE, identify_target, nudge_seat
+from convoy.pane_host import host_state_path, nudge_request_path
 
 
 def _panes(sid, bodies, *, duplicate=False, live=True, live_reason="matched 1 body/bodies"):
@@ -281,6 +283,138 @@ class NudgeSeat(unittest.TestCase):
             self.assertIn("command", row)
             self.assertIn("observed", row)
             self.assertIn("ts", row)
+
+
+class PaneHostNudge(unittest.TestCase):
+    """`panes` can never place a claude body (no process
+    cwd on this OS, and a busy pane's title is its own prompt), so the
+    window-title path above refuses every claude neuron at its prompt. The
+    pane host already proved this exact body at launch; a running host
+    record wins outright and needs no window at all."""
+
+    def setUp(self):
+        self.root = Path(tempfile.mkdtemp())
+        ensure_id(self.root)
+        bind(self.root, "nudge-host-t")
+        self.wt = Path(tempfile.mkdtemp()) / "demo-wt-host"
+        self.wt.mkdir()
+        seat(self.root, "claude", "host-fixture", worktree=str(self.wt), title="host-fixture")
+        self.no_body = _panes("host-fixture", [], live=False, live_reason="no claude process could be placed")
+
+    def _write_host_state(self, *, status="running", host_pid=4242, child_pid=5252, terminal_session="term-1"):
+        path = host_state_path(self.root, "host-fixture")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({
+            "session_id": "host-fixture", "status": status,
+            "host_pid": host_pid, "child_pid": child_pid,
+            "terminal_session": terminal_session,
+        }), encoding="utf-8")
+        return path
+
+    def test_running_pane_host_record_identifies_even_when_panes_and_windows_find_nothing(self):
+        self._write_host_state()
+        card = identify_target(
+            self.root, "host-fixture",
+            panes_fn=self.no_body, windows_fn=_windows(), leader_fn=lambda: {"available": False},
+            pid_alive_fn=lambda _pid: True,
+        )
+        self.assertTrue(card["identified"], card)
+        self.assertEqual(card["adapter"], "pane-host")
+        self.assertEqual(card["pane"], {"host_pid": 4242, "child_pid": 5252, "terminal_session": "term-1"})
+
+    def test_no_running_host_record_falls_back_to_the_old_refusal(self):
+        card = identify_target(
+            self.root, "host-fixture",
+            panes_fn=self.no_body, windows_fn=_windows(), leader_fn=lambda: {"available": False},
+            pid_alive_fn=lambda _pid: True,
+        )
+        self.assertFalse(card["identified"])
+        self.assertNotEqual(card.get("adapter"), "pane-host")
+
+    def test_dead_host_pid_is_not_a_running_record(self):
+        self._write_host_state()
+        card = identify_target(
+            self.root, "host-fixture",
+            panes_fn=self.no_body, windows_fn=_windows(), leader_fn=lambda: {"available": False},
+            pid_alive_fn=lambda _pid: False,
+        )
+        self.assertFalse(card["identified"])
+        self.assertNotEqual(card.get("adapter"), "pane-host")
+
+    def test_exited_host_status_is_not_a_running_record(self):
+        self._write_host_state(status="child-exited")
+        card = identify_target(
+            self.root, "host-fixture",
+            panes_fn=self.no_body, windows_fn=_windows(), leader_fn=lambda: {"available": False},
+            pid_alive_fn=lambda _pid: True,
+        )
+        self.assertFalse(card["identified"])
+
+    def test_pane_host_route_without_consent_asks_and_names_it(self):
+        self._write_host_state()
+        card = nudge_seat(
+            self.root, "host-fixture", keys="drain your inbox and continue",
+            panes_fn=self.no_body, windows_fn=_windows(), leader_fn=lambda: {"available": False},
+            pid_alive_fn=lambda _pid: True,
+        )
+        self.assertFalse(card["ok"])
+        self.assertEqual(card["state"], "awaiting-user-consent")
+        prompt = card["consent_request"]["prompt"]
+        self.assertIn("pane-host", prompt)
+        self.assertIn("4242", prompt)
+        self.assertIn("drain your inbox and continue", prompt)
+
+    def test_pane_host_route_types_with_consent_and_reports_typed_at(self):
+        self._write_host_state()
+        seen = []
+
+        def fake_ack(root, session_id, nudge_id):
+            seen.append((str(root), session_id, nudge_id))
+            return {"ok": True, "typed_at": "2026-09-21T16:20:00Z", "error": None}
+
+        waiting = nudge_seat(
+            self.root, "host-fixture", keys="drain your inbox and continue",
+            panes_fn=self.no_body, windows_fn=_windows(), leader_fn=lambda: {"available": False},
+            pid_alive_fn=lambda _pid: True,
+        )
+        token = grant_consent(self.root, waiting["consent_request"]["request_id"])["consent"]
+        card = nudge_seat(
+            self.root, "host-fixture", keys="drain your inbox and continue", consent=token,
+            panes_fn=self.no_body, windows_fn=_windows(), leader_fn=lambda: {"available": False},
+            pid_alive_fn=lambda _pid: True, ack_fn=fake_ack,
+        )
+        self.assertTrue(card["ok"], card)
+        self.assertEqual(card["delivery"], "nudged")
+        self.assertFalse(card["delivered"])
+        self.assertEqual(card["typed_at"], "2026-09-21T16:20:00Z")
+        self.assertEqual(len(seen), 1)
+        self.assertEqual(seen[0][1], "host-fixture")
+        self.assertEqual(seen[0][2], card["nudge_id"])
+        written = json.loads(nudge_request_path(self.root, "host-fixture").read_text(encoding="utf-8-sig"))
+        self.assertEqual(written["nudge_id"], card["nudge_id"])
+        self.assertIn("nudge=" + card["nudge_id"], written["text"])
+
+    def test_pane_host_route_reports_failure_when_host_never_acks(self):
+        self._write_host_state()
+
+        def fake_ack(root, session_id, nudge_id):
+            return {"ok": False, "typed_at": None, "error": "pane host has not consumed the nudge request yet (timeout)"}
+
+        waiting = nudge_seat(
+            self.root, "host-fixture", keys="drain your inbox and continue",
+            panes_fn=self.no_body, windows_fn=_windows(), leader_fn=lambda: {"available": False},
+            pid_alive_fn=lambda _pid: True,
+        )
+        token = grant_consent(self.root, waiting["consent_request"]["request_id"])["consent"]
+        card = nudge_seat(
+            self.root, "host-fixture", keys="drain your inbox and continue", consent=token,
+            panes_fn=self.no_body, windows_fn=_windows(), leader_fn=lambda: {"available": False},
+            pid_alive_fn=lambda _pid: True, ack_fn=fake_ack,
+        )
+        self.assertFalse(card["ok"])
+        self.assertEqual(card["delivery"], "failed")
+        self.assertIn("timeout", card["reason"])
+        self.assertIsNone(card["typed_at"])
 
 
 if __name__ == "__main__":
