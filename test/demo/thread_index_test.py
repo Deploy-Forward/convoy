@@ -18,7 +18,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 
 from convoy.cli import main
 from convoy.convoy import bind, ensure_id, seat
+from convoy.activity import neuron_id, neurons_everywhere, resolve_neuron_id
 from convoy.index import find_root, index_path, is_temp_root, list_threads, prune_threads, recent, record
+from convoy.mcp_http import _known_threads
+from convoy.origin_loop import _roots_from_index
 
 
 def _run_cli(root, *argv):
@@ -62,6 +65,34 @@ class ThreadIndex(unittest.TestCase):
         r = list_threads()[0]
         self.assertFalse(r["present"])
         self.assertEqual(r["thread"], "ghost")
+
+    def test_temp_thread_is_retained_but_not_routable_or_listed_as_neurons(self):
+        cid = ensure_id(self.root)
+        bind(self.root, "synthetic-temp-thread")
+        seat(self.root, "claude", "synthetic-temp-neuron")
+        before = index_path().read_bytes()
+        self.assertTrue(list_threads()[0]["present"])
+        self.assertTrue(is_temp_root(self.root))
+
+        with self.subTest("MCP resolver"):
+            self.assertFalse(
+                any(row["convoy_id"] == cid for row in _known_threads()),
+                "MCP thread resolution must not route through a test-temp root",
+            )
+        activity = neurons_everywhere()
+        with self.subTest("all-neurons view"):
+            self.assertFalse(
+                any(row["thread"] == "synthetic-temp-thread" for row in activity["rows"]),
+                "neurons --all must not present test-temp neurons as live user neurons",
+            )
+        with self.subTest("neuron-id routing"):
+            resolved = resolve_neuron_id(neuron_id(cid, "synthetic-temp-neuron"))
+            self.assertFalse(resolved["ok"], "a test-temp neuron must not be a routable send target")
+        with self.subTest("board origin root resolution"):
+            self.assertNotIn(self.root, _roots_from_index(),
+                             "the existing board origin loop must not select a test-temp root")
+        self.assertEqual(index_path().read_bytes(), before, "filtering must not prune existing rows")
+        self.assertTrue(list_threads()[0]["present"], "historical temp rows stay in the index")
 
     def test_present_requires_the_same_id_on_disk(self):
         ensure_id(self.root)
