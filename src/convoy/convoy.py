@@ -13,6 +13,7 @@ from .harness_contract import effort_applied, validate_effort, validate_model, v
 from .index import record as index_record
 from .layer import SCHEMA_VERSION, feed_since, hook
 from .registry import register
+from .repo import exclude_convoy_files
 from .usage import probe, surface
 
 def _id_path(root: Path) -> Path:
@@ -49,6 +50,9 @@ def ensure_id(root: Path) -> str:
     path = _id_path(root)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(cid + "\n", encoding="utf-8")
+    # The record is excluded the moment an id exists, before anything
+    # else (seat rows, later a vendor session id) lands under .convoy/.
+    exclude_convoy_files(root)
     index_record(root, cid, read_thread(root))
     return cid
 
@@ -105,8 +109,9 @@ def bind(root: Path, thread: str) -> dict[str, Any]:
     path.write_text(key + "\n", encoding="utf-8")
     md = Path(root) / "thread.md"
     md.write_text(cid + "\n" + key + "\n", encoding="utf-8")
+    excluded = exclude_convoy_files(root)
     index_record(root, cid, key)
-    return {"ok": True, "convoy_id": cid, "thread": key}
+    return {"ok": True, "convoy_id": cid, "thread": key, "excluded": excluded}
 
 def seat(
     root: Path,

@@ -36,7 +36,7 @@ from unittest import mock
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 
 from convoy.cli import main
-from convoy.convoy import read_github, read_id, read_thread
+from convoy.convoy import bind, read_github, read_id, read_thread
 from convoy.mcp_http import _WRITE_TOOLS, TOOLS, make_server
 from convoy.onboard import onboard
 from convoy.repo import checkout_path_for, clone, is_repo_url, list_repos, mint_worktrees
@@ -190,6 +190,41 @@ class Clone(unittest.TestCase):
                 checkout_path_for("https://github.com/acme")
             with self.assertRaises(ValueError):
                 checkout_path_for("https://github.com/../etc/passwd")
+
+
+class ExcludeRecord(unittest.TestCase):
+    """A checkout's .convoy/ can sit `??` untracked with an empty
+    .git/info/exclude, one `git add -A` away from a commit.
+    Every path that stamps an id excludes the record; proven by git status."""
+
+    def test_bind_writes_convoy_to_git_info_exclude(self):
+        repo = _git_repo()
+        card = bind(repo, "demo")
+        self.assertTrue(card["ok"], card)
+        self.assertTrue((repo / ".convoy" / "id").is_file())
+        self.assertTrue((repo / "thread.md").is_file())
+        status = _git("status", "--porcelain", cwd=repo).stdout
+        self.assertEqual(status.strip(), "", status)
+
+    def test_bind_on_a_minted_worktree_excludes_through_the_common_dir(self):
+        # A worktree's .git is a FILE (gitdir: ...); git reads info/exclude
+        # from the common dir. A naive <root>/.git/info write cannot exist.
+        checkout = _git_repo()
+        minted = mint_worktrees(checkout, 1, names=["neuron"])
+        self.assertTrue(minted["ok"], minted)
+        wt = Path(minted["worktrees"][0]["path"])
+        self.assertTrue((wt / ".git").is_file(), "precondition: worktree .git is a pointer file")
+        card = bind(wt, "demo")
+        self.assertTrue(card["ok"], card)
+        status = _git("status", "--porcelain", cwd=wt).stdout
+        self.assertEqual(status.strip(), "", status)
+
+    def test_bind_on_a_plain_folder_is_still_fine(self):
+        # No git at all (the tests' temp roots): nothing to exclude, no error.
+        root = Path(tempfile.mkdtemp())
+        card = bind(root, "demo")
+        self.assertTrue(card["ok"], card)
+        self.assertFalse((root / ".git").exists())
 
 
 class MintWorktrees(unittest.TestCase):

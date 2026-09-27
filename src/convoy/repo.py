@@ -97,9 +97,50 @@ def list_repos(runner: Runner | None = None, limit: int = 30) -> dict[str, Any]:
     return {"ok": True, "gh_present": True, "repos": rows, "count": len(rows)}
 
 
-def _exclude_convoy_files(dest: Path) -> bool:
-    info = dest / ".git" / "info"
-    if not info.is_dir():
+def git_common_dir(root: Path | str) -> Path | None:
+    """The directory git reads info/exclude from, or None when `root` is not a
+    checkout. A primary checkout's `.git` is that directory. A worktree's
+    `.git` is a one-line pointer file (`gitdir: <main>/.git/worktrees/<n>`)
+    and that gitdir's `commondir` file names the shared `.git`. Pure file
+    reads: bind must not spawn git to stay honest about its record."""
+    dot = Path(root) / ".git"
+    if dot.is_dir():
+        return dot
+    if not dot.is_file():
+        return None
+    try:
+        text = dot.read_text(encoding="utf-8-sig").strip()
+    except OSError:
+        return None
+    if not text.startswith("gitdir:"):
+        return None
+    gitdir = Path(text[len("gitdir:"):].strip())
+    if not gitdir.is_absolute():
+        gitdir = (Path(root) / gitdir).resolve()
+    common = gitdir / "commondir"
+    if common.is_file():
+        try:
+            rel = common.read_text(encoding="utf-8-sig").strip()
+        except OSError:
+            return gitdir
+        target = Path(rel)
+        return (gitdir / target).resolve() if not target.is_absolute() else target
+    return gitdir
+
+
+def exclude_convoy_files(root: Path | str) -> bool:
+    """Write EXCLUDE_LINES into git's per-clone ignore so `.convoy/` and
+    `thread.md` never become tracked files of the user's repo (an untracked
+    record is one `git add -A` away from a commit). True when a
+    checkout was found and the lines are present; False for a plain folder.
+    Idempotent: present lines are never duplicated."""
+    common = git_common_dir(root)
+    if common is None:
+        return False
+    info = common / "info"
+    try:
+        info.mkdir(parents=True, exist_ok=True)
+    except OSError:
         return False
     path = info / "exclude"
     text = path.read_text(encoding="utf-8-sig") if path.is_file() else ""
@@ -133,7 +174,7 @@ def clone(url: str, dest: Path | str, runner: Runner | None = None) -> dict[str,
         return card
     card["ok"] = True
     card["cloned"] = True
-    card["excluded"] = _exclude_convoy_files(target)
+    card["excluded"] = exclude_convoy_files(target)
     return card
 
 
@@ -168,6 +209,7 @@ def mint_worktrees(checkout: Path | str, n: int, names: list[str] | None = None,
         branch = "convoy/" + name
         row = {"name": name, "path": str(path), "branch": branch, "created": False}
         if (path / ".git").exists():
+            row["excluded"] = exclude_convoy_files(path)
             card["worktrees"].append(row)
             continue
         try:
@@ -179,6 +221,10 @@ def mint_worktrees(checkout: Path | str, n: int, names: list[str] | None = None,
             card["error"] = "git worktree add exited " + str(r.returncode) + ": " + (r.stderr or "").strip()
             return card
         row["created"] = True
+        # A worktree shares the checkout's info/exclude through its common
+        # dir; writing it per seat keeps crew honest when the checkout was
+        # bound before this rule existed.
+        row["excluded"] = exclude_convoy_files(path)
         card["worktrees"].append(row)
     card["ok"] = True
     return card
