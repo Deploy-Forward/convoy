@@ -19,7 +19,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 from convoy.cli import main
 from convoy.convoy import bind, ensure_id, seat
 from convoy.activity import neuron_id, neurons_everywhere, resolve_neuron_id
-from convoy.index import find_root, index_path, is_temp_root, list_threads, prune_threads, recent, record
+from convoy.index import find_root, index_path, is_temp_root, list_threads, prune_threads, recent, record, set_hidden
 from convoy.mcp_http import _known_threads, _resolve_root
 from convoy.origin_loop import _roots_from_index
 from convoy.local_install import _known_roots
@@ -119,6 +119,31 @@ class ThreadIndex(unittest.TestCase):
         self.assertTrue(any(row["thread"] == "synthetic-durable-thread"
                             for row in neurons_everywhere()["rows"]))
 
+    def test_hidden_durable_thread_is_routable_but_absent_from_views(self):
+        keep = self._durable_root()
+        cid = ensure_id(keep)
+        bind(keep, "synthetic-hidden-thread")
+        worktree = Path(tempfile.mkdtemp())
+        seat(keep, "codex", "synthetic-hidden-neuron", worktree=str(worktree))
+        self.assertTrue(set_hidden(cid, True)["ok"])
+
+        self.assertNotIn(cid, {row["convoy_id"] for row in _known_threads()})
+        self.assertNotIn(cid, {row["convoy_id"] for row in recent(20)})
+        self.assertFalse(any(row["thread"] == "synthetic-hidden-thread"
+                             for row in neurons_everywhere()["rows"]))
+        self.assertFalse(any(row["root"] == str(keep) for row in _known_roots()))
+
+        self.assertIn(keep, _roots_from_index(), "hidden must not disable board delivery")
+        self.assertEqual(root_for(worktree), keep)
+        self.assertEqual(_resolve_root(None, {"convoy_id": cid}), keep.resolve())
+        self.assertTrue(resolve_neuron_id(neuron_id(cid, "synthetic-hidden-neuron"))["ok"])
+
+        out = self.root / "hidden-graph.html"
+        rc, card = _run_cli(self.root, "graph", "--html", "--out", str(out))
+        self.assertEqual(rc, 0)
+        self.assertEqual(card["threads"], 1)
+        self.assertIn("synthetic-hidden-thread", out.read_text(encoding="utf-8"))
+
     def test_present_requires_the_same_id_on_disk(self):
         ensure_id(self.root)
         record(str(self.root), "cvy_other", "t1")     # index says one id, disk says another
@@ -141,10 +166,14 @@ class ThreadIndex(unittest.TestCase):
         rc, card = _run_cli(self.root, "threads")
         self.assertEqual(rc, 0)
         self.assertEqual(sorted(r["thread"] for r in card["threads"]), ["t1", "t2"])
+        self.assertEqual({r["thread"]: r.get("skip_reason") for r in card["threads"]},
+                         {"t1": "temp", "t2": "temp"})
         out = self.root / "g.html"
         rc, card = _run_cli(self.root, "graph", "--html", "--out", str(out))
         self.assertEqual(rc, 0)
         self.assertEqual(card["threads"], 1)
+        self.assertTrue(any(r["root"] == str(other) and r["reason"] == "temp"
+                            for r in card["skipped"]))
         self.assertNotIn("t2", out.read_text(encoding="utf-8"))
         rc, card = _run_cli(self.root, "graph", "--html", "--also-root", str(other), "--out", str(out))
         self.assertEqual(rc, 0)

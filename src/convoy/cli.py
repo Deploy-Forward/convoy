@@ -18,7 +18,7 @@ from .glance import build_glance, run_tray
 from .graph import build_graph, neighborhood
 from .graph_html import render_html, resume_neuron
 from .identity import ensure_inbox_hooks, install_neuron_identity
-from .index import find_root, index_path, list_threads, prune_threads
+from .index import find_root, index_path, list_threads, prune_threads, routable_threads
 from .activity import neuron_activity
 from .panes import bodies, identify
 from .provenance import build_provenance, rebase_check, record_commit
@@ -656,8 +656,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.cmd == "graph":
         if args.html:
-            from .index import discoverable_threads
-            known = [Path(r["root"]) for r in discoverable_threads()]
+            known = [Path(r["root"]) for r in routable_threads()]
             # the given root counts only when it actually carries a thread (never invent)
             roots = ([root] if read_id(root) else []) + [Path(r) for r in args.also_root]
             roots += [k for k in known if k.resolve() not in {r.resolve() for r in roots}]
@@ -665,7 +664,9 @@ def main(argv: list[str] | None = None) -> int:
             out = Path(args.out) if args.out else (root / ".convoy" / "graph.html")
             out.parent.mkdir(parents=True, exist_ok=True)
             out.write_text(render_html(threads), encoding="utf-8")
-            print(json.dumps({"ok": True, "path": str(out), "threads": len(threads)}))
+            skipped = [{"root": r.get("root"), "reason": r["skip_reason"]}
+                       for r in list_threads() if r.get("skip_reason") in {"temp", "root gone"}]
+            print(json.dumps({"ok": True, "path": str(out), "threads": len(threads), "skipped": skipped}))
             return 0
         try:
             card = neighborhood(root, args.neuron) if args.neuron else build_graph(root)

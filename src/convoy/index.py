@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
@@ -28,6 +29,22 @@ def home_dir() -> Path:
     lives here, and so does any process that must run somewhere that belongs
     to Convoy rather than to a chair (the usage probe)."""
     home = os.environ.get("CONVOY_HOME")
+    main = sys.modules.get("__main__")
+    if getattr(getattr(main, "__spec__", None), "name", None) == "unittest.__main__":
+        # Direct `python -m unittest discover -s test/demo` imports test
+        # modules as top-level names and bypasses their package initializers.
+        # Its home must be safe even when checkout-local sitecustomize was not
+        # imported at interpreter startup (no PYTHONPATH).
+        try:
+            resolved = Path(home).resolve() if home else None
+            temp_root = Path(tempfile.gettempdir()).resolve()
+            throwaway = bool(resolved and resolved != temp_root
+                             and resolved.is_relative_to(temp_root))
+        except (OSError, ValueError):
+            throwaway = False
+        if not throwaway:
+            home = tempfile.mkdtemp(prefix="convoy-test-home-")
+            os.environ["CONVOY_HOME"] = home
     return Path(home) if home else Path.home() / ".convoy"
 
 
@@ -115,19 +132,32 @@ def list_threads() -> list[dict[str, Any]]:
     for r in _load():
         root = Path(str(r.get("root") or ""))
         present = bool(r.get("root")) and _disk_id(root) == r.get("convoy_id")
-        out.append({**{k: r.get(k) for k in FIELDS}, "present": present})
+        skip_reason = ("root gone" if not present else
+                       "temp" if is_temp_root(root) else
+                       "hidden" if r.get("hidden") else None)
+        out.append({**{k: r.get(k) for k in FIELDS}, "present": present,
+                    "skip_reason": skip_reason})
     out.sort(key=lambda r: str(r.get("updated_at") or ""), reverse=True)
     return out
 
 
+def is_routable_thread(row: dict[str, Any]) -> bool:
+    """Present, non-Temp threads route even when hidden from pickers."""
+    return bool(row.get("present") and not is_temp_root(str(row.get("root") or "")))
+
+
+def routable_threads() -> list[dict[str, Any]]:
+    """Index-backed routing only; hidden is a view preference, not a deny."""
+    return [r for r in list_threads() if is_routable_thread(r)]
+
+
 def is_discoverable_thread(row: dict[str, Any]) -> bool:
-    """A row safe for implicit discovery, without changing the raw index."""
-    return bool(row.get("present") and not row.get("hidden")
-                and not is_temp_root(str(row.get("root") or "")))
+    """A row visible in implicit lists and pickers, not all routable rows."""
+    return bool(is_routable_thread(row) and not row.get("hidden"))
 
 
 def discoverable_threads() -> list[dict[str, Any]]:
-    """Present user threads for implicit discovery and routing.
+    """Present user threads for implicit views and pickers.
 
     Keep list_threads() lossless for audit and explicit-root operations; old
     Temp rows remain in the index until a person explicitly prunes them.

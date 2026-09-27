@@ -652,7 +652,7 @@ del _t, _props, _k, _v
 
 
 def _known_threads() -> list[dict[str, Any]]:
-    """Present, unhidden threads from the machine index: what `threads` lists and what a call may name."""
+    """Present, unhidden threads for implicit choices; hidden roots still route."""
     from .index import discoverable_threads
     out = []
     for t in discoverable_threads():
@@ -667,14 +667,15 @@ def _resolve_root(bound: Path | None, args: dict[str, Any]) -> Path | dict[str, 
     want_t = _opt_str(args, "thread")
     want_id = _opt_str(args, "convoy_id")
     if want_t or want_id:
-        for t in _known_threads():
+        from .index import routable_threads
+        for t in routable_threads():
             if (want_t and str(t.get("thread")) == want_t) or (want_id and str(t.get("convoy_id")) == want_id):
                 return Path(str(t["root"])).resolve()
         if bound is not None and want_id and read_id(bound) == want_id:
             return bound
         if bound is not None and want_t and read_thread(bound) == want_t:
             return bound
-        return {"ok": False, "error": "no thread named " + str(want_t or want_id) + " on this origin (unknown, hidden, or its root is gone); see the `threads` tool",
+        return {"ok": False, "error": "no thread named " + str(want_t or want_id) + " on this origin (unknown, Temp, or its root is gone); see the `threads` tool",
                 "threads": _known_threads()}
     if bound is not None:
         return bound

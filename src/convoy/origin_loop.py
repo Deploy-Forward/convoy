@@ -38,7 +38,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from .convoy import list_seats, read_id, read_thread
-from .index import discoverable_threads, home_dir
+from .index import routable_threads, home_dir
 from .pulse import chair_reachable, pulse_is_fresh, read_pulse
 from .report import ReportClient, Revoked, Transient
 from .wait import read_wait_file
@@ -234,7 +234,7 @@ class Outbox:
 
 def _roots_from_index() -> list[Path]:
     out = []
-    for row in discoverable_threads():
+    for row in routable_threads():
         root = str(row.get("root") or "").strip()
         if root and Path(root).is_dir():
             out.append(Path(root))

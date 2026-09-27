@@ -151,11 +151,11 @@ def resolve_neuron_id(nid: str) -> dict[str, Any]:
     """{ok, root, thread, convoy_id, session_id, to} for one short id, or an
     error naming the verb that lists them. Two chairs sharing six hex digits is
     reported as ambiguous, never guessed."""
-    from .index import discoverable_threads
+    from .index import routable_threads
     from .convoy import list_seats
     want = str(nid or "").strip().lower()
     hits: list[dict[str, Any]] = []
-    for t in discoverable_threads():
+    for t in routable_threads():
         root = Path(str(t.get("root")))
         cid = t.get("convoy_id")
         try:

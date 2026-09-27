@@ -50,18 +50,26 @@ class TestHomeIsolationContract(unittest.TestCase):
         )
 
     def test_direct_discovery_guards_home_before_loading_modules(self):
-        # Discover only. The start-directory form can load modules as top-level
-        # names without importing test.demo/__init__.py first.
-        code = (
-            "import json, os, sys, unittest\n"
-            "unittest.defaultTestLoader.discover('test/demo', pattern='resume_from_store_test.py')\n"
-            "print(json.dumps({'home': os.environ.get('CONVOY_HOME'), "
-            "'package_imported': 'test.demo' in sys.modules}))\n"
-        )
-        result = self._probe(code, home=None)
-        home = result["home"]
-        self.assertIsInstance(home, str, "direct discovery must establish a safe home before loading tests")
-        self.assertTrue(Path(home).resolve().is_relative_to(Path(tempfile.gettempdir()).resolve()))
+        # No PYTHONPATH: a checkout-local sitecustomize is not loaded before
+        # plain `python -m unittest discover -s test/demo` starts.
+        for home in (None, str(ROOT / "convoy-isolation-sentinel-never-create")):
+            with self.subTest(home=home):
+                env = os.environ.copy()
+                env.pop("PYTHONPATH", None)
+                env["PYTHONNOUSERSITE"] = "1"
+                if home is None:
+                    env.pop("CONVOY_HOME", None)
+                else:
+                    env["CONVOY_HOME"] = home
+                completed = subprocess.run(
+                    [sys.executable, "-m", "unittest", "discover", "-s", "test/demo",
+                     "-p", "home_discovery_probe.py"],
+                    cwd=ROOT, env=env, capture_output=True, text=True,
+                    timeout=30, stdin=subprocess.DEVNULL,
+                )
+                self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+                if home is not None:
+                    self.assertFalse(Path(home).exists())
 
 
 if __name__ == "__main__":

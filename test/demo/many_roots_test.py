@@ -102,12 +102,14 @@ class UnboundOriginServesEveryThread(_Threads):
         card2 = _payload(_rpc(url, "tools/call", {"name": "replies", "arguments": {"thread": "beta"}}))
         self.assertEqual(card2["thread"], "beta")
 
-    def test_unknown_and_hidden_threads_are_refused_by_name(self):
+    def test_unknown_is_refused_but_hidden_thread_remains_routable_by_name(self):
         url = self._serve(None)
-        for name in ("nope", "gamma"):
-            r = _rpc(url, "tools/call", {"name": "feed", "arguments": {"thread": name}})
-            self.assertTrue(r["result"]["isError"], name)
-            self.assertIn(name, _payload(r)["error"])
+        unknown = _rpc(url, "tools/call", {"name": "feed", "arguments": {"thread": "nope"}})
+        self.assertTrue(unknown["result"]["isError"])
+        self.assertIn("nope", _payload(unknown)["error"])
+        hidden = _rpc(url, "tools/call", {"name": "feed", "arguments": {"thread": "gamma"}})
+        self.assertFalse(hidden["result"]["isError"], hidden)
+        self.assertEqual(_payload(hidden)["thread"], "gamma")
 
     def test_every_tool_schema_carries_thread_and_convoy_id(self):
         from convoy.mcp_http import TOOLS
