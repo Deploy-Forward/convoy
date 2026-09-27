@@ -1,3 +1,5 @@
+import json
+import os
 import sys
 import tempfile
 import unittest
@@ -171,6 +173,60 @@ class Phase5Usage(unittest.TestCase):
         self.assertIn("refuse wrapper target", card["error"])
         self.assertNotIn("two agents on one branch", card["error"])
         self.assertEqual(spawned["n"], 0)
+
+
+class SeatRollout(unittest.TestCase):
+    """The chair's quota comes from the chair's OWN rollout.
+
+    `codex_rollout_rate_limits` answers "what does this machine's freshest
+    login say", which is the right question for a machine surface and the
+    wrong one for a seat: several codex chairs on one machine share a directory,
+    and the newest file belongs to whichever chair spoke last. A number read
+    off another chair's conversation is not this chair's quota, and blocking a
+    turn on it would be blocking on a stranger.
+
+    The seat's own `resume` id names its rollout file. No id, no reading -
+    null until observed, never a guess by recency.
+    """
+
+    def setUp(self):
+        self.home = Path(tempfile.mkdtemp(prefix="codex-home-"))
+        self.sessions = self.home / "sessions" / "2026" / "09" / "17"
+        self.sessions.mkdir(parents=True)
+
+    def _rollout(self, session_id, snapshots):
+        path = self.sessions / ("rollout-2026-09-17T10-00-00-" + session_id + ".jsonl")
+        lines = []
+        for ts, sp, wp in snapshots:
+            lines.append(json.dumps({
+                "timestamp": ts,
+                "payload": {"type": "token_count", "rate_limits": {
+                    "primary": {"used_percent": sp, "resets_at": 1789000000, "window_minutes": 300},
+                    "secondary": {"used_percent": wp, "resets_at": 1789500000, "window_minutes": 10080},
+                }},
+            }))
+        path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        return path
+
+    def test_codex_rate_limits_read_from_seat_rollout_not_newest(self):
+        mine = "11111111-1111-1111-1111-111111111111"
+        theirs = "22222222-2222-2222-2222-222222222222"
+        self._rollout(mine, [("2026-09-17T12:00:00Z", 10, 3), ("2026-09-17T13:00:00Z", 96, 40)])
+        newest = self._rollout(theirs, [("2026-09-17T15:00:00Z", 4, 1)])
+        os.utime(newest, (2_000_000_000, 2_000_000_000))   # by recency this one wins
+
+        got = usage.rollout_rate_limits_for_session(mine, home=self.home)
+        self.assertEqual(got["session_pct"], 96, "the LAST snapshot of MY rollout, not the first")
+        self.assertEqual(got["week_pct"], 40)
+        self.assertEqual(got["as_of"], "2026-09-17T13:00:00Z")
+        self.assertEqual(got["window_minutes"], {"session": 300, "week": 10080})
+        self.assertNotIn(mine, json.dumps(got), "a vendor session id never rides out of the reader")
+
+    def test_no_session_id_is_null_never_the_newest_file(self):
+        self._rollout("22222222-2222-2222-2222-222222222222", [("2026-09-17T15:00:00Z", 4, 1)])
+        self.assertIsNone(usage.rollout_rate_limits_for_session(None, home=self.home))
+        self.assertIsNone(usage.rollout_rate_limits_for_session("", home=self.home))
+        self.assertIsNone(usage.rollout_rate_limits_for_session("no-such-session", home=self.home))
 
 
 if __name__ == "__main__":

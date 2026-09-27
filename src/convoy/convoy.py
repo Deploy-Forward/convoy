@@ -377,6 +377,48 @@ def update_seat(root: Path, session_id: str, **changes: Any) -> dict[str, Any]:
     return updated
 
 
+def observe_resume(root: Path, session_id: str, vendor_id: Any, *, to: str | None = None) -> dict[str, Any] | None:
+    """Stamp the vendor session id the harness itself just reported, onto the
+    seat that has none. Returns the updated row, or None when nothing changed.
+
+    Null until observed. Convoy has held this id in its hand at every Stop
+    since the beginning and dropped it on purpose - the rule was written for
+    the FEED and is right for the feed (`end.py` hashes it and never writes
+    it), but nobody wrote the seat-side counterpart, so every seat row
+    carried resume null and every relaunch booted a first run.
+
+    Two refusals make this safe. An existing id is never overwritten: a second
+    hook from the same life must not churn the row, and a later life's id
+    arrives through a launch, not through here. And the source is always the
+    harness's own payload for THIS chair, matched by cwd - never the newest
+    file in a log directory, which is often one of Convoy's own `/usage`
+    probe stubs.
+    """
+    sid = str(session_id or "").strip()
+    value = vendor_id.strip() if isinstance(vendor_id, str) else ""
+    if not sid or not value:
+        return None
+    row = None
+    for r in list_seats(root, require_session=True):
+        if r.get("session_id") == sid:
+            row = r
+    if row is None:
+        return None
+    if str(row.get("resume") or "").strip():
+        return None
+    harness = str(row.get("to") or "").strip()
+    if not harness:
+        return None
+    if to is not None and str(to).strip() and str(to).strip() != harness:
+        # The payload came from a different harness than the chair sits on.
+        # A token bound to the wrong harness is exactly what resume_for
+        # exists to refuse; do not create one.
+        return None
+    # update_seat derives resume_for from the row's own harness, which is the
+    # binding resume_target checks.
+    return update_seat(root, sid, resume=value)
+
+
 def lookup_resume(root: Path, thread: str, to: str, worktree: str | None = None) -> str | None:
     """Return stored vendor resume id for thread+to(+worktree when provided)."""
     cid = read_id(root)

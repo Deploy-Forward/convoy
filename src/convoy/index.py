@@ -23,10 +23,16 @@ from typing import Any
 FIELDS = ("convoy_id", "thread", "root", "updated_at", "hidden")
 
 
-def index_path() -> Path:
+def home_dir() -> Path:
+    """$CONVOY_HOME, else ~/.convoy. The machine's own directory: the index
+    lives here, and so does any process that must run somewhere that belongs
+    to Convoy rather than to a chair (the usage probe)."""
     home = os.environ.get("CONVOY_HOME")
-    base = Path(home) if home else Path.home() / ".convoy"
-    return base / "threads.json"
+    return Path(home) if home else Path.home() / ".convoy"
+
+
+def index_path() -> Path:
+    return home_dir() / "threads.json"
 
 
 def is_temp_root(root: str | Path) -> bool:

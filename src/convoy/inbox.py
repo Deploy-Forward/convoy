@@ -18,7 +18,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator
 
-from .convoy import list_seats
+from .convoy import list_seats, observe_resume
 from .index import find_root
 from .layer import utc_now
 
@@ -306,31 +306,39 @@ def write_root_pointer(worktree: Path, root: Path) -> None:
         dest.write_text(text, encoding="utf-8")
 
 
-def _hook_event_from_stdin() -> str:
-    event = "PreToolUse"
+def _hook_payload_from_stdin() -> dict[str, Any]:
+    """The harness's hook payload, or {}. Read ONCE per process: stdin is a
+    stream, not a file, and a second read returns nothing."""
     stdin = getattr(sys, "stdin", None)
     if stdin is None:
-        return event
+        return {}
     try:
         if stdin.isatty():
-            return event
+            return {}
     except (OSError, ValueError):
-        return event
+        return {}
     try:
         raw = stdin.read()
     except OSError:
-        return event
+        return {}
     if not (raw or "").strip():
-        return event
+        return {}
     try:
         payload = json.loads(raw)
     except json.JSONDecodeError:
-        return event
-    if isinstance(payload, dict):
-        name = payload.get("hook_event_name") or payload.get("hookEventName")
-        if isinstance(name, str) and name.strip():
-            return name.strip()
-    return event
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _hook_event_name(payload: dict[str, Any] | None) -> str:
+    name = (payload or {}).get("hook_event_name") or (payload or {}).get("hookEventName")
+    if isinstance(name, str) and name.strip():
+        return name.strip()
+    return "PreToolUse"
+
+
+def _hook_event_from_stdin() -> str:
+    return _hook_event_name(_hook_payload_from_stdin())
 
 
 USAGE_ROW_MIN_S = 300.0
@@ -352,6 +360,7 @@ def stamp_usage_row(root: Path, session_id: str, harness: str, *, probe_fn=None,
     require_source=True skips the row when the vendor gave no reading (a
     launch heartbeat must not write "unknown" rows)."""
     from datetime import datetime, timezone
+    from .index import home_dir
     from .layer import hook, utc_now
     from .usage import probe, surface
     stamp = now or utc_now()
@@ -364,9 +373,31 @@ def stamp_usage_row(root: Path, session_id: str, harness: str, *, probe_fn=None,
                 return None
         except ValueError:
             pass
-    got = (probe_fn or probe)(harness)
+    if probe_fn is not None:
+        got = probe_fn(harness)
+    else:
+        # From CONVOY_HOME, never from the chair's worktree. The probe
+        # shells out to the harness, and `claude -p /usage` leaves a stub
+        # session record in whatever directory it runs in; run from the
+        # chair's worktree, the stubs pile up in its project directory.
+        home = home_dir()
+        try:
+            home.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            pass
+        got = probe(harness, cwd=home if home.is_dir() else None)
     if require_source and not got.get("source"):
         return None
+    # A reading the vendor has not restamped is the same reading, and writing
+    # it again says the quota moved when it did not. The numbers are compared
+    # too: as_of alone would hide a reading that DID move under a stamp the
+    # vendor forgot to bump, and a hidden number is worse than a repeated one.
+    if prev is not None and got.get("as_of") and prev.get("as_of") == got.get("as_of"):
+        same = (prev.get("session_pct") == got.get("session_pct")
+                and prev.get("week_pct") == got.get("week_pct")
+                and bool(prev.get("limited")) == bool(got.get("limited")))
+        if same:
+            return None
     view = surface(harness, got)
     extra = {"harness": harness, "stamped_at": stamp,
              "session_pct": view.get("session_pct"), "week_pct": view.get("week_pct"),
@@ -377,50 +408,10 @@ def stamp_usage_row(root: Path, session_id: str, harness: str, *, probe_fn=None,
     return hook(root, "usage", text, instance_id=session_id, author=session_id, extra=extra)
 
 
-def hook_pretooluse(cwd: str | Path | None = None) -> dict[str, Any]:
-    """Drain this worktree's inbox into a PreToolUse/UserPromptSubmit card.
-
-    Same JSON for Grok and Claude: allowing-hook additionalContext. Honest
-    limit: mid-turn / turn-start, never idle-wake.
-    """
-    start = Path(cwd) if cwd is not None else Path.cwd()
-    root = resolve_root(start) or start
-    matches = seats_for_worktree(root, start)
-    if len(matches) > 1:
-        chairs = [str(r.get("session_id") or "") for r in matches]
-        event = _hook_event_from_stdin()
-        ctx = (
-            "Convoy inbox refuse (C8): cwd " + str(start) +
-            " matches more than one chair (" + ", ".join(chairs) +
-            "). Drain none rather than guess. Each chair needs its own worktree."
-        )
-        return {
-            "hookSpecificOutput": {
-                "hookEventName": event,
-                "additionalContext": ctx,
-            }
-        }
-    seat = matches[0] if matches else None
-    sid = str((seat or {}).get("session_id") or "").strip()
-    event = _hook_event_from_stdin()
-    if event == "PostToolUse" and sid:
-        # A user may log in with another account when usage
-        # is low, so the meter is per PANE, not per machine. After a tool
-        # call the pane stamps its OWN vendor reading (the snapshot its login
-        # produced) as kind=usage, at most every USAGE_ROW_MIN_S. The widget
-        # reads it per chair. Never a number the vendor did not give.
-        try:
-            stamp_usage_row(root, sid, str((seat or {}).get("to") or ""))
-        except Exception:  # a usage stamp must never break a hook
-            pass
-    messages = drain(root, sid) if sid else []
-    if not messages:
-        # An empty object is the only universally safe no-op. A top-level
-        # "decision" is the LEGACY approve|block field: Claude Code rejects
-        # "allow" outright ("Hook JSON output validation failed", seen
-        # live in a pane), and a context-adding hook has no
-        # business voting on permissions at all.
-        return {}
+def delivery_context(messages: list[dict[str, Any]]) -> str:
+    """The rows as one framed body, bounded. The only place this text is
+    built: the Stop block and the context card must read identically, and
+    Claude's Stop path (end.py) needs the same framing Grok's already had."""
     chunks = []
     for item in messages:
         label = item.get("label") or "synapse"
@@ -435,14 +426,93 @@ def hook_pretooluse(cwd: str | Path | None = None) -> dict[str, Any]:
     )
     if len(context) > 10000:
         context = context[:9997] + "..."
-    if event == "Stop":
-        # grok-build 10-hooks.md: a Stop hook may return decision=block and
-        # the reason is fed to the model as a user message, keeping the turn
-        # alive. So a neuron never goes idle while rows are waiting: the
-        # queue is the reason to keep working. (Without it a chair sat idle
-        # with rows waiting, because PreToolUse only fires while the agent
-        # is already using tools.)
-        return {"decision": "block", "reason": context}
+    return context
+
+
+def stop_block(root: Path, session_id: str) -> dict[str, Any] | None:
+    """The Stop-hook block for a chair with rows waiting, or None.
+
+    grok-build 10-hooks.md: a Stop hook may return decision=block and the
+    reason is fed to the model as a user message, keeping the turn alive. So a
+    neuron never goes idle while rows are waiting: the queue is the reason to
+    keep working. Grok had this first (without it a chair sat idle with rows
+    waiting, because PreToolUse only fires while the agent is already using
+    tools); Claude and Codex reach it through end.py, which is where their
+    Stop hook lands.
+
+    Draining here is deliberate: a block that re-served the same rows at every
+    Stop would be a loop, not a delivery.
+    """
+    sid = str(session_id or "").strip()
+    if not sid:
+        return None
+    messages = drain(root, sid)
+    if not messages:
+        return None
+    return {"decision": "block", "reason": delivery_context(messages)}
+
+
+def hook_pretooluse(cwd: str | Path | None = None) -> dict[str, Any]:
+    """Drain this worktree's inbox into a PreToolUse/UserPromptSubmit card.
+
+    Same JSON for Grok and Claude: allowing-hook additionalContext. Honest
+    limit: mid-turn / turn-start, never idle-wake.
+    """
+    start = Path(cwd) if cwd is not None else Path.cwd()
+    root = resolve_root(start) or start
+    # Read the payload once: stdin is a stream and the second read is empty.
+    payload = _hook_payload_from_stdin()
+    matches = seats_for_worktree(root, start)
+    if len(matches) > 1:
+        chairs = [str(r.get("session_id") or "") for r in matches]
+        event = _hook_event_name(payload)
+        ctx = (
+            "Convoy inbox refuse (C8): cwd " + str(start) +
+            " matches more than one chair (" + ", ".join(chairs) +
+            "). Drain none rather than guess. Each chair needs its own worktree."
+        )
+        return {
+            "hookSpecificOutput": {
+                "hookEventName": event,
+                "additionalContext": ctx,
+            }
+        }
+    seat = matches[0] if matches else None
+    sid = str((seat or {}).get("session_id") or "").strip()
+    event = _hook_event_name(payload)
+    if sid:
+        # Every Grok and Claude hook payload carries the session id, and
+        # Grok also exports GROK_SESSION_ID (user guide 10-hooks.md:256, :492).
+        # Stamp it on the chair this cwd matched. Null until observed; an id
+        # already on the row is never overwritten, and the feed never sees it.
+        observed = payload.get("session_id") or payload.get("sessionId")
+        if not observed and str((seat or {}).get("to") or "").strip().startswith("grok"):
+            observed = os.environ.get("GROK_SESSION_ID")
+        try:
+            observe_resume(root, sid, observed, to=str((seat or {}).get("to") or ""))
+        except Exception:   # an id stamp must never break a hook
+            pass
+    if event == "PostToolUse" and sid:
+        # A user may log in with another account when usage
+        # is low, so the meter is per PANE, not per machine. After a tool
+        # call the pane stamps its OWN vendor reading (the snapshot its login
+        # produced) as kind=usage, at most every USAGE_ROW_MIN_S. The widget
+        # reads it per chair. Never a number the vendor did not give.
+        try:
+            stamp_usage_row(root, sid, str((seat or {}).get("to") or ""))
+        except Exception:  # a usage stamp must never break a hook
+            pass
+    messages = drain(root, sid) if sid else []
+    if messages and event == "Stop":
+        return {"decision": "block", "reason": delivery_context(messages)}
+    if not messages:
+        # An empty object is the only universally safe no-op. A top-level
+        # "decision" is the LEGACY approve|block field: Claude Code rejects
+        # "allow" outright ("Hook JSON output validation failed", seen
+        # live in a pane), and a context-adding hook has no
+        # business voting on permissions at all.
+        return {}
+    context = delivery_context(messages)
     return {
         "hookSpecificOutput": {
             "hookEventName": event,

@@ -293,8 +293,11 @@ class HappyPath(unittest.TestCase):
         # the pane's hook resolves its thread root the way a live pane does
         # (pointer or CONVOY_ROOT); the fake spawn wrote no pointer here.
         env = mock.patch.dict(os.environ, {"CONVOY_ROOT": str(self.root)}); env.start(); self.addCleanup(env.stop)
-        # nothing waiting: Stop returns the safe no-op, never a block
-        with mock.patch("convoy.inbox._hook_event_from_stdin", return_value="Stop"):
+        # nothing waiting: Stop returns the safe no-op, never a block.
+        # Patch the PAYLOAD reader, not the event-name helper: hook_pretooluse reads
+        # stdin once and keeps the whole payload (the session-id capture needs it), so a
+        # mock on _hook_event_from_stdin is no longer on the path the hook takes.
+        with mock.patch("convoy.inbox._hook_payload_from_stdin", return_value={"hook_event_name": "Stop"}):
             self.assertEqual(hook_pretooluse(wt), {})
 
         # background wait: the arriving row ends the wait; the row is NOT drained by the waiter
@@ -307,7 +310,7 @@ class HappyPath(unittest.TestCase):
         self.assertEqual(self.run_cli("inbox", "--seat", sid)["n"], 1, "wait never drains")
 
         # Stop with a row waiting: block the stop, the row is the reason
-        with mock.patch("convoy.inbox._hook_event_from_stdin", return_value="Stop"):
+        with mock.patch("convoy.inbox._hook_payload_from_stdin", return_value={"hook_event_name": "Stop"}):
             out = hook_pretooluse(wt)
         self.assertEqual(out["decision"], "block")
         self.assertIn("draft tests", out["reason"])

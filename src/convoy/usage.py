@@ -18,7 +18,7 @@ _ALIASES = {
     "claude-code": "claude",
     "cursor_agent": "cursor-agent",
 }
-def _run(cmd: list[str], timeout: int = 15) -> tuple[int, str]:
+def _run(cmd: list[str], timeout: int = 15, cwd: Any = None) -> tuple[int, str]:
     kwargs: dict[str, Any] = {
         "stdout": subprocess.PIPE,
         "stderr": subprocess.PIPE,
@@ -27,6 +27,12 @@ def _run(cmd: list[str], timeout: int = 15) -> tuple[int, str]:
         "encoding": "utf-8",
         "errors": "replace",
     }
+    if cwd is not None:
+        # A harness probe inherits the caller's cwd, and the caller is a
+        # hook inside a chair's worktree. `claude -p /usage` writes a stub
+        # conversation into whatever directory it runs in, so the stubs pile
+        # up in the chair's own project directory.
+        kwargs["cwd"] = str(cwd)
     if os.name == "nt":
         kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP | quiet_spawn_kwargs()["creationflags"]
     try:
@@ -173,7 +179,10 @@ def _parse_claude(raw: str) -> tuple[Any, bool]:
     return remaining, limited
 
 
-def probe(harness: str, runner: ProbeFn | None = None) -> dict[str, Any]:
+def probe(harness: str, runner: ProbeFn | None = None, *, cwd: Any = None) -> dict[str, Any]:
+    """cwd: where a probe that shells out to a harness runs. Callers inside a
+    chair's worktree must pass CONVOY_HOME; a stub session belongs to
+    nobody, not to the chair being measured."""
     if runner is not None:
         return runner(harness)
     name = (harness or "").strip().lower()
@@ -203,7 +212,7 @@ def probe(harness: str, runner: ProbeFn | None = None) -> dict[str, Any]:
         return {"usage_remaining": None, "limited": False, "raw": None}
     if name == "claude":
         bin = shutil.which("claude") or "claude"
-        code, raw = _run([bin, "-p", "/usage"], timeout=15)
+        code, raw = _run([bin, "-p", "/usage"], timeout=15, cwd=cwd)
         remaining, limited = _parse_claude(raw)
         return {"usage_remaining": remaining, "limited": limited, "raw": raw or None, "exit_code": code}
     if name == "codex":
@@ -215,7 +224,7 @@ def probe(harness: str, runner: ProbeFn | None = None) -> dict[str, Any]:
         if snap is not None:
             return snap
         bin = shutil.which("codex") or "codex"
-        code, raw = _run([bin, "exec", "/status"], timeout=15)
+        code, raw = _run([bin, "exec", "/status"], timeout=15, cwd=cwd)
         low = (raw or "").lower()
         timed_out = code == 124 or low == "probe timeout"
         # A probe that TIMED OUT measured nothing. Unknown is null; it is not
@@ -246,6 +255,78 @@ def _find_rate_limits(node: Any, depth: int = 0) -> dict[str, Any] | None:
             if found is not None:
                 return found
     return None
+
+
+def rollout_rate_limits_for_session(session_id: Any, *, home: "Path | None" = None) -> dict[str, Any] | None:
+    """The LAST rate_limits snapshot in THE rollout this session id names.
+
+    `codex_rollout_rate_limits` below answers "what does this machine's
+    freshest login say" - the right question for a machine surface and the
+    wrong one for a seat. Every codex chair on a machine shares
+    ~/.codex/sessions, and the newest file belongs to whichever chair spoke
+    last; blocking a turn on that number is blocking a chair on a stranger's
+    quota.
+
+    No session id, no rollout, no rate_limits line: None. Null until observed,
+    never a guess by recency. The id is used to FIND the file and never rides
+    out in the result - it is a vendor secret and this reading is quoted on
+    the feed.
+    """
+    import glob
+    from datetime import datetime, timezone
+    from pathlib import Path as _P
+    sid = str(session_id or "").strip()
+    if not sid:
+        return None
+    base = _P(home) if home is not None else _P(os.environ.get("CODEX_HOME") or (_P.home() / ".codex"))
+    files = glob.glob(str(base / "sessions" / "**" / ("rollout-*" + sid + "*.jsonl")), recursive=True)
+    if not files:
+        return None
+
+    def pct(v: Any) -> int | None:
+        try:
+            x = int(round(float(v)))
+        except (TypeError, ValueError):
+            return None
+        return x if 0 <= x <= 100 else None
+
+    def at(v: Any) -> str | None:
+        try:
+            return datetime.fromtimestamp(float(v), timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        except (TypeError, ValueError, OSError):
+            return None
+
+    last: dict[str, Any] | None = None
+    for path in sorted(files):
+        try:
+            with open(path, encoding="utf-8", errors="replace") as fh:
+                for line in fh:
+                    if '"rate_limits"' not in line:
+                        continue
+                    try:
+                        row = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    rl = _find_rate_limits(row)
+                    if not rl:
+                        continue
+                    prim, sec = rl.get("primary") or {}, rl.get("secondary") or {}
+                    sp, wp = pct(prim.get("used_percent")), pct(sec.get("used_percent"))
+                    if sp is None and wp is None:
+                        continue
+                    # The LAST line wins: codex appends a fresh snapshot per
+                    # token_count, so the tail of the file is the current one.
+                    last = {
+                        "session_pct": sp, "week_pct": wp,
+                        "resets": {"session": ("at " + at(prim.get("resets_at"))) if at(prim.get("resets_at")) else None,
+                                   "week": ("at " + at(sec.get("resets_at"))) if at(sec.get("resets_at")) else None},
+                        "window_minutes": {"session": prim.get("window_minutes"), "week": sec.get("window_minutes")},
+                        "as_of": str(row.get("timestamp") or row.get("ts") or "") or None,
+                        "source": "codex rollout snapshot (this seat)",
+                    }
+        except OSError:
+            continue
+    return last
 
 
 def codex_rollout_rate_limits(home: "Path | None" = None, now: float | None = None) -> dict[str, Any] | None:

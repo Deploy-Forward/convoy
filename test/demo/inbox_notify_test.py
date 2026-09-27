@@ -314,5 +314,69 @@ class LiveSeatInbox(unittest.TestCase):
         )
 
 
+class UsageProbeHygiene(unittest.TestCase):
+    """The usage probe must not litter the chair it measures.
+
+    Every `claude -p /usage` leaves a stub session record in the directory it
+    runs in. The probe inherits
+    the caller's cwd, and the caller is a hook running inside the chair's
+    worktree, so every reading wrote a throwaway conversation into the very
+    directory a human reads to find the chair's real ones. Run it from
+    CONVOY_HOME, where a stub belongs to nobody.
+
+    And a reading that is the same reading is not news: when the vendor's own
+    as_of has not moved, the number has not moved, so the row is skipped
+    rather than restamped.
+    """
+
+    def setUp(self):
+        self.root = Path(tempfile.mkdtemp())
+        self.wt = Path(tempfile.mkdtemp())
+        self.home = Path(tempfile.mkdtemp(prefix="convoy-home-"))
+        ensure_id(self.root)
+        bind(self.root, "usage-hygiene")
+        seat(self.root, "claude", "u1", worktree=str(self.wt))
+
+    def test_usage_probe_runs_from_convoy_home_not_the_worktree(self):
+        from convoy import usage
+        from convoy.inbox import stamp_usage_row
+
+        seen = {}
+
+        def fake_run(cmd, timeout=15, cwd=None):
+            seen["cmd"] = list(cmd)
+            seen["cwd"] = cwd
+            return 0, "Current session: 12% used\nCurrent week: 30% used"
+
+        with mock.patch.dict("os.environ", {"CONVOY_HOME": str(self.home)}), \
+                mock.patch.object(usage, "_run", side_effect=fake_run):
+            stamp_usage_row(self.root, "u1", "claude")
+
+        self.assertIn("/usage", seen["cmd"])
+        self.assertEqual(Path(seen["cwd"]).resolve(), self.home.resolve(),
+                         "the probe must not write its stub into the chair's own directory")
+        self.assertNotEqual(Path(seen["cwd"]).resolve(), self.wt.resolve())
+
+    def test_usage_row_skipped_when_as_of_unchanged(self):
+        from convoy.inbox import stamp_usage_row
+
+        reading = {"usage_remaining": {"session_pct": 40, "week_pct": 10}, "session_pct": 40,
+                   "week_pct": 10, "limited": False, "raw": None,
+                   "source": "codex rollout snapshot", "as_of": "2026-09-17T16:00:00Z"}
+        first = stamp_usage_row(self.root, "u1", "codex", probe_fn=lambda _h: reading,
+                                now="2026-09-17T16:00:10.000000Z")
+        self.assertIsNotNone(first)
+        # Far past USAGE_ROW_MIN_S, so only as_of can stop this one.
+        second = stamp_usage_row(self.root, "u1", "codex", probe_fn=lambda _h: reading,
+                                 now="2026-09-17T17:00:00.000000Z")
+        self.assertIsNone(second, "the same reading is not a new reading")
+        moved = {**reading, "as_of": "2026-09-17T16:30:00Z", "session_pct": 55}
+        third = stamp_usage_row(self.root, "u1", "codex", probe_fn=lambda _h: moved,
+                                now="2026-09-17T17:10:00.000000Z")
+        self.assertIsNotNone(third, "a reading that moved is news again")
+        rows = [r for r in feed_since(self.root, "1970-01-01T00:00:00.000000Z") if r.get("kind") == "usage"]
+        self.assertEqual([r["as_of"] for r in rows], ["2026-09-17T16:00:00Z", "2026-09-17T16:30:00Z"])
+
+
 if __name__ == "__main__":
     unittest.main()

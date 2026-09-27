@@ -367,7 +367,13 @@ def main(argv: list[str] | None = None) -> int:
             # never trap the agent in a Stop loop.
             if not card.get("ok") and card.get("error"):
                 print("convoy end heartbeat: " + str(card["error"]), file=sys.stderr)
-            print("{}")
+            # end_task decides the hook protocol answer - {} for a clean
+            # stop, or decision=block with the rows to work or the quota
+            # ceiling to hand off at. Printing a hardcoded {} here is why
+            # Claude and Codex ended their turn beside a full inbox while only
+            # Grok kept working.
+            out = card.get("hook")
+            print(json.dumps(out if isinstance(out, dict) else {}))
             return 0
         print(json.dumps(card))
         return 0 if card.get("ok") else 1

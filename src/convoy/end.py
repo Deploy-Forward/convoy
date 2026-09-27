@@ -14,16 +14,28 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import subprocess
+import sys
 from pathlib import Path
 from typing import Any, Callable
 
-from .convoy import read_id
-from .inbox import _exclusive, resolve_root, seats_for_worktree
-from .layer import STAMP_MAX_CHARS, feed_path, hook
+from .convoy import observe_resume, read_id
+from .inbox import _exclusive, pending, resolve_root, seats_for_worktree, stop_block
+from .layer import STAMP_MAX_CHARS, feed_path, feed_since, hook, utc_now
+from .pulse import write_pulse
 
 
 GitRunner = Callable[..., subprocess.CompletedProcess[str]]
+
+EPOCH = "1970-01-01T00:00:00.000000Z"
+# At or above this on either window the chair stops taking new work and asks
+# for an intent handoff instead. 95 leaves room to write one.
+QUOTA_THRESHOLD_PCT = 95
+# The rolling handoff is read by a machine on relaunch, not by a human over
+# coffee: bounded, derivable, rewritten whole.
+ROLLING_HANDOFF_MAX_BYTES = 4096
+WAIT_TIMEOUT_S = 600.0
 
 
 def _one_line(value: Any, default: str) -> tuple[str, bool]:
@@ -123,6 +135,137 @@ def _git_snapshot(cwd: Path, runner: GitRunner) -> dict[str, Any]:
     }
 
 
+def _last_note(root: Path, chair: str) -> str | None:
+    """The chair's last written note. Derivable: nobody is asked for it."""
+    last = None
+    try:
+        rows = feed_since(root, EPOCH)
+    except (OSError, ValueError):
+        return None
+    for row in rows:
+        if row.get("kind") == "note" and (row.get("instance_id") == chair or row.get("from") == chair):
+            last = row
+    if last is None:
+        return None
+    return " ".join(str(last.get("summary") or "").split()) or None
+
+
+def rolling_handoff_path(root: Path, chair: str) -> Path:
+    return Path(root) / ".convoy" / "handoff" / (str(chair) + ".rolling.md")
+
+
+def write_rolling_handoff(root: Path, chair: str, *, seat: dict[str, Any], git: dict[str, Any],
+                          pending_count: int, now: str) -> Path:
+    """Rewrite the chair's rolling handoff from facts nobody had to author.
+
+    Every relaunch before this booted a neuron that knew where it was and not
+    when it left off, because the only handoff was one a model remembered to
+    write. Branch, sha, dirtiness, the last note, the queue depth, the life
+    and whether a resume exists are all on disk already; a Stop is simply the
+    moment they are all true at once.
+
+    Rewritten whole, never appended, and bounded: this file is read on boot,
+    and an unbounded file read on boot is a context bill.
+    """
+    incarnation = seat.get("incarnation")
+    body = [
+        "# rolling handoff (machine-written, rewritten at every Stop)",
+        "",
+        "## chair " + str(chair),
+        "",
+        "- as of: " + now,
+        "- harness: " + str(seat.get("to") or "unknown"),
+        "- incarnation " + (str(incarnation) if incarnation is not None else "null (never hosted)"),
+        # Presence only. The id itself is a vendor secret and never rides in prose.
+        "- resume: " + ("present" if str(seat.get("resume") or "").strip() else "null until observed"),
+        "- worktree: " + str(seat.get("worktree") or "unknown"),
+        "- branch: " + str(git.get("branch") or "detached or unknown"),
+        "- HEAD: " + str(git.get("git_sha") or "unknown"),
+        "- dirty: " + ("yes" if git.get("dirty") else "no" if git.get("dirty") is False else "unknown"),
+        "- inbox rows pending: " + str(int(pending_count)),
+        "- last note: " + (_last_note(root, chair) or "none"),
+        "",
+        "Nothing here was authored: every line is read back from the record.",
+    ]
+    text = "\n".join(body) + "\n"
+    raw = text.encode("utf-8")
+    if len(raw) > ROLLING_HANDOFF_MAX_BYTES:
+        text = raw[:ROLLING_HANDOFF_MAX_BYTES - 4].decode("utf-8", errors="ignore") + "\n...\n"
+    path = rolling_handoff_path(root, chair)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+    return path
+
+
+def _seat_quota(seat: dict[str, Any]) -> dict[str, Any] | None:
+    """This chair's own quota reading, or None.
+
+    Codex only, and only through the rollout the seat's OWN resume id names
+    (usage.rollout_rate_limits_for_session). Claude and Grok stay null until a
+    source is verified: `claude -p /usage` is a machine-wide probe, not a
+    pane's, and Grok publishes nothing per session. Null, never a guess - a
+    number from another chair's conversation would block this one on a
+    stranger's ceiling.
+    """
+    harness = str(seat.get("to") or "").strip().lower()
+    if not harness.startswith("codex"):
+        return None
+    if str(seat.get("resume_for") or "codex").strip().lower() not in ("", "codex"):
+        return None
+    from .usage import rollout_rate_limits_for_session
+    try:
+        return rollout_rate_limits_for_session(seat.get("resume"))
+    except OSError:
+        return None
+
+
+def _crossed(reading: dict[str, Any] | None) -> tuple[str, int, str | None] | None:
+    """The window at or over the ceiling, worst first, or None."""
+    if not isinstance(reading, dict):
+        return None
+    resets = reading.get("resets") or {}
+    worst = None
+    for window, key in (("session", "session_pct"), ("week", "week_pct")):
+        value = reading.get(key)
+        if not isinstance(value, int) or value < QUOTA_THRESHOLD_PCT:
+            continue
+        if worst is None or value > worst[1]:
+            worst = (window, value, resets.get(window))
+    return worst
+
+
+def _threshold_seen(root: Path, chair: str, incarnation: Any, resets_at: Any, window: str) -> bool:
+    """Once per (chair, incarnation, resets_at). The ceiling does not move
+    inside a window, so a row per Stop would be a row per turn."""
+    try:
+        rows = feed_since(root, EPOCH)
+    except (OSError, ValueError):
+        return False
+    for row in rows:
+        if row.get("kind") != "threshold" or row.get("chair") != chair:
+            continue
+        if row.get("incarnation") == incarnation and row.get("resets_at") == resets_at \
+                and row.get("window") == window:
+            return True
+    return False
+
+
+def _spawn_waiter(root: Path, chair: str, incarnation: Any) -> dict[str, Any]:
+    """Start the slim waiter, detached. Never through the CLI: that import
+    graph is what the OS killed under memory pressure (see wait.py)."""
+    argv = [sys.executable, "-m", "convoy.wait", "--root", str(root), "--seat", str(chair),
+            "--timeout", str(WAIT_TIMEOUT_S)]
+    if incarnation is not None:
+        argv.extend(["--incarnation", str(int(incarnation))])
+    try:
+        from .cmd import quiet_spawn_kwargs
+        process = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                                   stderr=subprocess.DEVNULL, **quiet_spawn_kwargs())
+    except (OSError, ValueError) as exc:
+        return {"spawned": False, "error": type(exc).__name__ + ": " + str(exc)}
+    return {"spawned": True, "pid": int(process.pid)}
+
+
 def _resolve_identity(
     *, root: Path | str | None, cwd: Path, allow_missing_root: bool,
 ) -> tuple[Path | None, dict[str, Any] | None, str | None]:
@@ -180,17 +323,32 @@ def end_task(
 
     chair = str(seat.get("session_id") or "").strip()
     harness = str(seat.get("to") or "").strip() or None
+    if automatic:
+        # This payload is where Convoy has held the vendor session id
+        # at every turn end since the beginning, and dropped it. The feed rule
+        # below is unchanged - the id is still only hash material there - but
+        # the SEAT learns it, matched by this cwd, never by recency. Null
+        # until observed; an id already on the row is never overwritten.
+        observe_resume(
+            thread_root, chair,
+            payload.get("session_id") or payload.get("sessionId"),
+            to=harness,
+        )
     key = _event_key(thread_root, chair, payload) if automatic else None
     if _seen(thread_root, key):
-        return {"ok": True, "deduplicated": True, "chair": chair, "event_key": key}
+        return {"ok": True, "deduplicated": True, "chair": chair, "event_key": key, "hook": {}}
 
     git: dict[str, Any] | None = None
     push_status = "not-requested"
     ok = True
     command_error: str | None = None
     feed_error: str | None = None
+    # The automatic path READS git now (branch, HEAD, dirty) because the
+    # rolling handoff and the pulse's last_commit are derived from it. It
+    # still never MUTATES git: `push` is forced False above and the only
+    # writing command in this module sits behind the explicit --push flag.
+    git = _git_snapshot(worktree, git_runner)
     if not automatic:
-        git = _git_snapshot(worktree, git_runner)
         if push:
             if not git.get("ok"):
                 push_status = "refused"
@@ -273,4 +431,85 @@ def end_task(
     }
     if command_error:
         card["error"] = command_error
+    if automatic:
+        card.update(_stop_work(thread_root, chair, seat, git or {}))
     return card
+
+
+def _stop_work(root: Path, chair: str, seat: dict[str, Any], git: dict[str, Any]) -> dict[str, Any]:
+    """Everything a Stop is good for, in the order it matters.
+
+    A Stop is the one moment Convoy is certain a neuron is listening, and the
+    one moment every derivable fact about the chair is true at once. So:
+    rewrite the handoff, stamp the pulse, record a quota ceiling if it was
+    crossed, and then decide what to hand back - rows to work on, a ceiling to
+    hand off at, or a waiter to sleep against.
+
+    Nothing here may raise: a Stop hook that throws traps the agent.
+    """
+    out: dict[str, Any] = {"hook": {}}
+    incarnation = seat.get("incarnation")
+    now = utc_now()
+    try:
+        waiting = pending(root, chair)
+    except (OSError, ValueError):
+        waiting = []
+    try:
+        out["rolling_handoff"] = str(write_rolling_handoff(
+            root, chair, seat=seat, git=git, pending_count=len(waiting), now=now))
+    except (OSError, ValueError):
+        pass
+
+    reading = None
+    try:
+        reading = _seat_quota(seat)
+    except Exception:       # a quota reading must never end a turn
+        reading = None
+    crossed = _crossed(reading)
+    rate_pct = None
+    if isinstance(reading, dict):
+        pcts = [v for v in (reading.get("session_pct"), reading.get("week_pct")) if isinstance(v, int)]
+        rate_pct = max(pcts) if pcts else None
+    try:
+        write_pulse(root, chair, pulse_source="stop", incarnation=incarnation,
+                    last_commit=({"sha": git.get("git_sha"), "branch": git.get("branch")}
+                                 if git.get("git_sha") else None),
+                    rate_pct=rate_pct, ts=now)
+    except (OSError, ValueError):
+        pass
+
+    if crossed is not None:
+        window, used, resets_at = crossed
+        if not _threshold_seen(root, chair, incarnation, resets_at, window):
+            try:
+                hook(root, "threshold",
+                     "chair " + chair + " at " + str(used) + "% of its " + window + " window",
+                     instance_id=chair, author=chair,
+                     extra={"chair": chair, "harness": seat.get("to"), "window": window,
+                            "used_percent": used, "resets_at": resets_at, "incarnation": incarnation})
+            except (OSError, ValueError):
+                pass
+
+    if waiting:
+        try:
+            block = stop_block(root, chair)
+        except (OSError, ValueError):
+            block = None
+        if block:
+            out["hook"] = block
+            return out
+    if crossed is not None:
+        window, used, resets_at = crossed
+        stamp = now.replace(":", "-")
+        target = Path(root) / ".convoy" / "handoff" / (chair + "-" + stamp + ".md")
+        out["hook"] = {"decision": "block", "reason": (
+            "Convoy quota gate: this seat is at " + str(used) + "% of its " + window +
+            " window (resets " + str(resets_at or "unknown") + "). Do not start new work. "
+            "Write the INTENT handoff a successor cannot derive - what you were "
+            "about to do and why - to " + str(target) + ", then stop. The facts "
+            "(branch, HEAD, dirty, queue, incarnation) are already written to " +
+            str(rolling_handoff_path(root, chair)) + "; do not repeat them.")}
+        return out
+
+    out["waiter"] = _spawn_waiter(root, chair, incarnation)
+    return out
