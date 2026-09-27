@@ -8,8 +8,9 @@ vendor picker, or by another tool is invisible to it — and that blindness
 produced a second body on a live codex thread today (codex refused: "already
 has an active writer"). So liveness here comes from the process table:
 
-  via "token"    — the chair's vendor token appears in a process command line
-                   (portable: Windows CIM, Linux /proc, macOS ps).
+  via "token"    — the chair's native id appears in a possible body command
+                   line, including legacy permissive matches. This no-steal
+                   hint is not process-ownership proof.
   via "worktree" — the chair's worktree path appears in the command line
                    (grok `--agent <worktree>/.grok/...`, `--cwd`, etc.); this
                    is the Windows substitute for cwd.
@@ -35,6 +36,7 @@ import shutil
 import subprocess
 import sys
 import time
+from collections.abc import Mapping
 from pathlib import Path
 from .cmd import quiet_spawn_kwargs
 from typing import Any, Callable
@@ -164,13 +166,49 @@ def _fill_cwd_lsof(procs: list[dict[str, Any]]) -> None:
 
 def _exe_harness(cmdline: str) -> str | None:
     """Which harness a command line runs, by executable/script basename."""
-    toks = cmdline.replace('"', " ").split()
-    for tok in toks[:3]:
-        base = os.path.basename(tok.replace("\\", "/")).lower()
+    toks = _argv_tokens(cmdline)
+    if not toks:
+        return None
+    executable = os.path.basename(toks[0].replace("\\", "/")).lower()
+    # A native harness is argv[0]. The one evidenced wrapper is node running
+    # a harness .js entrypoint; arbitrary later words may be shell commands or
+    # prompt text, never evidence of which process this is.
+    if executable in ("node", "node.exe") and len(toks) > 1:
+        executable = os.path.basename(toks[1].replace("\\", "/")).lower()
+        if not executable.endswith(".js"):
+            return None
+    for hid, names in HARNESS_EXES.items():
+        if executable in names:
+            return hid
+    return None
+
+
+def _liveness_harness(cmdline: str) -> str | None:
+    """Conservative possible body for no-steal checks, not identity proof.
+
+    A shell wrapper can keep a real harness body alive without being that
+    harness itself. Identity must use _exe_harness; liveness must not turn a
+    wrapper the old process matcher saw into a proven dead chair.
+    """
+    # Keep the base's quote-stripping window: a shell may carry the real
+    # harness command as one quoted argument. This is only a no-steal hint.
+    for tok in cmdline.replace('"', ' ').split()[:3]:
+        executable = os.path.basename(tok.replace("\\", "/")).lower()
         for hid, names in HARNESS_EXES.items():
-            if base in names:
+            if executable in names:
                 return hid
     return None
+
+
+def _liveness_token_match(cmdline: str, tokens: list[str]) -> bool:
+    """Union of exact and legacy permissive hints for the no-steal guard.
+
+    A false positive blocks a duplicate launch; a false negative can launch
+    a second writer. Identity never uses this matcher.
+    """
+    args = _argv_tokens(cmdline)
+    return any(t in cmdline or t in args or any(arg == "--resume=" + t for arg in args)
+               for t in tokens)
 
 
 def _is_helper(cmdline: str) -> bool:
@@ -217,6 +255,65 @@ def _argv_tokens(cmdline: str) -> list[str]:
     if current:
         out.append("".join(current))
     return out
+
+
+def _native_resume_ids(cmdline: str, harness: str) -> set[str]:
+    """Exact native ids passed in the harness's evidenced continuation form.
+
+    A prompt that quotes ``--resume id`` is one argument, not two. Codex's
+    ``resume`` is a subcommand, so it must be the first non-option word rather
+    than text later in an initial prompt. No substring of an id is evidence.
+    """
+    argv = _argv_tokens(cmdline)
+    if not argv or _exe_harness(cmdline) != harness:
+        return set()
+    start = 2 if os.path.basename(argv[0].replace("\\", "/")).lower() in ("node", "node.exe") else 1
+    args = argv[start:]
+    if harness == "codex":
+        # Only evidenced option forms may be skipped for identity. An unknown
+        # switch does not let a later prompt or value become a native id.
+        value_flags = {"-m", "--model", "-c", "--config", "-C", "--cd",
+                       "-a", "--ask-for-approval", "--enable", "--disable",
+                       "--remote", "--remote-auth-token-env", "-i", "--image",
+                       "--local-provider", "-p", "--profile", "-s", "--sandbox",
+                       "--add-dir"}
+        boolean_flags = {"--approve-for-me", "--dangerously-bypass-approvals-and-sandbox",
+                         "--dangerously-bypass-hook-trust", "--search", "--no-alt-screen",
+                         "--no-daemon", "--worktree", "--oss", "--strict-config",
+                         "--include-non-interactive", "--all"}
+        def skip_options(index: int) -> int | None:
+            while index < len(args) and args[index].startswith("-"):
+                arg = args[index]
+                if arg in value_flags:
+                    if index + 1 >= len(args):
+                        return None
+                    index += 2
+                elif arg in boolean_flags:
+                    index += 1
+                elif arg.split("=", 1)[0] in value_flags and "=" in arg:
+                    index += 1
+                else:
+                    return None
+            return index
+        i = skip_options(0)
+        if i is None or i >= len(args) or args[i] != "resume":
+            return set()
+        i = skip_options(i + 1)
+        if i is None or i >= len(args):
+            return set()
+        return {args[i]} if args[i] else set()
+    flag = "--conversation" if harness == "agy" else "--resume"
+    found: set[str] = set()
+    for i, arg in enumerate(args):
+        if arg == flag and i + 1 < len(args) and args[i + 1] and not args[i + 1].startswith("-"):
+            found.add(args[i + 1])
+        elif harness == "claude" and arg == "-r" and i + 1 < len(args) and args[i + 1] and not args[i + 1].startswith("-"):
+            found.add(args[i + 1])
+        elif harness == "claude" and arg.startswith("--resume=") and arg != "--resume=":
+            found.add(arg.split("=", 1)[1])
+        elif harness == "cursor-agent" and arg.startswith("--resume=") and arg != "--resume=":
+            found.add(arg.split("=", 1)[1])
+    return found
 
 
 def _path_key(value: Any) -> str:
@@ -289,13 +386,13 @@ def match_processes(root: Path, procs: list[dict[str, Any]], *, now: str | None 
             pid_value = None
         if pid_value is not None and not recorded_gone and pid_value in by_pid:
             cmd = str(by_pid[pid_value].get("cmdline") or "")
-            found.append({"pid": pid_value, "via": "pid", "exe": _exe_harness(cmd) or harness})
+            found.append({"pid": pid_value, "via": "pid", "exe": _liveness_harness(cmd) or harness})
         if not found:
             for p in bodies_only:
                 cmd = str(p.get("cmdline") or "")
-                exe = _exe_harness(cmd)
-                if any(t in cmd for t in tokens):
-                    found.append({"pid": p["pid"], "via": "token", "exe": exe or harness})
+                exe = _liveness_harness(cmd)
+                if _liveness_token_match(cmd, tokens):
+                    found.append({"pid": p["pid"], "via": "token", "exe": exe})
                 elif exe == harness and _mentions_path(cmd, s.get("worktree")):
                     found.append({"pid": p["pid"], "via": "worktree", "exe": exe})
                 elif exe == harness and _same_path(p.get("cwd"), s.get("worktree")):
@@ -325,7 +422,7 @@ def match_processes(root: Path, procs: list[dict[str, Any]], *, now: str | None 
     # that runs a harness exe and is nobody's is unassigned.
     unassigned = []
     for p in bodies_only:
-        exe = _exe_harness(str(p.get("cmdline") or ""))
+        exe = _liveness_harness(str(p.get("cmdline") or ""))
         if not exe or p["pid"] in claimed:
             continue
         cur, hops, owned = by_pid.get(p.get("ppid")), 0, False
@@ -405,22 +502,30 @@ _TEST_PID: int | None = None
 
 
 def identify(root: Path, pid: int | None = None, procs: list[dict[str, Any]] | None = None,
-             cwd: str | None = None) -> dict[str, Any]:
+             cwd: str | None = None, env: Mapping[str, str] | None = None) -> dict[str, Any]:
     """Which chair is the CALLER? Detect -> identify -> only then send.
 
-    Walks the caller's ancestry (shell -> harness) in the process table. A
-    chair's vendor token in an ancestor's command line wins (via "token");
-    else an ancestor harness exe whose command line names a chair's worktree
-    (via "worktree"); else an ancestor harness exe plus cwd == worktree (via
-    "cwd"); else null with an `ask`. Never a token in the result."""
+    Walks the caller's ancestry (shell -> harness) in the process table.
+    Matching native ids, pane-host records and worktree paths are independent
+    positive evidence; sources naming different chairs refuse identity.
+    Unrecorded native ids make no chair claim, so a fresh or rotated vendor
+    session can fall through to the host/path evidence. A caller's own argv
+    or prompt text is never native identity evidence. This E1 local-user
+    check guards attribution mistakes, not a malicious same-user process
+    able to forge its own environment or edit local Convoy files."""
     root = Path(root)
     enum_error = None
+    synthetic_procs = procs is not None or _TEST_PROCS is not None
     if procs is not None:
         pass
     elif _TEST_PROCS is not None:
         procs = _TEST_PROCS
     else:
         procs, enum_error = _safe_enumerate()
+    # A supplied process table is a synthetic test fixture. Its environment
+    # must be injected too, rather than silently borrowing this test runner's
+    # real CODEX_THREAD_ID/CLAUDE_CODE_SESSION_ID.
+    env = ({} if synthetic_procs else os.environ) if env is None else env
     me = pid if pid is not None else (_TEST_PID if _TEST_PID is not None else os.getpid())
     here = cwd if cwd is not None else os.getcwd()
     # Which thread does the cwd walk up to, and is it this root's thread? A
@@ -446,17 +551,141 @@ def identify(root: Path, pid: int | None = None, procs: list[dict[str, Any]] | N
         cur = by_pid.get(cur.get("ppid"))
         hops += 1
     seats = list_seats(root, require_session=True)
+
+    def _refuse(reason: str, chairs: list[str] | None = None) -> dict[str, Any]:
+        result: dict[str, Any] = {"ok": False, "chair": None, "via": "conflict", "harness": None,
+                                  "harness_pid": None, "on_thread": bool(chairs), "ask": reason}
+        if chairs:
+            result["chairs"] = sorted(set(chairs))
+        result.update(ctx)
+        if ctx.get("ask"):
+            result["ask"] = reason + "; " + str(ctx["ask"])
+        return result
+
+    def _native_hits(harness: str, native_id: str) -> list[dict[str, Any]]:
+        hits = []
+        for s in seats:
+            if canonical_harness_id(s.get("to")) != harness:
+                continue
+            recorded = [s.get("vendor_session_id")]
+            if s.get("resume_for") in (None, "", harness):
+                recorded.append(s.get("resume"))
+            if native_id in recorded:
+                hits.append(s)
+        return hits
+
+    harness_nodes = [(i, p, _exe_harness(str(p.get("cmdline") or "")))
+                     for i, p in enumerate(chain)]
+    harness_nodes = [(i, p, h) for i, p, h in harness_nodes if h]
+    body_nodes = harness_nodes[:1]
+    for node in harness_nodes[1:]:
+        if not body_nodes or node[2] != body_nodes[-1][2]:
+            break
+        near_cmd = str(body_nodes[-1][1].get("cmdline") or "")
+        outer_cmd = str(node[1].get("cmdline") or "")
+        near_ids = _native_resume_ids(near_cmd, node[2])
+        outer_ids = _native_resume_ids(outer_cmd, node[2])
+        # Codex's npm wrapper, vendored binary and app-server child can all
+        # appear in one ancestry. Repeated equal resume ids are one body; a
+        # bare Codex launcher pair or its app-server is also one body. A
+        # Claude child with no id below a parent resuming another id is not.
+        same_body = (bool(near_ids) and near_ids == outer_ids) or (
+            node[2] == "codex" and (
+                "app-server" in _argv_tokens(near_cmd)[1:] or
+                (not near_ids and not outer_ids)
+            )
+        )
+        if not same_body:
+            break
+        body_nodes.append(node)
+    outer_nodes = harness_nodes[len(body_nodes):]
+    body_pids = {node[1]["pid"] for node in body_nodes}
+    if outer_nodes:
+        # Attribute the caller to its nearest harness body only. A parent
+        # harness may still have a recorded native id in argv or a pane-host
+        # record; that is evidence the child inherited the parent's env, not
+        # that the child owns the parent chair. Repeated same-harness processes
+        # without such evidence can be one native session (Codex uses two).
+        nearest_harness = body_nodes[0][2]
+        host_records = read_host_records(root)
+        for _, outer_process, outer_harness in outer_nodes:
+            inherited = (str(env.get("CLAUDE_CODE_SESSION_ID") or "").strip()
+                         if outer_harness == "claude" else
+                         str(env.get("CODEX_THREAD_ID") or "").strip()
+                         if outer_harness == "codex" else "")
+            hits = _native_hits(outer_harness, inherited) if inherited else []
+            outer_argv = _native_resume_ids(str(outer_process.get("cmdline") or ""), outer_harness)
+            host_hit = any(str(r.get("status") or "") == "running" and
+                           any(r.get(key) == outer_process["pid"] for key in ("child_pid", "host_pid")) and
+                           any(r.get("session_id") == s.get("session_id") for s in hits)
+                           for r in host_records)
+            if hits and (outer_harness != nearest_harness or inherited in outer_argv or host_hit):
+                return _refuse("nested harness may have inherited another chair's native id; refuse identity",
+                               [str(s.get("session_id")) for s in hits])
+        chain = chain[:outer_nodes[0][0]]
+
+    native_claims: list[tuple[str, str, int]] = []
+    unrecorded_native: list[tuple[str, str, str]] = []
     for p in chain:
         cmd = str(p.get("cmdline") or "")
-        for s in seats:
-            toks = [t for t in (s.get("resume"), s.get("vendor_session_id")) if isinstance(t, str) and t.strip()]
-            if any(t in cmd for t in toks):
-                return {"ok": True, "chair": s["session_id"], "via": "token", "harness": s.get("to"),
-                        "harness_pid": p["pid"], "on_thread": True, **ctx}
-    # Rung 'pane-host': a pid someone wrote down at launch. It beats every
-    # path rung because a command line can carry any path a prompt mentions,
-    # and the pane host's record cannot be written by the pane's own argv.
+        harness = _exe_harness(cmd)
+        if harness is None:
+            continue
+        native_id = None
+        if harness == "codex":
+            thread_id = str(env.get("CODEX_THREAD_ID") or "").strip()
+            session_id = str(env.get("CODEX_SESSION_ID") or "").strip()
+            if thread_id and session_id and thread_id != session_id:
+                return _refuse("Codex environment session ids disagree; refuse identity")
+            native_id = thread_id or None  # CODEX_SESSION_ID only corroborates.
+        elif harness == "claude":
+            native_id = str(env.get("CLAUDE_CODE_SESSION_ID") or "").strip() or None
+        arg_ids = _native_resume_ids(cmd, harness)
+        if len(arg_ids) > 1:
+            return _refuse("multiple native resume ids in one harness command; refuse identity")
+        for via, claim_id in (("environment", native_id), ("token", next(iter(arg_ids), None))):
+            if not claim_id:
+                continue
+            hits = _native_hits(harness, claim_id)
+            if len(hits) > 1:
+                return _refuse("native session id matches multiple chairs on this Convoy thread; refuse identity",
+                               [str(s.get("session_id")) for s in hits])
+            if not hits:
+                # A vendor can create or rotate its native id before Convoy
+                # records it. No chair is claimed by that id, so independent
+                # pane-host/argv/path evidence may still identify the caller.
+                unrecorded_native.append((harness, claim_id, via))
+                continue
+            if via == "environment":
+                # An env var can be copied into an unrelated same-user
+                # process. If Convoy can place that chair's body at another
+                # pid, this caller is not that body. The no-steal matcher is
+                # deliberately conservative here: uncertainty refuses.
+                view = match_processes(root, procs)
+                elsewhere = [b["pid"] for c in view["chairs"]
+                             if c["session_id"] == hits[0]["session_id"]
+                             for b in c["bodies"]
+                             if b["pid"] not in body_pids and
+                             _exe_harness(str(by_pid.get(b["pid"], {}).get("cmdline") or "")) == harness]
+                if elsewhere:
+                    return _refuse("native environment id names a chair with another live body; refuse identity",
+                                   [str(hits[0].get("session_id"))])
+            native_claims.append((hits[0]["session_id"], via, p["pid"]))
+    if len({claim[0] for claim in native_claims}) > 1:
+        return _refuse("native environment and resume arguments disagree; refuse identity",
+                       [claim[0] for claim in native_claims])
+    # Rung 'pane-host': a pid someone wrote down at launch. It is independent
+    # evidence, not something a command-line argument can override.
     known = {s["session_id"]: s for s in seats}
+    def _with_unrecorded(result: dict[str, Any], sid: str) -> dict[str, Any]:
+        harness = canonical_harness_id(known[sid].get("to"))
+        candidates = {(h, native_id, via) for h, native_id, via in unrecorded_native
+                      if h == harness and via == "environment"}
+        if len(candidates) == 1:
+            h, native_id, via = next(iter(candidates))
+            result["native_session"] = {"id": native_id, "harness": h,
+                                        "via": via, "recorded": False}
+        return result
     by_recorded_pid: dict[int, str] = {}
     for record in read_host_records(root):
         sid = str(record.get("session_id") or "")
@@ -499,6 +728,20 @@ def identify(root: Path, pid: int | None = None, procs: list[dict[str, Any]] | N
                     break
             if path_hit:
                 break
+    # Independent evidence is corroboration, not a ladder that can override a
+    # disagreement. In particular an environment id cannot steal a pane-host
+    # body, and a copied id in argv cannot outvote the caller's environment.
+    if native_claims:
+        native_sid, native_via, native_pid = native_claims[0]
+        disagree = [sid for sid in (pid_hit[0] if pid_hit else None,
+                                     path_hit[0] if path_hit else None) if sid and sid != native_sid]
+        if disagree:
+            return _refuse("native session and pane/path evidence disagree; refuse identity",
+                           [native_sid, *disagree])
+        seat_row = known[native_sid]
+        return _with_unrecorded({"ok": True, "chair": native_sid, "via": native_via,
+                                 "harness": seat_row.get("to"), "harness_pid": native_pid,
+                                 "on_thread": True, **ctx}, native_sid)
     # Two records disagreeing is not a tie to break: it is a fact to report.
     # Answering the path's chair here is how a crew pane authored as the lead.
     if pid_hit and path_hit and pid_hit[0] != path_hit[0]:
@@ -511,12 +754,14 @@ def identify(root: Path, pid: int | None = None, procs: list[dict[str, Any]] | N
         return out
     if pid_hit:
         seat_row = known[pid_hit[0]]
-        return {"ok": True, "chair": pid_hit[0], "via": "pane-host", "harness": seat_row.get("to"),
-                "harness_pid": pid_hit[1], "on_thread": True, **ctx}
+        return _with_unrecorded({"ok": True, "chair": pid_hit[0], "via": "pane-host",
+                                 "harness": seat_row.get("to"), "harness_pid": pid_hit[1],
+                                 "on_thread": True, **ctx}, pid_hit[0])
     if path_hit:
         seat_row = known[path_hit[0]]
-        return {"ok": True, "chair": path_hit[0], "via": path_hit[1], "harness": seat_row.get("to"),
-                "harness_pid": path_hit[2], "on_thread": True, **ctx}
+        return _with_unrecorded({"ok": True, "chair": path_hit[0], "via": path_hit[1],
+                                 "harness": seat_row.get("to"), "harness_pid": path_hit[2],
+                                 "on_thread": True, **ctx}, path_hit[0])
     out = {"ok": False, "chair": None, "via": None, "harness": None, "harness_pid": None, "on_thread": False,
            "ask": "no chair on this thread matches your body: join (" + convoy_root_command(root) +
                   " join --to <harness> --worktree " + str(here) + ") or seat this worktree, then retry"}

@@ -65,6 +65,45 @@ class MatchProcesses(unittest.TestCase):
         self.assertNotIn("01a0-codex-token", blob)
         self.assertNotIn("e05249cb-claude-token", blob)
 
+    def test_a_prompt_or_prefix_is_conservative_liveness_only(self):
+        procs = [
+            {"pid": 91, "ppid": 1,
+             "cmdline": 'codex "Please mention resume 01a0-codex-token in a note"', "cwd": None},
+            {"pid": 92, "ppid": 1,
+             "cmdline": "codex resume 01a0-codex-token-extra", "cwd": None},
+        ]
+        out = match_processes(self.root, procs)
+        by = {c["session_id"]: c for c in out["chairs"]}
+        self.assertEqual({b["pid"] for b in by["c-t1"]["bodies"]}, {91, 92})
+        self.assertTrue(by["c-t1"]["live"])
+
+    def test_a_different_harness_resume_id_is_only_possible_liveness(self):
+        procs = [{"pid": 93, "ppid": 1,
+                  "cmdline": "claude --resume 01a0-codex-token", "cwd": None}]
+        out = match_processes(self.root, procs)
+        by = {c["session_id"]: c for c in out["chairs"]}
+        self.assertEqual(by["c-t1"]["bodies"][0]["pid"], 93)
+        self.assertEqual(by["c-t1"]["bodies"][0]["via"], "token")
+
+    def test_liveness_keeps_supported_global_flags_and_short_claude_resume(self):
+        cases = (
+            ("codex -a never resume 01a0-codex-token", "c-t1"),
+            ("codex --dangerously-bypass-approvals-and-sandbox resume 01a0-codex-token", "c-t1"),
+            ("claude -r e05249cb-claude-token", "a-t1"),
+            ("claude --resume=e05249cb-claude-token", "a-t1"),
+            ("cmd.exe /c codex.cmd resume 01a0-codex-token", "c-t1"),
+            ('cmd.exe /c "codex resume 01a0-codex-token"', "c-t1"),
+            ('pwsh.exe -Command "claude --resume e05249cb-claude-token"', "a-t1"),
+        )
+        for cmdline, session_id in cases:
+            with self.subTest(cmdline=cmdline):
+                out = match_processes(self.root, [
+                    {"pid": 94, "ppid": 1, "cmdline": cmdline, "cwd": None},
+                ])
+                by = {c["session_id"]: c for c in out["chairs"]}
+                self.assertEqual(by[session_id]["bodies"][0]["pid"], 94)
+                self.assertTrue(by[session_id]["live"])
+
     def test_bodies_marks_two_bodies_on_one_chair(self):
         procs = _procs() + [{"pid": 21, "ppid": 1, "cmdline": "codex resume 01a0-codex-token", "cwd": None}]
         by = {c["session_id"]: c for c in match_processes(self.root, procs)["chairs"]}
