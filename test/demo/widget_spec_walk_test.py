@@ -45,14 +45,19 @@ def _repo():
 class WidgetWalksTheOriginalSpec(unittest.TestCase):
     def setUp(self):
         self.root = _repo(); ensure_id(self.root); bind(self.root, "spec")
-        env = mock.patch.dict(os.environ, {"CONVOY_HOME": tempfile.mkdtemp(), "PATH": str(FAKES) + os.pathsep + os.environ.get("PATH", "")})
+        user_home = tempfile.mkdtemp(prefix="user-home-")   # the operator's home is never the test's
+        env = mock.patch.dict(os.environ, {"CONVOY_HOME": tempfile.mkdtemp(), "USERPROFILE": user_home, "HOME": user_home,
+                                           "PATH": str(FAKES) + os.pathsep + os.environ.get("PATH", "")})
         env.start(); self.addCleanup(env.stop)
         self.spawns = []
         def fake_spawn(argv, cwd=None, rect=None, **_k):
             self.spawns.append({"argv": list(argv), "cwd": cwd}); return {"ok": True, "pid": 4242, "argv": list(argv)}
         for target, kw in (
             ("convoy.bringup.live_runner", {"new": fake_spawn}),
+            # onboard imports ensure_first_run by name, so patching bringup alone
+            # left onboard running the real first-run against the operator's home.
             ("convoy.bringup.ensure_first_run", {"return_value": {"ok": True, "prepared": False, "wrote": False, "settings": None, "home_written": False, "settings_home": None}}),
+            ("convoy.onboard.ensure_first_run", {"return_value": {"ok": True, "prepared": False, "wrote": False, "settings": None, "home_written": False, "settings_home": None}}),
             ("convoy.onboard.probe", {"return_value": NULL_PROBE}),
             ("convoy.card.probe", {"return_value": NULL_PROBE}),
         ):

@@ -85,7 +85,8 @@ class HappyPath(unittest.TestCase):
         self.root = _real_repo()
         self.spawns = []
         path = str(FAKES) + os.pathsep + os.environ.get("PATH", "")
-        env = mock.patch.dict(os.environ, {"PATH": path})
+        user_home = tempfile.mkdtemp(prefix="user-home-")   # the operator's home is never the test's
+        env = mock.patch.dict(os.environ, {"PATH": path, "USERPROFILE": user_home, "HOME": user_home})
         env.start()
         self.addCleanup(env.stop)
 
@@ -97,7 +98,12 @@ class HappyPath(unittest.TestCase):
             ("convoy.onboard.probe", {"return_value": NULL_PROBE}),
             ("convoy.rail.probe", {"return_value": NULL_PROBE}),
             ("convoy.cli.live_runner", {"new": fake_spawn}),
+            # onboard imports ensure_first_run by name, so patching bringup alone
+            # left onboard running the real first-run against the operator's home.
             ("convoy.bringup.ensure_first_run", {"return_value": {
+                "ok": True, "prepared": False, "wrote": False, "settings": None,
+                "home_written": False, "settings_home": None}}),
+            ("convoy.onboard.ensure_first_run", {"return_value": {
                 "ok": True, "prepared": False, "wrote": False, "settings": None,
                 "home_written": False, "settings_home": None}}),
         ):

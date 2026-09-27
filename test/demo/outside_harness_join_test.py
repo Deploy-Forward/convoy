@@ -29,6 +29,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import tomllib
 import unittest
 import urllib.request
 from contextlib import redirect_stdout
@@ -79,6 +80,22 @@ def _join_tokens(root: Path) -> dict:
     return out
 
 
+def _trust_entries(home: Path) -> list:
+    """Every folder the Claude and Codex stores under `home` mark as trusted."""
+    found = []
+    state = home / ".claude.json"
+    if state.is_file():
+        projects = json.loads(state.read_text(encoding="utf-8-sig")).get("projects") or {}
+        found += ["claude " + k for k, v in projects.items()
+                  if isinstance(v, dict) and v.get("hasTrustDialogAccepted")]
+    config = home / ".codex" / "config.toml"
+    if config.is_file():
+        projects = tomllib.loads(config.read_text(encoding="utf-8-sig")).get("projects") or {}
+        found += ["codex " + k for k, v in projects.items()
+                  if isinstance(v, dict) and v.get("trust_level") == "trusted"]
+    return found
+
+
 class OutsideHarnessJoin(unittest.TestCase):
     maxDiff = None
 
@@ -91,10 +108,12 @@ class OutsideHarnessJoin(unittest.TestCase):
         self.foreign = Path(tempfile.mkdtemp(prefix="outside-cwd-"))   # no git, no .convoy
         moved_tmp = tempfile.mkdtemp(prefix="moved-tmp-")
         home = tempfile.mkdtemp(prefix="convoy-home-")
+        user_home = tempfile.mkdtemp(prefix="user-home-")   # the operator's home is never the test's
         self.spawns = []
         path = str(FAKES) + os.pathsep + os.environ.get("PATH", "")
         for p in (
-            mock.patch.dict(os.environ, {"PATH": path, "CONVOY_HOME": home}),
+            mock.patch.dict(os.environ, {"PATH": path, "CONVOY_HOME": home,
+                                         "USERPROFILE": user_home, "HOME": user_home}),
             mock.patch("tempfile.gettempdir", return_value=moved_tmp),
             mock.patch("convoy.panes._TEST_PROCS", []),          # no CIM, no ancestry: an outside body
             mock.patch("convoy.onboard.probe", return_value=NULL_PROBE),
@@ -102,7 +121,11 @@ class OutsideHarnessJoin(unittest.TestCase):
             mock.patch("convoy.mcp_http.probe", return_value=NULL_PROBE),
             mock.patch("convoy.cli.live_runner", new=self._fake_spawn),
             mock.patch("convoy.mcp_http.live_runner", new=self._fake_spawn),
+            # onboard imports ensure_first_run by name, so patching bringup alone
+            # left onboard running the real first-run, which pre-trusted these
+            # roots in the operator's Claude and Codex config.
             mock.patch("convoy.bringup.ensure_first_run", return_value=FIRST_RUN),
+            mock.patch("convoy.onboard.ensure_first_run", return_value=FIRST_RUN),
         ):
             p.start()
             self.addCleanup(p.stop)
@@ -192,6 +215,18 @@ class OutsideHarnessJoin(unittest.TestCase):
                 self.assertIn(k, kinds, kinds)
             self.assertNotIn("refuse", kinds, "nothing was stolen, so nothing was refused")
             self.assertEqual(self.spawns, [])
+
+    def test_onboard_leaves_no_trust_entry_in_the_home_stores(self):
+        # The home stores are the seam, not a mock: move the home to a fresh
+        # folder, run the same onboard path, and read what landed there. An
+        # assertion on a mock would pass while the real first-run ran through
+        # another module's import of the same function.
+        sentinel = Path(tempfile.mkdtemp(prefix="sentinel-home-"))
+        with mock.patch.dict(os.environ, {"USERPROFILE": str(sentinel), "HOME": str(sentinel)}):
+            self.assertEqual(Path.home().resolve(), sentinel.resolve(), "the home did not move")
+            self._bind_two_threads()
+        self.assertEqual(_trust_entries(sentinel), [],
+                         "a test must never pre-trust a folder in the operator's Claude or Codex config")
 
     # -- MCP attach variant ---------------------------------------------------
 

@@ -125,7 +125,8 @@ class WizardE2EGated(unittest.TestCase):
         # Resolve the repository's inert executable stubs so the E2E tests
         # Convoy's wire walk rather than whichever harnesses its host installed.
         path = str(FAKES) + os.pathsep + os.environ.get("PATH", "")
-        env = mock.patch.dict(os.environ, {"PATH": path})
+        user_home = tempfile.mkdtemp(prefix="user-home-")   # the operator's home is never the test's
+        env = mock.patch.dict(os.environ, {"PATH": path, "USERPROFILE": user_home, "HOME": user_home})
         env.start()
         self.addCleanup(env.stop)
 
@@ -145,7 +146,12 @@ class WizardE2EGated(unittest.TestCase):
             ("convoy.mcp_http.probe", {"return_value": NULL_PROBE}),
             ("convoy.mcp_http.live_runner", {"new": fake_spawn}),
             ("convoy.onboard.clone", {"new": fake_clone}),
+            # onboard imports ensure_first_run by name, so patching bringup alone
+            # left onboard running the real first-run against the operator's home.
             ("convoy.bringup.ensure_first_run", {"return_value": {
+                "ok": True, "prepared": False, "wrote": False, "settings": None,
+                "home_written": False, "settings_home": None}}),
+            ("convoy.onboard.ensure_first_run", {"return_value": {
                 "ok": True, "prepared": False, "wrote": False, "settings": None,
                 "home_written": False, "settings_home": None}}),
         ):
