@@ -22,7 +22,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 
 from convoy.cli import main
-from convoy.convoy import bind, ensure_id, seat
+from convoy.convoy import bind, ensure_id, seat, update_seat
 from convoy.identity import install_neuron_identity, skill_text
 from convoy.lifecycle import join
 from convoy.panes import identify
@@ -51,6 +51,15 @@ class ForeignWorktreeRefused(unittest.TestCase):
         msg = str(cm.exception)
         self.assertIn("luna", msg)
         self.assertIn("opus", msg)
+
+    def test_seat_and_update_refuse_drive_root_and_user_home(self):
+        for broad in ("C:/", "C:\\", str(Path.home())):
+            with self.subTest(worktree=broad):
+                with self.assertRaisesRegex(ValueError, "broad worktree"):
+                    seat(self.root, "claude", "broad", worktree=broad)
+        seat(self.root, "claude", "narrow", worktree=str(self.clean))
+        with self.assertRaisesRegex(ValueError, "broad worktree"):
+            update_seat(self.root, "narrow", worktree="C:/")
 
     def test_join_refuses_too_and_clean_or_same_root_worktree_is_fine(self):
         with self.assertRaises(ValueError):

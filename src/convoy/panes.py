@@ -42,7 +42,7 @@ from .cmd import quiet_spawn_kwargs
 from typing import Any, Callable
 
 from .cmd import convoy_root_command
-from .convoy import list_seats, read_id, read_thread
+from .convoy import broad_worktree, list_seats, read_id, read_thread
 from .index import find_root
 from .harness_contract import canonical_harness_id
 from .pane_host import read_host_records
@@ -332,7 +332,7 @@ def _mentions_path(cmdline: str, worktree: Any) -> bool:
     argv[0] is dropped: a harness installed inside a worktree is not a claim
     to that worktree's chair.
     """
-    if not worktree or not cmdline:
+    if not worktree or broad_worktree(worktree) or not cmdline:
         return False
     w = _path_key(worktree)
     if not w:
@@ -395,7 +395,7 @@ def match_processes(root: Path, procs: list[dict[str, Any]], *, now: str | None 
                     found.append({"pid": p["pid"], "via": "token", "exe": exe})
                 elif exe == harness and _mentions_path(cmd, s.get("worktree")):
                     found.append({"pid": p["pid"], "via": "worktree", "exe": exe})
-                elif exe == harness and _same_path(p.get("cwd"), s.get("worktree")):
+                elif exe == harness and not broad_worktree(s.get("worktree")) and _same_path(p.get("cwd"), s.get("worktree")):
                     found.append({"pid": p["pid"], "via": "cwd", "exe": exe})
         found = _collapse(found, by_pid)
         for b in found:
@@ -662,11 +662,23 @@ def identify(root: Path, pid: int | None = None, procs: list[dict[str, Any]] | N
                 # pid, this caller is not that body. The no-steal matcher is
                 # deliberately conservative here: uncertainty refuses.
                 view = match_processes(root, procs)
+                hosted_pids: set[int] = set()
+                for record in read_host_records(root):
+                    if (record.get("session_id") == hits[0]["session_id"] and
+                            record.get("status") == "running"):
+                        for key in ("child_pid", "host_pid"):
+                            try:
+                                hosted_pids.add(int(record[key]))
+                            except (KeyError, TypeError, ValueError):
+                                pass
                 elsewhere = [b["pid"] for c in view["chairs"]
                              if c["session_id"] == hits[0]["session_id"]
                              for b in c["bodies"]
+                             if b["via"] in ("token", "pid") or b["pid"] in hosted_pids
                              if b["pid"] not in body_pids and
                              _exe_harness(str(by_pid.get(b["pid"], {}).get("cmdline") or "")) == harness]
+                elsewhere.extend(pid for pid in hosted_pids if pid not in body_pids and
+                                 _exe_harness(str(by_pid.get(pid, {}).get("cmdline") or "")) == harness)
                 if elsewhere:
                     return _refuse("native environment id names a chair with another live body; refuse identity",
                                    [str(hits[0].get("session_id"))])
@@ -723,7 +735,8 @@ def identify(root: Path, pid: int | None = None, procs: list[dict[str, Any]] | N
             if not exe:
                 continue
             for s in seats:
-                if canonical_harness_id(s.get("to")) == exe and _same_path(here, s.get("worktree")):
+                if (canonical_harness_id(s.get("to")) == exe and
+                        not broad_worktree(s.get("worktree")) and _same_path(here, s.get("worktree"))):
                     path_hit = (s["session_id"], "cwd", p["pid"])
                     break
             if path_hit:

@@ -27,7 +27,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 
-from convoy.convoy import bind, ensure_id, seat
+from convoy.convoy import bind, ensure_id, list_seats, seat
 from convoy.pane_host import host_state_path
 from convoy.panes import identify
 
@@ -358,6 +358,56 @@ class LinkedSessionIdentityContract(unittest.TestCase):
         me = identify(self.root, pid=81, procs=procs, cwd="C:\\outside",
                       env={"CLAUDE_CODE_SESSION_ID": self.NATIVE_ID})
         self.assertEqual((me["chair"], me["via"]), ("claude-outside", "environment"))
+
+    def test_another_body_matched_only_by_worktree_cannot_veto_native_identity(self):
+        seat(self.root, "claude", "claude-outside", worktree="C:\\w\\chair", resume=self.NATIVE_ID)
+        procs = [
+            {"pid": 60, "ppid": 1, "cmdline": "claude.EXE --cwd C:\\w\\chair", "cwd": None},
+            {"pid": 80, "ppid": 1, "cmdline": "claude.EXE", "cwd": None},
+            {"pid": 81, "ppid": 80, "cmdline": "convoy whoami", "cwd": None},
+        ]
+        me = identify(self.root, pid=81, procs=procs, cwd="C:\\elsewhere",
+                      env={"CLAUDE_CODE_SESSION_ID": self.NATIVE_ID})
+        self.assertEqual((me["chair"], me["via"]), ("claude-outside", "environment"))
+
+    def test_another_body_matched_only_by_cwd_cannot_veto_native_identity(self):
+        seat(self.root, "claude", "claude-outside", worktree="C:\\w\\chair", resume=self.NATIVE_ID)
+        procs = [
+            {"pid": 60, "ppid": 1, "cmdline": "claude.EXE", "cwd": "C:\\w\\chair"},
+            {"pid": 80, "ppid": 1, "cmdline": "claude.EXE", "cwd": None},
+            {"pid": 81, "ppid": 80, "cmdline": "convoy whoami", "cwd": None},
+        ]
+        me = identify(self.root, pid=81, procs=procs, cwd="C:\\elsewhere",
+                      env={"CLAUDE_CODE_SESSION_ID": self.NATIVE_ID})
+        self.assertEqual((me["chair"], me["via"]), ("claude-outside", "environment"))
+
+    def test_legacy_drive_root_worktree_is_not_a_path_rung(self):
+        seat(self.root, "claude", "claude-outside", resume=self.NATIVE_ID)
+        row = next(r for r in list_seats(self.root) if r["session_id"] == "claude-outside")
+        row["worktree"] = "C:/"
+        with (self.root / ".convoy" / "seats.jsonl").open("a", encoding="utf-8") as stream:
+            stream.write(json.dumps(row) + "\n")
+        procs = [
+            {"pid": 60, "ppid": 1, "cmdline": "claude.EXE --cwd C:/unrelated", "cwd": None},
+            {"pid": 80, "ppid": 1, "cmdline": "claude.EXE", "cwd": None},
+            {"pid": 81, "ppid": 80, "cmdline": "convoy whoami", "cwd": None},
+        ]
+        me = identify(self.root, pid=81, procs=procs, cwd="C:/elsewhere",
+                      env={"CLAUDE_CODE_SESSION_ID": self.NATIVE_ID})
+        self.assertEqual((me["chair"], me["via"]), ("claude-outside", "environment"))
+
+    def test_pane_host_body_elsewhere_still_vetoes_native_identity(self):
+        seat(self.root, "claude", "claude-outside", resume=self.NATIVE_ID)
+        _write_host_record(self.root, "claude-outside", 59, 60, "C:\\w\\chair")
+        procs = [
+            {"pid": 60, "ppid": 1, "cmdline": "claude.EXE", "cwd": None},
+            {"pid": 80, "ppid": 1, "cmdline": "claude.EXE", "cwd": None},
+            {"pid": 81, "ppid": 80, "cmdline": "convoy whoami", "cwd": None},
+        ]
+        me = identify(self.root, pid=81, procs=procs, cwd="C:\\elsewhere",
+                      env={"CLAUDE_CODE_SESSION_ID": self.NATIVE_ID})
+        self.assertEqual(me["via"], "conflict")
+        self.assertIsNone(me["chair"])
 
     def test_fresh_codex_child_cannot_be_identified_as_claude_parent(self):
         seat(self.root, "claude", "claude-parent", resume=self.NATIVE_ID)

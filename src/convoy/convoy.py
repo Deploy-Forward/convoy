@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import ntpath
 import os
 import secrets
 from pathlib import Path
@@ -26,6 +27,17 @@ def _thread_path(root: Path) -> Path:
     return Path(root) / ".convoy" / "thread"
 
 CONDUCTOR = "grok-bot"
+
+
+def broad_worktree(worktree: str | None) -> bool:
+    """A drive/share root or user home cannot identify one neuron by path."""
+    if not worktree:
+        return False
+    value = ntpath.normpath(str(worktree))
+    drive, tail = ntpath.splitdrive(value)
+    if (drive and tail in ("", "\\")) or value in ("/", "\\"):
+        return True
+    return ntpath.normcase(value) == ntpath.normcase(ntpath.normpath(str(Path.home())))
 
 def _lead_path(root: Path) -> Path:
     return Path(root) / ".convoy" / "lead"
@@ -129,6 +141,8 @@ def seat(
         raise ValueError("refuse empty session_id")
     cid = ensure_id(root)
     wt = str(worktree) if worktree is not None else None
+    if broad_worktree(wt):
+        raise ValueError("refuse seat: broad worktree cannot identify one neuron: " + str(wt))
     # where: local (default) or cloud. cloud is refused unless this harness's
     # cloud block evidences an interactive attach (harness_effort.json). A
     # cloud chair has no local checkout, so a worktree is refused, not
@@ -313,6 +327,8 @@ def update_seat(root: Path, session_id: str, **changes: Any) -> dict[str, Any]:
     if row is None:
         raise ValueError("unknown seat: " + sid)
     if "worktree" in changes:
+        if broad_worktree(changes.get("worktree")):
+            raise ValueError("refuse seat: broad worktree cannot identify one neuron: " + str(changes.get("worktree")))
         holder = chair_holding_worktree(root, changes.get("worktree"), except_session=sid)
         if holder is not None:
             raise ValueError(
