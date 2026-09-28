@@ -8,6 +8,7 @@ launched. Matching is by vendor token in the command line first (portable),
 then by cwd == worktree where the OS exposes cwd (Linux /proc, macOS lsof),
 then by harness executable name only (an unassigned body the user can still
 identify by pid)."""
+import json
 import sys
 import tempfile
 import unittest
@@ -16,7 +17,7 @@ from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 
-from convoy.convoy import bind, ensure_id, seat
+from convoy.convoy import bind, ensure_id, list_seats, seat
 from convoy.graph_html import resume_neuron
 from convoy.panes import bodies, chair_live, match_processes
 
@@ -59,8 +60,24 @@ class MatchProcesses(unittest.TestCase):
         # non-harness processes never appear
         self.assertNotIn(15, [b["pid"] for c in out["chairs"] for b in c["bodies"]] + [u["pid"] for u in out["unassigned"]])
 
+    def test_legacy_drive_root_keeps_conservative_path_liveness(self):
+        # New seats refuse C:/, but old rows must still block a second writer.
+        row = next(r for r in list_seats(self.root) if r["session_id"] == "idle-t1")
+        row["worktree"] = "C:/"
+        with (self.root / ".convoy" / "seats.jsonl").open("a", encoding="utf-8") as stream:
+            stream.write(json.dumps(row) + "\n")
+        cases = (
+            ({"pid": 91, "ppid": 1, "cmdline": "claude.EXE --cwd C:/another", "cwd": None}, "worktree"),
+            ({"pid": 92, "ppid": 1, "cmdline": "claude.EXE", "cwd": "C:/"}, "cwd"),
+        )
+        for process, via in cases:
+            with self.subTest(via=via):
+                by = {c["session_id"]: c for c in match_processes(self.root, [process])["chairs"]}
+                self.assertTrue(by["idle-t1"]["live"])
+                self.assertEqual(by["idle-t1"]["bodies"],
+                                 [{"pid": process["pid"], "via": via, "exe": "claude"}])
+
     def test_tokens_never_appear_in_the_view(self):
-        import json
         blob = json.dumps(match_processes(self.root, _procs()))
         self.assertNotIn("01a0-codex-token", blob)
         self.assertNotIn("e05249cb-claude-token", blob)

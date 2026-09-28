@@ -332,7 +332,7 @@ def _mentions_path(cmdline: str, worktree: Any) -> bool:
     argv[0] is dropped: a harness installed inside a worktree is not a claim
     to that worktree's chair.
     """
-    if not worktree or broad_worktree(worktree) or not cmdline:
+    if not worktree or not cmdline:
         return False
     w = _path_key(worktree)
     if not w:
@@ -395,7 +395,7 @@ def match_processes(root: Path, procs: list[dict[str, Any]], *, now: str | None 
                     found.append({"pid": p["pid"], "via": "token", "exe": exe})
                 elif exe == harness and _mentions_path(cmd, s.get("worktree")):
                     found.append({"pid": p["pid"], "via": "worktree", "exe": exe})
-                elif exe == harness and not broad_worktree(s.get("worktree")) and _same_path(p.get("cwd"), s.get("worktree")):
+                elif exe == harness and _same_path(p.get("cwd"), s.get("worktree")):
                     found.append({"pid": p["pid"], "via": "cwd", "exe": exe})
         found = _collapse(found, by_pid)
         for b in found:
@@ -659,8 +659,11 @@ def identify(root: Path, pid: int | None = None, procs: list[dict[str, Any]] | N
             if via == "environment":
                 # An env var can be copied into an unrelated same-user
                 # process. If Convoy can place that chair's body at another
-                # pid, this caller is not that body. The no-steal matcher is
-                # deliberately conservative here: uncertainty refuses.
+                # pid through token or pane-host evidence, this caller is not
+                # that body. Path-only liveness is too weak to veto identity:
+                # legacy drive-root seats can match unrelated processes.
+                # A quoted-prompt token can still veto, conservatively
+                # failing closed rather than risking a second writer.
                 view = match_processes(root, procs)
                 hosted_pids: set[int] = set()
                 for record in read_host_records(root):
@@ -724,7 +727,8 @@ def identify(root: Path, pid: int | None = None, procs: list[dict[str, Any]] | N
         if not exe:
             continue
         for s in seats:
-            if canonical_harness_id(s.get("to")) == exe and _mentions_path(cmd, s.get("worktree")):
+            if (canonical_harness_id(s.get("to")) == exe and
+                    not broad_worktree(s.get("worktree")) and _mentions_path(cmd, s.get("worktree"))):
                 path_hit = (s["session_id"], "worktree", p["pid"])
                 break
         if path_hit:
