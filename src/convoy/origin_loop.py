@@ -547,4 +547,4 @@ def _deliver_via_synapse(*, root: Path, link: dict[str, Any], body: str) -> dict
     to = str(link.get("harness") or "").strip()
     if not to:
         return {"ok": False, "refused": "harness_absent"}
-    return send_one(root, to, body, label="worklanes")
+    return send_one(root, to, body, label="worklanes", local_writer=False)

@@ -43,7 +43,7 @@ from .onboard import onboard as run_onboard
 from .repo import checkout_path_for, clone as clone_repo, is_repo_url, list_repos, mint_worktrees
 from .context import pack
 from .convoy import list_seats, read_id, read_thread
-from .activity import neuron_activity
+from .activity import neuron_activity, resolve_neuron_id_on_thread
 from .convoy import seat as seat_chair
 from .glance import build_glance
 from .graph import build_graph, neighborhood
@@ -59,7 +59,7 @@ from .index import index_path, list_threads, prune_threads
 from .panes import bodies
 from .gitstate import git_state
 from .layer import SCHEMA_VERSION, conductor_stamp, feed_since, neuron_note, parse_since
-from .synapse import fake_runner, native_runner, send_one
+from .synapse import fake_runner, is_wrapper_name, native_runner, send_one
 from .convoy import CONDUCTOR as CONDUCTOR_ID
 from . import bearer as _bearer
 from .usage import CachedProbe, normalize_usage_remaining, probe as _live_probe
@@ -371,7 +371,7 @@ TOOLS: list[dict[str, Any]] = [
         "description": "Headless synapse; does not pop a TUI. Naming a live seat queues the body (delivery=queued, delivered=false) instead of spawning a second --resume. Codex may native-queue. Fake ACKs are recorded, not delivered. live=true still never steals a TUI. Refuses limited without waiting.",
         "inputSchema": _schema(
             {
-                "to": {"type": "string"},
+                "to": {"type": "string", "description": "Seat harness/name or a neuron id on this thread (n + six hex digits)."},
                 "body": {"type": "string"},
                 "model": {"type": "string"},
                 "label": {"type": "string"},
@@ -431,7 +431,7 @@ TOOLS: list[dict[str, Any]] = [
     },
     {
         "name": "note",
-        "description": "Neuron note: ONE compact line into the thread feed (kind=note) with an attributed from — the writing seat's claimed instance_id (the bus does not authenticate authorship), never grok-bot or an alias of it (conductor lines are stamp). Optional to addresses one seat or grok-bot. Same one-line clamp as stamp; this is the hosted-neuron write path.",
+        "description": "Neuron note: ONE compact line into the thread feed (kind=note) with a claimed from — the writing seat's instance_id (the bus does not authenticate authorship), never grok-bot or an alias of it (conductor lines are stamp). The row says author_claimed=true and leaves device and verified_by null. Optional to addresses one seat or grok-bot. Same one-line clamp as stamp; this is the hosted-neuron write path.",
         "inputSchema": _schema(
             {
                 "summary": {"type": "string", "description": "Compact one-line note"},
@@ -948,10 +948,46 @@ def _call_tool_at(root: Path, name: str, args: dict[str, Any]) -> dict[str, Any]
         body = args.get("body")
         if not to or body is None:
             return {"ok": False, "error": "send requires to and body"}
+        to = to.strip()
+        if not to:
+            return {"ok": False, "error": "send requires to and body"}
         if not isinstance(body, str):
             body = str(body)
         instance_id = _opt_str(args, "session_id")
         resume = _opt_str(args, "resume")
+        worktree = _opt_str(args, "worktree")
+        cid = read_id(root)
+        if not cid:
+            return {"ok": False, "error": "send requires a bound thread"}
+        seats = list_seats(root, convoy_id=cid)
+        exact_seat = any(row.get("session_id") == to for row in seats)
+        if not exact_seat and re.fullmatch(r"n[0-9a-fA-F]{6}", to):
+            resolved = resolve_neuron_id_on_thread(root, to)
+            if not resolved["ok"]:
+                return resolved
+            sid = resolved["session_id"]
+            # A blank override is an unset field, not a conflicting address.
+            instance_id, resume, worktree = (
+                None if value is None or not value.strip() else value
+                for value in (instance_id, resume, worktree))
+            if instance_id is not None and instance_id.strip() != sid:
+                return {"ok": False, "error": "neuron id " + to + " conflicts with session_id"}
+            if resume is not None and resume.strip() != resolved.get("resume"):
+                return {"ok": False, "error": "neuron id " + to + " conflicts with resume"}
+            seat_worktree = resolved.get("worktree")
+            if worktree is not None and (not seat_worktree or
+                    os.path.normcase(os.path.normpath(worktree)) !=
+                    os.path.normcase(os.path.normpath(str(seat_worktree)))):
+                return {"ok": False, "error": "neuron id " + to + " conflicts with worktree"}
+            # Reuse send_one's chair resolver so its worktree, resume and git
+            # pointers are identical to an address by session_id.
+            to, instance_id, resume, worktree = sid, None, None, None
+        elif not exact_seat and not is_wrapper_name(to):
+            harness = canonical_harness_id(to)
+            if harness not in {row["id"] for row in harness_entries()}:
+                # Uncontracted names are typos, not new harnesses to spawn.
+                return {"ok": False, "error": "no target " + to + " on this thread (not a seated session or known harness)"}
+            to = harness
         live = _opt_bool(args, "live", False)
         runner = native_runner if live else fake_runner
         card = send_one(
@@ -962,8 +998,9 @@ def _call_tool_at(root: Path, name: str, args: dict[str, Any]) -> dict[str, Any]
             resume=resume,
             label=_opt_str(args, "label"),
             runner=runner,
-            worktree=_opt_str(args, "worktree"),
+            worktree=worktree,
             allow_interactive_resume=not live,
+            local_writer=False,
         )
         model = _opt_str(args, "model")
         if model is not None and card.get("model") is None:
@@ -1047,6 +1084,9 @@ def _call_tool_at(root: Path, name: str, args: dict[str, Any]) -> dict[str, Any]
         return {"ok": True, "schema_version": SCHEMA_VERSION, **row}
     if name == "note":
         try:
+            # Today's checked bearer identifies a conductor, never a neuron.
+            # This hosted author's identity remains a claim until a separate
+            # neuron principal exists; do not borrow the MCP server's device.
             row = neuron_note(
                 root,
                 str(args.get("summary") or ""),
@@ -1190,7 +1230,7 @@ def _call_tool_at(root: Path, name: str, args: dict[str, Any]) -> dict[str, Any]
         if not _write_tools_enabled():
             return {"ok": False, "seat": sid, "error": _gate_text("seated")}
         try:
-            row = seated_ack(root, sid, token)["row"]
+            row = seated_ack(root, sid, token, local_writer=False)["row"]
         except ValueError as e:
             return {"ok": False, "seat": sid, "error": str(e)}
         # the ack row carries the token it echoed; the caller supplied it, so

@@ -61,11 +61,20 @@ _ROW_SCHEMA: dict[str, Any] = {
                                                               "model": _NULLABLE_STR, "effort": _NULLABLE_STR}}}}}}},
     },
 }
+# An unbound origin or unknown thread returns a routing refusal before a card
+# can be built. Its structuredContent must satisfy this same declared schema;
+# requiring card facts on that path made MCP clients reject the useful error.
 CARD_OUTPUT_SCHEMA: dict[str, Any] = {
     "type": "object",
-    "required": ["ok", "header", "tagline", "summary", "preflight", "repo", "rows"],
+    "required": ["ok"],
+    "allOf": [{
+        "if": {"properties": {"ok": {"const": True}}, "required": ["ok"]},
+        "then": {"required": ["header", "tagline", "summary", "preflight", "repo", "rows"]},
+        "else": {"required": ["error"]},
+    }],
     "properties": {
         "ok": {"type": "boolean"},
+        "error": {"type": "string", "description": "Named refusal when no thread can be selected; no card facts are fabricated."},
         "header": {"const": HEADER},
         "tagline": {"const": TAGLINE},
         "summary": {"type": "object", "required": ["harnesses_installed", "seats", "thread", "github"],

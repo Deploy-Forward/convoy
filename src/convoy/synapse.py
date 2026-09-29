@@ -57,7 +57,7 @@ def _normalize_target_name(name: str) -> str:
     return str(name or "").strip().lower().replace("_", "-")
 
 
-def _is_wrapper_name(name: str) -> bool:
+def is_wrapper_name(name: str) -> bool:
     key = _normalize_target_name(name)
     return key in _WRAPPER_NAMES
 
@@ -94,7 +94,7 @@ def native_runner(
     **_k: Any,
 ) -> dict[str, Any]:
     harness = _native_harness_bin(to)
-    if _is_wrapper_name(harness):
+    if is_wrapper_name(harness):
         return {
             "ok": False,
             "to": to,
@@ -207,6 +207,7 @@ def deliver_to_live_seat(
     extra_state: dict[str, Any] | None = None,
     card: dict[str, Any] | None = None,
     origin: dict[str, Any] | None = None,
+    local_writer: bool = True,
 ) -> dict[str, Any]:
     """Queue a body for an existing occupant. Never spawn --resume.
 
@@ -244,7 +245,6 @@ def deliver_to_live_seat(
     runner = native["runner"] if native else "inbox"
     state = git_state(Path(packed.get("worktree") or root))
     extra = {
-        "to": to,
         "ok": True,
         "dry_run": False,
         "runner": runner,
@@ -262,7 +262,8 @@ def deliver_to_live_seat(
     }
     if extra_state:
         extra.update(extra_state)
-    hook(root, kind="synapse", summary="send " + to, instance_id=sid, author=None, extra=extra)
+    hook(root, kind="synapse", summary="send " + to, instance_id=sid, author=None,
+         to=to, extra=extra, local_writer=local_writer)
     return {
         "ok": True,
         "to": to,
@@ -314,6 +315,7 @@ def _send_one(
     allow_interactive_resume: bool = True,
     card: dict[str, Any] | None = None,
     origin: dict[str, Any] | None = None,
+    local_writer: bool = True,
 ) -> dict[str, Any]:
     # Address a CHAIR by its name (`send --to codex-1`): a `to` that is a
     # chair session_id resolves to that chair's harness, id and worktree. A
@@ -341,7 +343,7 @@ def _send_one(
         return packed_row, stdin_for(packed_row, body)
 
     packed, message = _pack_message(resolved_instance_id)
-    if _is_wrapper_name(target_name):
+    if is_wrapper_name(target_name):
         return {
             "ok": False,
             "to": to,
@@ -386,7 +388,8 @@ def _send_one(
         }
         # v2: the feed row carries the whole ask card so siblings pulling
         # feed --since see the remedy, not just the caller.
-        hook(root, kind="refuse", summary=to + " limited", instance_id=resolved_instance_id, author=None, extra={"to": to, "raw": usage.get("raw"), "ask": ask})
+        hook(root, kind="refuse", summary=to + " limited", instance_id=resolved_instance_id, author=None,
+             to=to, extra={"raw": usage.get("raw"), "ask": ask})
         return {
             "ok": False,
             "to": to,
@@ -409,7 +412,8 @@ def _send_one(
             summary=to + " live resume refused",
             instance_id=instance,
             author=None,
-            extra={"to": to, "reason": "no-steal-live-resume"},
+            to=to,
+            extra={"reason": "no-steal-live-resume"},
         )
         return {
             "ok": False,
@@ -480,6 +484,7 @@ def _send_one(
             usage=usage,
             card=card,
             origin=origin,
+            local_writer=local_writer,
         )
     if not resolved_instance_id and not resume_token:
         cid = read_id(root)
@@ -527,7 +532,9 @@ def _send_one(
     argv0 = argv[0] if isinstance(argv, list) and argv else None
     # instance_id here is the TARGET/spawned session (the row's subject), not
     # the sender — author=None records "sender unknown" instead of a lie.
-    hook(root, kind="synapse", summary="send " + to, instance_id=sid, author=None, extra={"to": to, "ok": card.get("ok"), "dry_run": False, "runner": runner_kind(run), "argv0": argv0, **extra})
+    hook(root, kind="synapse", summary="send " + to, instance_id=sid, author=None, to=to,
+         extra={"ok": card.get("ok"), "dry_run": False, "runner": runner_kind(run), "argv0": argv0, **extra},
+         local_writer=local_writer)
     card["pointers"] = packed
     card["stdin"] = message
     card["usage_remaining"] = normalize_usage_remaining(usage.get("usage_remaining"))

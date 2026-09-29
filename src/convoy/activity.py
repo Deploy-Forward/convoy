@@ -24,7 +24,7 @@ from typing import Any
 from .cmd import convoy_root_command
 from .convoy import list_seats, read_thread, read_id
 from .inbox import pending
-from .layer import feed_path, feed_since
+from .layer import STAMPED_KINDS, feed_path, feed_since
 from .panes import match_processes
 
 EPOCH = "1970-01-01T00:00:00.000000Z"
@@ -71,6 +71,7 @@ def neuron_activity(
         proc_by_chair = {c["session_id"]: c["live"] for c in view["chairs"]}
 
     authored: dict[str, dict[str, Any]] = {}
+    stamped: dict[str, dict[str, Any]] = {}
     addressed: dict[str, list[dict[str, Any]]] = {}
     for r in rows:
         f = r.get("from")
@@ -78,6 +79,10 @@ def neuron_activity(
             prev = authored.get(f)
             if prev is None or str(r.get("ts") or "") > str(prev.get("ts") or ""):
                 authored[f] = r
+            if r.get("kind") in STAMPED_KINDS:
+                prev_stamp = stamped.get(f)
+                if prev_stamp is None or str(r.get("ts") or "") > str(prev_stamp.get("ts") or ""):
+                    stamped[f] = r
         t = r.get("to")
         if isinstance(t, str) and t and r.get("kind") in ("note", "conductor"):
             addressed.setdefault(t, []).append(r)
@@ -86,6 +91,7 @@ def neuron_activity(
     for s in seats:
         sid = s["session_id"]
         last = authored.get(sid)
+        last_stamp = stamped.get(sid)
         last_ts = str(last.get("ts")) if last else None
         # Rows addressed to it after its own last word: what it has not answered.
         waiting = [r for r in addressed.get(sid, []) if not last_ts or str(r.get("ts") or "") > last_ts]
@@ -118,6 +124,9 @@ def neuron_activity(
             "last_authored": last_ts,
             "last_authored_age": _age(last_ts, now),
             "last_said": (last.get("summary") or "")[:120] if last else None,
+            "verified_by": last_stamp.get("verified_by") if last_stamp else None,
+            "author_claimed": last_stamp.get("author_claimed") if last_stamp else None,
+            "device": last_stamp.get("device") if last_stamp else None,
             "unread": len(waiting),
             "last_addressed_by": (waiting[-1].get("from") if waiting else None),
             "inbox_pending": inbox_n,
@@ -147,35 +156,62 @@ def neuron_id(convoy_id: str | None, session_id: str | None) -> str | None:
     return "n" + hashlib.sha256((str(convoy_id) + ":" + str(session_id)).encode("utf-8")).hexdigest()[:6]
 
 
+def _seats_with_neuron_id(root: Path, cid: str | None, want: str) -> list[dict[str, Any]]:
+    if not cid:
+        return []
+    seen: set[str] = set()
+    hits: list[dict[str, Any]] = []
+    for seat in list_seats(root, convoy_id=cid):
+        sid = seat.get("session_id")
+        if not sid or sid in seen:
+            continue
+        seen.add(sid)
+        if neuron_id(cid, sid) == want:
+            hits.append(seat)
+    return hits
+
+
 def resolve_neuron_id(nid: str) -> dict[str, Any]:
     """{ok, root, thread, convoy_id, session_id, to} for one short id, or an
     error naming the verb that lists them. Two chairs sharing six hex digits is
     reported as ambiguous, never guessed."""
     from .index import routable_threads
-    from .convoy import list_seats
     want = str(nid or "").strip().lower()
     hits: list[dict[str, Any]] = []
     for t in routable_threads():
         root = Path(str(t.get("root")))
         cid = t.get("convoy_id")
         try:
-            seats = list_seats(root, convoy_id=cid)
+            seats = _seats_with_neuron_id(root, cid, want)
         except (OSError, ValueError):
             continue
-        seen: set[str] = set()
         for s in seats:
             sid = s.get("session_id")
-            if not sid or sid in seen:
-                continue
-            seen.add(sid)
-            if neuron_id(cid, sid) == want:
-                hits.append({"root": str(root.resolve()), "thread": t.get("thread"), "convoy_id": cid,
-                             "session_id": sid, "to": s.get("to"), "model": s.get("model")})
+            hits.append({"root": str(root.resolve()), "thread": t.get("thread"), "convoy_id": cid,
+                         "session_id": sid, "to": s.get("to"), "model": s.get("model")})
     if len(hits) == 1:
         return {"ok": True, "id": want, **hits[0]}
     if not hits:
         return {"ok": False, "id": want, "error": "no neuron with id " + want + " on this machine; see `convoy neurons --all`"}
     return {"ok": False, "id": want, "error": "ambiguous id " + want + ": " + str(len(hits)) + " chairs; address by --root and --instance-id", "hits": hits}
+
+
+def resolve_neuron_id_on_thread(root: Path, nid: str) -> dict[str, Any]:
+    """Resolve a short neuron id only among chairs bound to this root.
+
+    MCP is already routed to one thread. A machine-wide lookup here could
+    accidentally send to another thread, so an absent or colliding id refuses.
+    """
+    want = str(nid or "").strip().lower()
+    cid = read_id(root)
+    hits = _seats_with_neuron_id(root, cid, want)
+    if len(hits) == 1:
+        return {"ok": True, "id": want, "session_id": hits[0]["session_id"],
+                "to": hits[0].get("to"), "worktree": hits[0].get("worktree"),
+                "resume": hits[0].get("resume")}
+    if len(hits) > 1:
+        return {"ok": False, "id": want, "error": "ambiguous neuron id " + want + " on this thread"}
+    return {"ok": False, "id": want, "error": "no neuron " + want + " on this thread"}
 
 
 def neurons_everywhere(since: str | None = None) -> dict[str, Any]:
@@ -208,6 +244,8 @@ def neurons_everywhere(since: str | None = None) -> dict[str, Any]:
                          "harness": n.get("harness"), "model": n.get("model"), "neuron": n.get("session_id"),
                          "thread": thread, "root": str(root), "active": bool(n.get("active")),
                          "evidence": n.get("evidence"), "last_authored": n.get("last_authored"),
+                         "verified_by": n.get("verified_by"), "author_claimed": n.get("author_claimed"),
+                         "device": n.get("device"),
                          "inbox_pending": n.get("inbox_pending"), "send_command": n.get("send_command")})
     rows.sort(key=lambda r: (not r["active"], str(r.get("last_authored") or "")), reverse=False)
     rows.sort(key=lambda r: str(r.get("last_authored") or ""), reverse=True)

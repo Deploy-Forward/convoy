@@ -96,7 +96,7 @@ def looks_like_widget(image: str | None) -> bool | None:
 
 
 def detached_spawn(argv: list[str]) -> int:
-    """Spawn with no console tie: the strip outlives the terminal that started it."""
+    """Spawn a windowless strip that outlives its launching terminal."""
     kwargs: dict[str, Any] = {
         "stdin": subprocess.DEVNULL,
         "stdout": subprocess.DEVNULL,
@@ -104,7 +104,11 @@ def detached_spawn(argv: list[str]) -> int:
         "close_fds": True,
     }
     if os.name == "nt":
-        kwargs["creationflags"] = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
+        # CREATE_NO_WINDOW is ignored when combined with DETACHED_PROCESS.
+        # Redirected stdio plus a new process group keeps the service separate
+        # without leaving a visible Python console behind.
+        kwargs["creationflags"] = (getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
+                                   | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0x00000200))
     else:
         kwargs["start_new_session"] = True
     return subprocess.Popen(argv, **kwargs).pid

@@ -22,7 +22,7 @@ from .index import find_root, index_path, list_threads, prune_threads, routable_
 from .activity import neuron_activity
 from .panes import bodies, identify
 from .provenance import build_provenance, rebase_check, record_commit
-from .layer import SCHEMA_VERSION, conductor_stamp, feed_since, hook, parse_since
+from .layer import SCHEMA_VERSION, STAMPED_KINDS, conductor_stamp, feed_since, hook, parse_since
 from .rail import build_rail, root_for
 from .relaunch import relaunch
 from .lifecycle import join, pass_lead, seated_ack, swap
@@ -393,14 +393,23 @@ def main(argv: list[str] | None = None) -> int:
         return 0 if me.get("ok") else 1
     if args.cmd == "hook":
         instance_id = args.instance_id
+        verified_by = None
+        # Explicit authorship is legacy-compatible when no body can be
+        # identified, but it cannot override a different proved chair.
+        me = identify(root) if (args.as_me or instance_id) else None
+        if instance_id and me and me.get("chair") and instance_id != me["chair"]:
+            print(json.dumps({"ok": False, "error": "refuse hook: explicit author disagrees with this body's verified chair", "whoami": me}))
+            return 1
         if getattr(args, "as_me", False):
-            me = identify(root)
-            if not me.get("chair"):
+            if not me or not me.get("chair"):
                 print(json.dumps({"ok": False, "error": "refuse --as-me: no chair on this thread matches this body", "whoami": me}))
                 return 1
             instance_id = me["chair"]
+        if args.kind in STAMPED_KINDS and me and me.get("chair") == instance_id:
+            verified_by = me.get("via")
         try:
-            row = hook(root, args.kind, args.summary, instance_id=instance_id, to=args.to)
+            row = hook(root, args.kind, args.summary, instance_id=instance_id,
+                       to=args.to, verified_by=verified_by)
         except ValueError as e:
             print(json.dumps({"ok": False, "error": str(e)}))
             return 1
@@ -566,8 +575,12 @@ def main(argv: list[str] | None = None) -> int:
                 card = swap(root, args.seat, to=args.to, handoff=args.handoff,
                             author=args.author, model=args.model, effort=args.effort)
             else:
+                me = identify(root)
+                if me.get("chair") and me["chair"] != args.seat:
+                    raise ValueError("refuse seated: this body proves another chair")
                 card = seated_ack(root, args.seat, token=args.token,
-                                  incarnation=getattr(args, "incarnation", None))
+                                  incarnation=getattr(args, "incarnation", None),
+                                  verified_by=me.get("via") if me.get("chair") == args.seat else None)
         except ValueError as e:
             print(json.dumps({"ok": False, "error": str(e)}))
             return 1

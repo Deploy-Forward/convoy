@@ -25,6 +25,7 @@ from convoy.widget_service import (
     PIDFILE,
     auto_widget_service,
     convoy_home,
+    detached_spawn,
     ensure_widget_service,
     looks_like_widget,
     process_image,
@@ -33,6 +34,12 @@ from convoy.widget_service import (
 from convoy.widget import close_action, nudge_await_status, nudge_delivered
 
 NULL_PROBE = {"usage_remaining": None, "limited": False, "raw": None}
+
+# Win32 process creation flags, spelled out so the spawn test runs on
+# every OS (subprocess only defines these names on Windows Python).
+CREATE_NO_WINDOW = 0x08000000
+CREATE_NEW_PROCESS_GROUP = 0x00000200
+DETACHED_PROCESS = 0x00000008
 
 
 def _git(cwd, *argv):
@@ -135,6 +142,22 @@ class Service(unittest.TestCase):
         self.assertEqual(argv[1:], ["-m", "convoy", "widget", "--refresh", "3", "--topmost"])
         self.assertNotIn("--resume", argv)
         self.assertNotIn("-p", argv)
+
+    def test_windows_service_spawn_has_no_console_and_remains_independent(self):
+        child = mock.Mock(pid=4242)
+        with mock.patch("convoy.widget_service.os.name", "nt"), \
+             mock.patch("convoy.widget_service.subprocess.Popen", return_value=child) as popen:
+            self.assertEqual(detached_spawn(["synthetic-python", "-m", "convoy", "widget"]), 4242)
+        args, kwargs = popen.call_args
+        self.assertEqual(args[0], ["synthetic-python", "-m", "convoy", "widget"])
+        flags = kwargs["creationflags"]
+        self.assertTrue(flags & CREATE_NO_WINDOW)
+        self.assertTrue(flags & CREATE_NEW_PROCESS_GROUP)
+        self.assertFalse(flags & DETACHED_PROCESS,
+                         "Windows ignores CREATE_NO_WINDOW when DETACHED_PROCESS is present")
+        for stream in ("stdin", "stdout", "stderr"):
+            self.assertIs(kwargs[stream], subprocess.DEVNULL)
+        self.assertTrue(kwargs["close_fds"])
 
     def test_first_run_spawns_once_and_writes_pid(self):
         card = ensure_widget_service(self.home, spawner=self._spawner(777), alive_fn=lambda _p: False)

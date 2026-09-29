@@ -67,6 +67,11 @@ def _require(schema, payload, path="card"):
     recursively through object properties and array items."""
     for key in schema.get("required") or []:
         assert key in payload, path + " lacks required key " + repr(key)
+    for condition in schema.get("allOf") or []:
+        if condition.get("if", {}).get("properties", {}).get("ok", {}).get("const") is payload.get("ok"):
+            _require(condition.get("then", {}), payload, path)
+        else:
+            _require(condition.get("else", {}), payload, path)
     for key, sub in (schema.get("properties") or {}).items():
         if key not in payload or not isinstance(sub, dict):
             continue
@@ -260,6 +265,25 @@ class CardWire(unittest.TestCase):
         self.probe.return_value = {"usage_remaining": {"session_pct": 30}, "limited": False, "raw": "x"}
         rows = {r["harness"]: r for r in self._call("card")["structuredContent"]["rows"]}
         self.assertEqual(rows["claude"]["usage_remaining"], {"session_pct": 30})
+
+    def test_unbound_card_refusal_matches_its_declared_output_schema(self):
+        httpd = make_server(None, "127.0.0.1", 0)
+        threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        self.addCleanup(httpd.server_close)
+        self.addCleanup(httpd.shutdown)
+        url = "http://127.0.0.1:%s/mcp" % httpd.server_address[1]
+        tools = {t["name"]: t for t in _rpc(url, "tools/list")["result"]["tools"]}
+        result = _rpc(url, "tools/call", {"name": "card", "arguments": {}})["result"]
+        self.assertTrue(result["isError"])
+        refusal = result["structuredContent"]
+        self.assertFalse(refusal["ok"])
+        self.assertIn("name one", refusal["error"])
+        self.assertEqual(json.loads(result["content"][0]["text"]), refusal)
+        _require(tools["card"]["outputSchema"], refusal)
+        named = _rpc(url, "tools/call", {"name": "card", "arguments": {"thread": "synthetic-missing-thread"}})["result"]
+        self.assertTrue(named["isError"])
+        self.assertIn("synthetic-missing-thread", named["structuredContent"]["error"])
+        _require(tools["card"]["outputSchema"], named["structuredContent"])
 
     def test_a_seeded_resume_id_and_inbox_token_appear_nowhere_in_the_card(self):
         for gate in ("", "1"):

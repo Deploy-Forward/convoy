@@ -14,6 +14,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+from .index import home_dir
+from .report import read_origin
 from .usage import normalize_usage_remaining
 
 FEED_NAME = "feed.jsonl"
@@ -46,13 +48,27 @@ def _is_conductor_alias(val: Any) -> bool:
 
 
 _AUTHOR_IS_INSTANCE = object()
+_VERIFIED_METHODS = frozenset(("environment", "token", "pane-host", "worktree"))
+STAMPED_KINDS = frozenset(("note", "synapse", "seated"))
+_RESERVED_FIELDS = frozenset(("ts", "kind", "summary", "instance_id", "from", "to",
+                              "device", "verified_by", "author_claimed"))
 
 
-def hook(root: Path, kind: str, summary: str, instance_id: str | None = None, extra: dict[str, Any] | None = None, to: str | None = None, author: Any = _AUTHOR_IS_INSTANCE) -> dict[str, Any]:
+def _paired_device() -> str | None:
+    """Return only the paired machine id, never a hostname or credential."""
+    origin = read_origin(home_dir())
+    value = (origin or {}).get("machine_id")
+    return value.strip() if isinstance(value, str) and value.strip() else None
+
+
+def hook(root: Path, kind: str, summary: str, instance_id: str | None = None, extra: dict[str, Any] | None = None, to: str | None = None, author: Any = _AUTHOR_IS_INSTANCE, *, verified_by: str | None = None, local_writer: bool = True, allow_conductor_author: bool = False) -> dict[str, Any]:
     # `from` is AUTHORSHIP, `instance_id` is the row's subject. They coincide
     # on note-family rows (default), but a synapse/refuse row's instance_id is
     # the TARGET session — passing author=None there records "sender unknown"
     # instead of promoting the recipient to author (a verified defect).
+    # `device` identifies the author's machine: the paired machine for a local
+    # CLI row, independent of author proof, but null for an MCP-originated row
+    # whose remote caller's machine is unknown (local_writer=False).
     if author is _AUTHOR_IS_INSTANCE:
         author = instance_id
     # The refusal is an AUTHORSHIP rule: it tests author only. instance_id is
@@ -60,7 +76,7 @@ def hook(root: Path, kind: str, summary: str, instance_id: str | None = None, ex
     # would raise post-runner on synapse rows, discarding the card and leaving
     # a hop with zero feed rows (a pre-merge review finding). Constraining
     # subject names belongs at seat/register write time, where nothing has run.
-    if _is_conductor_alias(author):
+    if _is_conductor_alias(author) and not (kind == "conductor" and allow_conductor_author):
         raise ValueError("refuse grok-bot as author; conductor identity is stamp-only")
     event = {"ts": utc_now(), "kind": kind, "instance_id": instance_id, "summary": summary}
     if author:
@@ -68,7 +84,15 @@ def hook(root: Path, kind: str, summary: str, instance_id: str | None = None, ex
     if to:
         event["to"] = to
     if extra:
-        event.update(extra)
+        # These fields belong to the writer, never to caller-provided row data.
+        event.update({key: value for key, value in extra.items()
+                      if key not in _RESERVED_FIELDS})
+    if kind in STAMPED_KINDS:
+        method = verified_by if verified_by in _VERIFIED_METHODS else None
+        if event.get("from") and method is None:
+            event["author_claimed"] = True
+        event["device"] = _paired_device() if local_writer else None
+        event["verified_by"] = method
     path = feed_path(root)
     # ONE os-level append per row. Four neurons and a lead write this file
     # concurrently; buffered text-mode appends tore a row in two on Windows
@@ -122,11 +146,12 @@ def conductor_stamp(
     leaves principal null: such a stamp cannot be told from a forged one.
     """
     text, truncated = _compact(summary, "conductor")
+    if _is_conductor_alias(instance_id):
+        raise ValueError("refuse grok-bot as author; conductor identity is stamp-only")
     who = _CONDUCTOR
     if isinstance(principal, dict) and principal.get("conductor"):
         who = str(principal["conductor"])
     extra: dict[str, Any] = {
-        "from": who,
         "principal": {"bearer": str(principal.get("id"))} if isinstance(principal, dict) and principal.get("id") else None,
         "agent": _blank_to_none(agent),
         "model": _blank_to_none(model),
@@ -136,13 +161,14 @@ def conductor_stamp(
     }
     if truncated:
         extra["truncated"] = True
-    return hook(root, "conductor", text, instance_id=_blank_to_none(instance_id), extra=extra)
+    return hook(root, "conductor", text, instance_id=_blank_to_none(instance_id),
+                extra=extra, author=who, allow_conductor_author=True)
 
 
 def neuron_note(root: Path, summary: str, instance_id: str | None = None, to: str | None = None) -> dict[str, Any]:
     """One compact neuron line into the thread feed (kind=note).
 
-    Honest `from` is required: the writing seat's instance_id, never grok-bot
+    Claimed `from` is required: the writing seat's instance_id, never grok-bot
     (conductor lines are stamp-only). Same one-line ≤ STAMP_MAX_CHARS clamp as
     conductor_stamp; `to` is an optional addressee (a seat id or grok-bot).
     """
@@ -151,7 +177,8 @@ def neuron_note(root: Path, summary: str, instance_id: str | None = None, to: st
         raise ValueError("refuse anonymous note: instance_id (the writing seat) is required")
     text, truncated = _compact(summary, "note")
     extra: dict[str, Any] = {"truncated": True} if truncated else {}
-    return hook(root, "note", text, instance_id=author, extra=extra or None, to=_blank_to_none(to))
+    return hook(root, "note", text, instance_id=author, extra=extra or None,
+                to=_blank_to_none(to), local_writer=False)
 
 
 _RELATIVE = re.compile(r"^(\d+)([smhd])$")

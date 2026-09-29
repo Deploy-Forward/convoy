@@ -44,12 +44,15 @@ def _source_dir() -> str:
 
 
 def quiet_spawn_kwargs() -> dict:
-    """Never open a console for a helper child. A detached parent (the widget
-    service, DETACHED_PROCESS) has no console, so on Windows every child
-    (PowerShell pane scan, `codex exec /status`, `claude -p /usage`, git)
-    would get a brand-new visible console window: black panes all over the
-    screen, one per 3 s tick (seen live). CREATE_NO_WINDOW
-    stops that; on other OSes there is nothing to add."""
+    """Never open a console for a helper child. The widget service starts
+    with CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP (see
+    `widget_service.detached_spawn`), so it runs without a console window.
+    A parent with no console at all (a DETACHED_PROCESS spawn, pythonw)
+    would give every Windows child (PowerShell pane scan, `codex exec
+    /status`, `claude -p /usage`, git) a brand-new visible console window:
+    black panes all over the screen, one per 3 s tick (seen live).
+    CREATE_NO_WINDOW on the child stops that whatever the parent; on other
+    OSes there is nothing to add."""
     if os.name == "nt":
         return {"creationflags": getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)}
     return {}

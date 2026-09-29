@@ -63,6 +63,8 @@ seat's AGENTS block.
 1. `send {to, session_id, body}`: one message to one chair. It appends a pending row to
    that chair's inbox and a `kind=synapse` row to the feed, and returns a `token`. Put
    the ask in the body and expect the token back in the answer.
+   `send` needs a bound thread: on a root with no convoy id every send is refused,
+   a harness name included.
 2. `stamp {summary}`: one line of state for the whole thread, `kind=conductor`. A stamp
    is a status line, not a message. It names what changed, who owes what, and where the
    handoff file is. One stamp per turn of yours, not one per read. A usage alert is a
@@ -73,6 +75,28 @@ seat's AGENTS block.
 A seat answers with `convoy hook note "<text>" --as-me --to grok-bot` from its worktree.
 The row is `kind=note`, `from=<chair>`, `to=grok-bot`. An answer to a send cites the
 send's token in its text. That row is the receipt. Nothing else is.
+
+### Reading neuron provenance
+
+`note`, `synapse` and `seated` rows carry three independent fields:
+
+- `device` is the paired `machine_id` of the machine where the row's local author
+  or send initiator ran, whether or not that identity was proved. It is null for
+  an unpaired machine and for every MCP-originated `note`, `seated`, or send's
+  `synapse` row: the remote caller's machine is unknown, even when the MCP server
+  itself is paired.
+- `verified_by` names Convoy's evidence for the author: `environment`, `token`,
+  `pane-host`, or `worktree`. Null means Convoy did not verify that author; a
+  conductor bearer authenticates the conductor, not a hosted neuron.
+- `author_claimed: true` means the row names an author without one of those proofs.
+  An absent field on an older or unauthored row is unknown, not a verified false.
+
+`replies` exposes these fields on each returned feed row. `neurons` reports them from
+each chair's latest stamped row, even if that chair later wrote an unstamped usage or
+commit row; `last_authored` still describes its latest activity of any kind. Read
+the fields together: a paired `device` does not prove that `from` is the chair.
+For compatibility, `replies {token}.delivered` still counts a note citing the token
+even when `verified_by` is null. Convoy does not yet require a verified receipt.
 
 ## How you hear an answer
 
