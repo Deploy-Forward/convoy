@@ -329,7 +329,7 @@ def main(argv: list[str] | None = None) -> int:
     ob.add_argument("--github", choices=("yes", "no"), default=None, help="record the wizard's GitHub? answer on the bind")
 
     pf = sub.add_parser("preflight", help="fail-closed wizard preflight: live MCP tools/list vs the verbs the @convoy wizard needs")
-    pf.add_argument("--url", default=None, help="MCP endpoint (default: public https://convoy.bot/mcp)")
+    pf.add_argument("--url", default=None, help="MCP endpoint (default: your own Convoy, http://127.0.0.1:8788/mcp)")
     pf.add_argument("--tools", default=None, help="comma-separated tool names to score offline instead of fetching")
 
     mcp = sub.add_parser("mcp")

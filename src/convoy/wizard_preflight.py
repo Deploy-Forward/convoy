@@ -17,7 +17,7 @@ from typing import Any, Callable
 
 from .mcp_http import _WRITE_TOOLS as WRITE_GATED, TOOLS as PACKAGED_TOOLS
 
-PUBLIC_MCP_URL = "https://convoy.bot/mcp"
+PUBLIC_MCP_URL = "http://127.0.0.1:8788/mcp"
 
 # Every verb the wizard skill calls (plugin/convoy/skills/convoy-wizard, Gate 0),
 # and only those: plugin_wizard_sequence_test holds Gate 0's list equal to this.

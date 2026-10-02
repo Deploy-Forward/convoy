@@ -1,7 +1,6 @@
 """Streamable-style JSON-RPC HTTP MCP for convoy. Attach from Grok Bot is still RED.
 
-Public URL when attached: https://convoy.bot/mcp
-This process does not make that URL live. Do not mark GREEN.
+Default address: http://127.0.0.1:8788/mcp (`convoy mcp`)
 One MCP process is bound to one convoy root (and its bound thread).
 """
 from __future__ import annotations

@@ -10,9 +10,8 @@ same pin and 36-line catalog/index diff this neuron generated).
 `mergeable_state` was `blocked` at 2026-09-04T16:15Z (owners/CI, not content).
 Do not open a second PR. Do not hand-edit `.grok-plugin/plugin-index.json`.
 
-Live `https://convoy.bot/mcp` is still 13 tools / public Gate 0 **RED**. The
-listing is the pack + hosted endpoint, not a claim that the public wizard is
-GREEN. See `docs/e2e-dod.md`.
+The listing is the pack, which connects to the user's own Convoy on loopback
+(`http://127.0.0.1:8788/mcp`); there is no hosted endpoint.
 
 ## Catalog entry to add
 
@@ -78,7 +77,7 @@ Adds **convoy** as a third-party remote listing, same shape as Exa
 The plugin root is a subdirectory, so `source.path` is `plugin/convoy`
 (mongodb/railway/stripe pattern).
 
-The hosted MCP URL in `.mcp.json` is `https://convoy.bot/mcp`. The plugin
+The MCP URL in `.mcp.json` is the user's own Convoy on loopback, `http://127.0.0.1:8788/mcp`. The plugin
 reads no API key. Public Convoy hides write/lifecycle verbs
 (`CONVOY_MCP_WRITE_TOOLS` unset); the wizard fail-closes (Gate 0 RED) until
 the user points at a gated/loopback endpoint. That is disclosed in the pack
@@ -111,7 +110,7 @@ Source org: [Deploy-Forward/convoy](https://github.com/Deploy-Forward/convoy)
 - [x] No reading/exfiltration of secrets, tokens, `.env`, or env vars.
 - [x] Hooks and MCP scope are least-privilege.
 - Network endpoints this plugin calls (and why):
-  `https://convoy.bot/mcp` only (hosted Convoy MCP). The plugin does not
+  `http://127.0.0.1:8788/mcp` only (the user's own Convoy, on their machine). The plugin does not
   call other origins. `repos` on a *gated* MCP host runs `gh repo list` as
   that host's login; the public endpoint must keep `repos` hidden.
 - Credentials/permissions it requires (and why):

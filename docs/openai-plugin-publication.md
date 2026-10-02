@@ -124,7 +124,7 @@ After sections 2 and 3 are green:
    Management: Write** and complete Deploy Forward business verification.
 2. Open the plugin submission portal and create **With MCP**. Submit the MCP
    server itself; do not reference an existing integration id.
-3. Use Universal URL `https://convoy.bot/mcp` unless OpenAI has explicitly
+3. Do not register a hosted Convoy URL: Convoy runs on the user's machine at `http://127.0.0.1:8788/mcp`; hosted clients use the Deploy Forward board, unless OpenAI has explicitly
    approved a template URL. Enter OAuth details and reviewer credentials that
    need no MFA, email, SMS, private network, or extra setup.
 4. Complete the domain challenge at

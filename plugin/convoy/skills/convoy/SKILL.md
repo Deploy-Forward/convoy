@@ -23,8 +23,8 @@ thread orchestration through Convoy MCP.
 
 ## Execution rules
 
-- Public MCP endpoint is `https://convoy.bot/mcp`.
-- Public MCP is bound to one root thread. A marketplace install cannot switch
+- The MCP endpoint is your own Convoy on loopback, `http://127.0.0.1:8788/mcp` (start it with `convoy mcp`).
+- Your Convoy MCP is bound to one root thread. A marketplace install cannot switch
   roots via CLI; attach an endpoint whose `--root` is the thread you want.
 - Reuse only documented Convoy verbs and cards. Do not wrap vendor CLIs.
 - Keep unknown values as `null`; do not invent session IDs, tokens, or usage.

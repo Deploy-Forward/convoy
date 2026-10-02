@@ -50,7 +50,7 @@ class PluginInstallBlackBox(unittest.TestCase):
         mcp = json.loads((pack / wrapper["mcpServers"]).read_text(encoding="utf-8"))
         server = mcp["mcpServers"]["convoy"]
         self.assertEqual(server["type"], "streamable-http")
-        self.assertTrue(server["url"].startswith("https://"))
+        self.assertEqual(server["url"], "http://127.0.0.1:8788/mcp")
 
     def test_every_skill_dir_has_front_matter_matching_its_name(self):
         pack = self._pack()

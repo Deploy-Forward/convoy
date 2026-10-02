@@ -37,7 +37,7 @@ Build install matches Exa:
 1. In Grok Bot, open **Settings → Plugins** and select **Marketplace**.
 2. Find **convoy** and install it; installed plugins are visible under **Yours**.
 3. The MCP view should show the `convoy` server (`type: http`,
-   `https://convoy.bot/mcp`). There is no OAuth/sign-in step; this plugin
+   `http://127.0.0.1:8788/mcp`, your own Convoy). There is no OAuth/sign-in step; this plugin
    reads no API key.
 
 Grok Build's `/marketplace` command is also supported: find **convoy** and
@@ -71,7 +71,7 @@ generated index.
 
 ## Network and permission disclosure
 
-- The installed MCP config connects only to `https://convoy.bot/mcp`.
+- The installed MCP config connects only to your own Convoy on loopback, `http://127.0.0.1:8788/mcp`.
 - The plugin reads no API key, environment variable, SSH key, or GitHub token.
 - `repos` runs `gh repo list` as the account logged in on the **MCP host**.
   A per-user/local endpoint therefore sees that user's login; the shared public

@@ -12,7 +12,7 @@ the repository's
 ## Package contents
 
 - `.codex-plugin/plugin.json` — OpenAI plugin metadata and presentation.
-- `.mcp.json` — remote HTTP MCP connection to `https://convoy.bot/mcp`.
+- `.mcp.json` — HTTP MCP connection to your own Convoy on loopback, `http://127.0.0.1:8788/mcp`.
 - `skills/convoy/SKILL.md` — live-capability orchestration and consent rules.
 - `skills/convoy-end/SKILL.md` — explicit task-end and push authorization rules.
 - `hooks/hooks.json` — Codex `Stop` heartbeat (`convoy end --hook`; never pushes).

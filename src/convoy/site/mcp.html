@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>convoy.bot MCP attach</title>
-  <meta name="description" content="Attach clients to convoy.bot MCP at /mcp.">
+  <meta name="description" content="Attach your MCP client to your own Convoy at http://127.0.0.1:8788/mcp.">
   <style>
     :root {
       --bg: #fbfbfa;
@@ -106,7 +106,7 @@
   <main class="card">
     <p class="line">This URL is the MCP root for clients.</p>
     <div class="attach-row">
-      <code id="mcp-url">https://convoy.bot/mcp</code>
+      <code id="mcp-url">http://127.0.0.1:8788/mcp</code>
       <button id="copy-url" type="button">Copy URL</button>
     </div>
     <p class="note">MCP clients POST JSON-RPC here; browsers use the landing for live tools.</p>
@@ -116,7 +116,7 @@
   <script>
     const button = document.getElementById("copy-url");
     const status = document.getElementById("copy-status");
-    const value = "https://convoy.bot/mcp";
+    const value = "http://127.0.0.1:8788/mcp";
 
     async function copyUrl() {
       try {

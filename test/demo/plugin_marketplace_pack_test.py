@@ -25,11 +25,11 @@ class PluginMarketplacePackContract(unittest.TestCase):
         data = json.loads(mcp.read_text(encoding="utf-8"))
         server = data.get("mcpServers", {}).get("convoy", {})
         self.assertEqual(server.get("type"), "http")
-        self.assertEqual(server.get("url"), "https://convoy.bot/mcp")
+        self.assertEqual(server.get("url"), "http://127.0.0.1:8788/mcp")
         note = server.get("note", "")
         self.assertIn("tools/list", note)
         self.assertIn("fails closed", note)
-        self.assertIn("hide write", note)
+        self.assertIn("loopback", note)
 
     def test_grok_catalog_discovers_like_exa(self):
         """xai-org/plugin-marketplace plugin_catalog.py load_manifest reads
@@ -98,7 +98,7 @@ class PluginMarketplacePackContract(unittest.TestCase):
         )
         server = data.get("mcpServers", {}).get("convoy", {})
         self.assertEqual(server.get("type"), "streamable-http")
-        self.assertEqual(server.get("url"), "https://convoy.bot/mcp")
+        self.assertEqual(server.get("url"), "http://127.0.0.1:8788/mcp")
 
     def test_cursor_discovery_manifests_exist(self):
         wrapper = PLUGIN_ROOT / ".cursor-plugin" / "plugin.json"

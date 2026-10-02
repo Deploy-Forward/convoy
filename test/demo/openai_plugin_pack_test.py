@@ -51,7 +51,7 @@ class OpenAIPluginPackContract(unittest.TestCase):
     def test_remote_mcp_uses_official_http_shape(self):
         data = json.loads((PLUGIN / ".mcp.json").read_text(encoding="utf-8"))
         server = data["mcpServers"]["convoy"]
-        self.assertEqual(server, {"type": "http", "url": "https://convoy.bot/mcp"})
+        self.assertEqual(server, {"type": "http", "url": "http://127.0.0.1:8788/mcp"})
         self.assertFalse((PLUGIN / ".app.json").exists(), "do not invent a registered app id")
 
     def test_bundled_skill_has_install_and_runtime_safety_contracts(self):

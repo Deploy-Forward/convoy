@@ -2,7 +2,7 @@
 
 Convoy is shared project memory for Grok Bot: attach one MCP endpoint, route work to your existing CLIs, and keep every neuron grounded in one durable thread state.
 
-Public MCP remains one root: `https://convoy.bot/mcp`. A named thread is a `--root` binding, not a second MCP URL.
+Convoy's MCP runs on your own machine, at `http://127.0.0.1:8788/mcp`. A named thread is a `--root` binding, not a second MCP URL.
 
 ## Install
 
@@ -33,8 +33,8 @@ its third-party entry must pin a reviewed full commit SHA from this repository
 and set `path` to `plugin/convoy`. After that catalog PR merges, Grok Build
 install is `/marketplace` → **convoy** → `i`, the same path
 [`exa-labs/exa-grok-plugin`](https://github.com/exa-labs/exa-grok-plugin)
-documents. There is no OAuth step: `.mcp.json` points at
-`https://convoy.bot/mcp`. The Agent Plugins/Cursor manifests remain
+documents. There is no OAuth step: `.mcp.json` points at your own Convoy on
+loopback, `http://127.0.0.1:8788/mcp`. The Agent Plugins/Cursor manifests remain
 compatibility surfaces, not the xAI catalog. A Grok Bot Settings path is
 unverified here.
 
@@ -169,8 +169,8 @@ does the whole walk for N seats (validate, mint, join each with a boot prompt,
 one window) and `await_seated` reads the acks back, so "they all connected" is
 observed, never assumed. `convoy preflight` tells you which of the wizard's
 verbs a live `tools/list` is missing and why.
-The public `https://convoy.bot/mcp` is bound to one root; a different thread
-means running your own server with your own `--root`.
+Your Convoy server is bound to the root you start it with; a different thread
+means a call that names it, or a server with its own `--root`.
 
 ## Names you will see
 
@@ -317,7 +317,7 @@ What is being improved:
 
 ## How it works
 
-1. Attach `https://convoy.bot/mcp`.
+1. Start Convoy on your machine (`convoy mcp`) and attach `http://127.0.0.1:8788/mcp`.
 2. Run `onboard` with harnesses you already installed.
 3. Bind one thread at `--root`; Convoy writes/reads one durable `convoy_id`.
 4. Use `send` for synapses. A send that names a live seat **queues** the body
@@ -374,7 +374,7 @@ Routing behavior:
 - `/mcp` and `/mcp/*` are proxied byte-for-byte to `MCP_ORIGIN` (the current Python MCP origin).
 - all other paths are served from Worker static assets (`env.ASSETS.fetch(request)`).
 
-Production currently uses a Worker Route on `convoy.bot/*`,
+Retired as a public attach point: an earlier deployment used a Worker Route on `convoy.bot/*`,
 `MCP_ORIGIN=https://convoy.bot`, and a proxied Cloudflare Tunnel whose ingress
 is the separate Python process on `127.0.0.1:8788`. A Worker deploy cannot
 update that process. Follow the runbook to restart and prove the Python origin
