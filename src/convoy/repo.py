@@ -12,7 +12,7 @@ import os
 import re
 import subprocess
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Iterable
 
 Runner = Callable[..., subprocess.CompletedProcess]
 # A seat name is one path segment (<checkout>-wt-<name>) and one ref segment
@@ -28,7 +28,8 @@ LIST_FIELDS = "nameWithOwner,url,isPrivate,updatedAt"
 GH_INSTALL_HINT = "install GitHub CLI from https://cli.github.com, then `gh auth login`"
 # Written to <checkout>/.git/info/exclude so the bind never becomes a tracked
 # file of the user's repo. info/exclude is git's per-clone ignore, not content.
-EXCLUDE_LINES = (".convoy/", "thread.md")
+# Anchored to the work tree's root: a docs/thread.md of the person's is never hidden.
+EXCLUDE_LINES = ("/.convoy/", "/thread.md")
 
 
 def run_argv(argv: list[str], cwd: str | None = None, timeout: float = 600) -> subprocess.CompletedProcess:
@@ -133,7 +134,19 @@ def exclude_convoy_files(root: Path | str) -> bool:
     `thread.md` never become tracked files of the user's repo (an untracked
     record is one `git add -A` away from a commit). True when a
     checkout was found and the lines are present; False for a plain folder.
-    Idempotent: present lines are never duplicated."""
+    Idempotent: present lines are never duplicated. A write that fails never fails the bind."""
+    try:
+        return exclude_paths(root, EXCLUDE_LINES)
+    except OSError:
+        return False
+
+
+def exclude_paths(root: Path | str, lines: Iterable[str]) -> bool:
+    """Add these paths to git's per-clone ignore (info/exclude), once each. It hides untracked files
+    only, never a tracked one, and it is shared by every worktree of the clone, so a caller passes
+    anchored paths ("/x") that only Convoy names. True when a checkout was found; False for a plain
+    folder. An OSError on the write is the caller's to report."""
+    lines = list(lines)
     common = git_common_dir(root)
     if common is None:
         return False
@@ -144,7 +157,7 @@ def exclude_convoy_files(root: Path | str) -> bool:
         return False
     path = info / "exclude"
     text = path.read_text(encoding="utf-8-sig") if path.is_file() else ""
-    missing = [line for line in EXCLUDE_LINES if line not in text.splitlines()]
+    missing = [line for line in lines if line not in text.splitlines()]
     if missing:
         if text and not text.endswith("\n"):
             text += "\n"

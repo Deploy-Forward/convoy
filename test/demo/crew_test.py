@@ -81,6 +81,8 @@ def _row(root, sid):
     return [s for s in list_seats(root) if s["session_id"] == sid][-1]
 
 
+
+
 class Recorder:
     def __init__(self):
         self.calls = []
@@ -105,7 +107,7 @@ class CrewMintsJoinsAndLaunchesOnce(unittest.TestCase):
         runner = mock.Mock(return_value={"ok": True, "pid": 4242})
         card = crew(self.root, [{"harness": "grok", "model": "grok-4", "effort": "high"},
                                 {"harness": "claude", "effort": "max"},
-                                {"harness": "codex", "model": "gpt-5.6-sol"}], runner=runner)
+                                {"harness": "codex", "model": "gpt-5.6-sol"}], runner=runner, allow_unverified_launch=True)
         self.assertTrue(card["ok"], card)
         self.assertEqual(card["thread"], "crew-t")
         self.assertTrue(card["launched"])
@@ -189,7 +191,7 @@ class CrewMintsJoinsAndLaunchesOnce(unittest.TestCase):
         seat(self.root, "grok", "grok-1-crew-t")
         minted = Recorder()
         runner = mock.Mock(return_value={"ok": True, "pid": 1})
-        card = crew(self.root, [{"harness": "grok"}], mint_runner=minted, runner=runner)
+        card = crew(self.root, [{"harness": "grok"}], mint_runner=minted, runner=runner, allow_unverified_launch=True)
         self.assertFalse(card["ok"])
         self.assertIn("grok-1-crew-t", card["error"])
         self.assertEqual(minted.calls, [])
@@ -200,7 +202,7 @@ class CrewMintsJoinsAndLaunchesOnce(unittest.TestCase):
         # The chairs ARE written (join happened) but the window never came up:
         # launched is read from the runner's result, and the error is on the card
         # itself, not only buried in windows[i].
-        card = crew(self.root, [{"harness": "grok"}], runner=mock.Mock(return_value={"ok": False, "error": "wt.exe: not found"}))
+        card = crew(self.root, [{"harness": "grok"}], runner=mock.Mock(return_value={"ok": False, "error": "wt.exe: not found"}), allow_unverified_launch=True)
         self.assertFalse(card["ok"])
         self.assertFalse(card["launched"], card)
         self.assertIn("wt.exe: not found", card["error"])
@@ -227,7 +229,7 @@ class CrewMintsJoinsAndLaunchesOnce(unittest.TestCase):
         minted = Recorder()
         runner = mock.Mock(return_value={"ok": True, "pid": 1})
         with mock.patch("convoy.bringup.shutil.which", return_value=None):
-            card = crew(self.root, [{"harness": "grok"}], runner=runner, mint_runner=minted)
+            card = crew(self.root, [{"harness": "grok"}], runner=runner, mint_runner=minted, allow_unverified_launch=True)
         self.assertFalse(card["ok"])
         self.assertIn("pane host", card["error"])
         self.assertEqual(minted.calls, [])
@@ -255,7 +257,7 @@ class CrewMintsJoinsAndLaunchesOnce(unittest.TestCase):
                                                    git_worktrees=lambda _p: [])["harnesses"] if h["where"]["cloud"]["offered"]]
         self.assertTrue(offered, "the contract must offer cloud somewhere today")
         runner = mock.Mock(return_value={"ok": True, "pid": 9})
-        card = crew(self.root, [{"harness": "grok"}, {"harness": offered[0], "where": "cloud"}], runner=runner)
+        card = crew(self.root, [{"harness": "grok"}, {"harness": offered[0], "where": "cloud"}], runner=runner, allow_unverified_launch=True)
         self.assertTrue(card["ok"], card)
         cloud = [s for s in card["seats"] if s["where"] == "cloud"]
         self.assertEqual(len(cloud), 1)
@@ -442,7 +444,7 @@ class CrewWire(unittest.TestCase):
         os.environ["CONVOY_MCP_WRITE_TOOLS"] = "1"
         card = self._call("crew", seats=[{"harness": "grok", "effort": "low"},
                                           {"harness": "claude"},
-                                          {"harness": "codex"}], launch=True)
+                                          {"harness": "codex"}], launch=True, allow_unverified_launch=True)
         self.assertTrue(card["ok"], card)
         self.assertTrue(card["launched"])
         self.assertEqual(len(card["seats"]), 3)
@@ -532,7 +534,7 @@ class CrewCli(unittest.TestCase):
         return rc, json.loads(buf.getvalue())
 
     def test_crew_spec_and_await_seated_verbs(self):
-        rc, card = self._run("crew", "--seat", "grok,model=grok-4,effort=high", "--seat", "claude,title=opus", "--launch")
+        rc, card = self._run("crew", "--seat", "grok,model=grok-4,effort=high", "--seat", "claude,title=opus", "--launch", "--allow-unverified-launch")
         self.assertEqual(rc, 0, card)
         self.assertTrue(card["launched"])
         self.assertEqual(self.runner.call_count, 1)

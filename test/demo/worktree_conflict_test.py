@@ -8,7 +8,7 @@ real thread went unread. Three guarantees follow:
 1. seat/join refuse a worktree that is bound to a DIFFERENT thread.
 2. whoami reports the thread the root names AND the thread the cwd walks up
    to, with conflict=true when they differ.
-3. `convoy skills --worktree W` refreshes the identity skill copies so a
+3. `convoy skills --worktree W` refreshes the Convoy-owned skill copies so a
    long-lived pane is not left reading a stale sheet.
 """
 import io
@@ -23,7 +23,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 
 from convoy.cli import main
 from convoy.convoy import bind, ensure_id, seat, update_seat
-from convoy.identity import install_neuron_identity, skill_text
+from convoy.identity import end_skill_text, install_neuron_identity
 from convoy.lifecycle import join
 from convoy.panes import identify
 
@@ -100,12 +100,12 @@ class SkillsRefresh(unittest.TestCase):
         wt = Path(tempfile.mkdtemp())
         first = install_neuron_identity(wt)
         self.assertTrue(first["written"])
-        stale = wt / ".claude" / "skills" / "neuron-identity" / "SKILL.md"
+        stale = wt / ".claude" / "skills" / "convoy-end" / "SKILL.md"
         stale.write_text("old sheet: python -m convoy send\n", encoding="utf-8")
         rc, card = _run_cli(wt, "skills", "--worktree", str(wt))
         self.assertEqual(rc, 0)
         self.assertTrue(card["written"])
-        self.assertEqual(stale.read_text(encoding="utf-8"), skill_text())
+        self.assertEqual(stale.read_text(encoding="utf-8"), end_skill_text())
         rc, again = _run_cli(wt, "skills", "--worktree", str(wt))
         self.assertFalse(again["written"])
 

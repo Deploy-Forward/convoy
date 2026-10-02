@@ -108,7 +108,7 @@ class HookWritersUseResolvedCommand(unittest.TestCase):
         self.assertEqual(g["resolved_via"], "interpreter")
         doc = json.loads((self.wt / ".grok" / "hooks" / "convoy-inbox.json").read_text(encoding="utf-8"))
         self.assertEqual(doc["hooks"]["PreToolUse"][0]["hooks"][0]["command"], py)
-        settings = json.loads((self.wt / ".claude" / "settings.json").read_text(encoding="utf-8"))
+        settings = json.loads((self.wt / ".claude" / "settings.local.json").read_text(encoding="utf-8"))
         cmds = json.dumps(settings["hooks"])
         self.assertIn(py.replace("\\", "\\\\"), cmds)
         self.assertIn("UserPromptSubmit", settings["hooks"])
@@ -130,7 +130,7 @@ class HookWritersUseResolvedCommand(unittest.TestCase):
             card = ensure_end_hooks(self.wt, root=self.root)
         self.assertTrue(card["ok"], card)
         codex = json.loads((self.wt / ".codex" / "hooks.json").read_text(encoding="utf-8"))
-        claude = json.loads((self.wt / ".claude" / "settings.json").read_text(encoding="utf-8"))
+        claude = json.loads((self.wt / ".claude" / "settings.local.json").read_text(encoding="utf-8"))
         self.assertEqual(codex["hooks"]["Stop"][0]["hooks"][0]["command"], "convoy end --hook")
         self.assertEqual(claude["hooks"]["Stop"][0]["hooks"][0]["command"], "convoy end --hook")
         self.assertEqual(
@@ -217,7 +217,7 @@ class DeadHooksAreStrippedNotKept(unittest.TestCase):
 
     def test_claude_settings_keeps_foreign_hooks_and_drops_convoys_dead_ones(self):
         from convoy.identity import ensure_claude_inbox_hook
-        dest = self.wt / ".claude" / "settings.json"; dest.parent.mkdir(parents=True)
+        dest = self.wt / ".claude" / "settings.local.json"; dest.parent.mkdir(parents=True)
         dest.write_text(json.dumps({"hooks": {
             "PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": "python -m ola_brain.cli guard"}]},
                            {"hooks": [{"type": "command", "command": "convoy inbox --hook-pretooluse", "timeout": 8}]}],

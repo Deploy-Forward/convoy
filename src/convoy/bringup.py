@@ -11,19 +11,21 @@ Lead neurons resume with that harness's own CLI:
       (live also --permission-mode bypassPermissions
        and --allow-dangerously-skip-permissions)
 
-First-run Claude bypass warning is ungated by ensure_first_run.
-Anthropic ignores skipDangerousModePermissionPrompt in project
-{worktree}/.claude/settings.json — that key only works in the user file
-~/.claude/settings.json. Merge skipDangerousModePermissionPrompt: true
-into ~/.claude/settings.json (create ~/.claude/ if missing). Do not set
-permissions.defaultMode on the user global file (that would make ALL
-Claude sessions on the machine bypass). Still write the project settings
-(skipDangerousModePermissionPrompt + permissions.defaultMode
-bypassPermissions) as a record. Also persist ~/.claude.json
-projects[worktree].hasTrustDialogAccepted=true for both slash spellings
-of the worktree path. Never write ~/.claude if worktree IS the home dir.
-Grok/codex: no Claude settings write. First-run still installs
-harness self-identity skills into the worktree. Not a user paste.
+First-run Claude bypass warning is ungated by ensure_first_run. A Convoy-launched
+neuron gets its permission mode from the launch argv and from nothing else: a
+permissions.defaultMode in a project .claude/settings.json is honoured by Claude
+Code, so every Claude session in that repo, launched by Convoy or not, would run
+without prompts. No settings file Convoy writes carries permissions or
+skipDangerousModePermissionPrompt. The user file ~/.claude/settings.json gets
+skipDangerousModePermissionPrompt: true only when the key is missing (Anthropic
+reads it there for the dialog), and an unchanged file is never rewritten.
+Hooks and autoCompactEnabled: true (an unattended neuron compacts on its own) go
+to the worktree's .claude/settings.local.json, which Claude Code keeps out of git,
+never the tracked settings file. ~/.claude.json gets
+projects[worktree].hasTrustDialogAccepted=true for both slash spellings. Never
+write ~/.claude if worktree IS the home dir. Grok/codex: no Claude settings write.
+write_repo_files=False (start on a repo root) writes nothing into the worktree
+and lists what it would write as would_write. Not a user paste.
 Not a TUI guide. Persona is role.md.
 
 Hypothesis: Claude Code accepts the same `--resume` flag as grok (native resume).
@@ -49,7 +51,7 @@ from urllib.parse import quote
 
 from .identity import ensure_grok_agent, ensure_inbox_hooks, install_neuron_identity
 from .index import is_temp_root
-from .harness_contract import effective_model, effort_argv, model_argv, session_id_flag
+from .harness_contract import effective_model, effort_argv, model_argv, session_id_flag, validate_launch_eligibility
 from .convoy import (
     CONDUCTOR,
     list_seats,
@@ -430,7 +432,32 @@ def _pane_title(seat: dict[str, Any]) -> str:
 
 
 def _claude_settings_path(worktree: Path) -> Path:
-    return Path(worktree) / ".claude" / "settings.json"
+    """The worktree file Convoy writes: the local one, which Claude Code keeps out of git."""
+    return Path(worktree) / ".claude" / "settings.local.json"
+
+
+def _convoy_named(rel: str) -> bool:
+    """A worktree path only Convoy names: its convoy-* files, and Claude's local settings file,
+    which is never committed by convention. Anything else could be the person's own."""
+    return "convoy" in rel.lower() or rel == ".claude/settings.local.json"
+
+
+# The home key Convoy may add to ~/.claude/settings.json, when it is missing.
+HOME_SETTINGS_KEY = "skipDangerousModePermissionPrompt"
+
+
+def repo_files_for(to: Any) -> list[str]:
+    """The files a first run would write into a worktree for this harness, relative and sorted."""
+    from .identity import (CLAUDE_SETTINGS_RELATIVE, CODEX_HOOKS_RELATIVE, END_SKILL_RELATIVE,
+                           GROK_AGENT_RELATIVE, GROK_INBOX_HOOK_RELATIVE)
+    from .inbox import POINTER_RELS
+    # The pointer, the convoy-end copies, the hooks and the root pointers are written for every
+    # harness; the grok agent only for grok.
+    files = {Path("AGENTS.md"), *END_SKILL_RELATIVE, *POINTER_RELS,
+             CLAUDE_SETTINGS_RELATIVE, CODEX_HOOKS_RELATIVE, GROK_INBOX_HOOK_RELATIVE}
+    if _harness_bin(to) == "grok":
+        files.add(GROK_AGENT_RELATIVE)
+    return sorted(f.as_posix() for f in files)
 
 
 def _claude_home_settings_path() -> Path:
@@ -477,14 +504,16 @@ def _is_home_claude_settings(path: Path) -> bool:
     return resolved == (home / ".claude" / "settings.json")
 
 
-def _read_json_dict(path: Path) -> dict[str, Any]:
+def _read_json_object(path: Path) -> dict[str, Any] | None:
+    """The file's JSON object; {} when the file is missing; None when it exists but is not a JSON
+    object, so a caller refuses to write rather than replace a file it cannot read."""
     if not path.is_file():
         return {}
     try:
         raw = json.loads(path.read_text(encoding="utf-8-sig"))
-    except json.JSONDecodeError:
-        return {}
-    return raw if isinstance(raw, dict) else {}
+    except (OSError, ValueError):
+        return None
+    return raw if isinstance(raw, dict) else None
 
 
 def _write_json_dict(path: Path, data: dict[str, Any]) -> None:
@@ -509,7 +538,9 @@ def _write_claude_trust_projects(worktree: Path, home: Path | None = None) -> tu
     store (any spelling) is read, never rewritten.
     """
     state_path = _claude_home_state_path() if home is None else home / ".claude.json"
-    data = _read_json_dict(state_path)
+    data = _read_json_object(state_path)
+    if data is None:
+        return state_path, False  # a store that cannot be read is never replaced
     projects = data.get("projects")
     if not isinstance(projects, dict):
         projects = {}
@@ -566,11 +597,22 @@ def _same_path_key(a: str, b: str) -> bool:
     return os.path.normcase(os.path.normpath(a)) == os.path.normcase(os.path.normpath(b))
 
 
-def _toml_append(path: Path, block: str) -> None:
+def _toml_append(path: Path, block: str) -> bool:
+    """Append a table to a person's TOML store, keeping its byte order mark. The result must still
+    parse, or nothing is written; False then."""
+    import tomllib
     path.parent.mkdir(parents=True, exist_ok=True)
-    existing = path.read_text(encoding="utf-8-sig") if path.is_file() else ""
+    raw = path.read_bytes() if path.is_file() else b""
+    bom = b"\xef\xbb\xbf" if raw.startswith(b"\xef\xbb\xbf") else b""
+    existing = raw[len(bom):].decode("utf-8")
     sep = "" if (not existing or existing.endswith("\n\n")) else ("\n" if existing.endswith("\n") else "\n\n")
-    path.write_text(existing + sep + block, encoding="utf-8")
+    text = existing + sep + block
+    try:
+        tomllib.loads(text)
+    except tomllib.TOMLDecodeError:
+        return False
+    path.write_bytes(bom + text.encode("utf-8"))
+    return True
 
 
 def _trust_row(vendor: str | None, store: Path | None, *, written: bool, reason: str | None, **extra: Any) -> dict[str, Any]:
@@ -583,9 +625,14 @@ def _trust_grok(wt: str, home: Path, now: int) -> list[dict[str, Any]]:
     if data is None:
         return [_trust_row("grok", store, written=False, reason="store unparseable; left alone")]
     folders = data.get("folders") if isinstance(data.get("folders"), dict) else {}
-    if any(_same_path_key(k, wt) and isinstance(v, dict) and v.get("trusted") is True for k, v in folders.items()):
+    mine = [v for k, v in folders.items() if _same_path_key(k, wt)]
+    if any(isinstance(v, dict) and v.get("trusted") is True for v in mine):
         return [_trust_row("grok", store, written=False, reason="already trusted")]
-    _toml_append(store, "[folders." + _toml_key(wt) + "]\ntrusted = true\ndecided_at = " + str(int(now)) + "\n")
+    if mine:
+        # The person decided for this folder; a second table of the same name would not parse.
+        return [_trust_row("grok", store, written=False, reason="table exists with another trust; left alone")]
+    if not _toml_append(store, "[folders." + _toml_key(wt) + "]\ntrusted = true\ndecided_at = " + str(int(now)) + "\n"):
+        return [_trust_row("grok", store, written=False, reason="the result would not parse; left alone")]
     return [_trust_row("grok", store, written=True, reason=None)]
 
 
@@ -597,9 +644,16 @@ def _trust_codex(wt: str, home: Path) -> list[dict[str, Any]]:
     if data is None:
         return [_trust_row("codex", store, written=False, reason="store unparseable; left alone", key="projects"), hooks]
     projects = data.get("projects") if isinstance(data.get("projects"), dict) else {}
-    if any(_same_path_key(k, wt) and isinstance(v, dict) and v.get("trust_level") == "trusted" for k, v in projects.items()):
+    mine = [v for k, v in projects.items() if _same_path_key(k, wt)]
+    if any(isinstance(v, dict) and v.get("trust_level") == "trusted" for v in mine):
         return [_trust_row("codex", store, written=False, reason="already trusted", key="projects"), hooks]
-    _toml_append(store, "[projects." + _toml_key(wt) + "]\ntrust_level = \"trusted\"\n")
+    if mine:
+        # The person decided for this project; a second table of the same name would not parse.
+        return [_trust_row("codex", store, written=False, reason="table exists with another trust; left alone",
+                           key="projects"), hooks]
+    if not _toml_append(store, "[projects." + _toml_key(wt) + "]\ntrust_level = \"trusted\"\n"):
+        return [_trust_row("codex", store, written=False, reason="the result would not parse; left alone",
+                           key="projects"), hooks]
     return [_trust_row("codex", store, written=True, reason=None, key="projects"), hooks]
 
 
@@ -718,21 +772,25 @@ def ensure_interactive_path(home: Path | None = None) -> dict[str, Any]:
         return out
 
 
-def ensure_first_run(seat: dict[str, Any], root: Path | str | None = None, live: bool = True) -> dict[str, Any]:
+def ensure_first_run(seat: dict[str, Any], root: Path | str | None = None, live: bool = True, *,
+                     write_repo_files: bool = True) -> dict[str, Any]:
     """Ungate first-run Claude bypass warning for the thread worktree.
 
-    Project {worktree}/.claude/settings.json: merge skipDangerousModePermissionPrompt
-    + permissions.defaultMode bypassPermissions (record; Anthropic ignores this
-    copy for the Bypass Permissions dialog).
-    User ~/.claude/settings.json: merge ONLY skipDangerousModePermissionPrompt
-    true (required — Anthropic reads this file for the dialog). Do not set
-    permissions.defaultMode on the user global file. Create ~/.claude/ if missing.
+    Project {worktree}/.claude/settings.local.json: autoCompactEnabled true (a
+    neuron runs unattended and must compact on its own) beside the hooks, written
+    only when it changes. Never permissions or skipDangerousModePermissionPrompt in
+    any project file: the launch argv carries the mode.
+    User ~/.claude/settings.json: add ONLY skipDangerousModePermissionPrompt true,
+    and only when the key is missing; home_written and home_key say so.
+    write_repo_files False: nothing is written into the worktree (no pointer, hooks,
+    agent, settings or trust); would_write lists what would be.
     User ~/.claude.json: set projects[worktree].hasTrustDialogAccepted=true
     for both slash spellings of the worktree key.
     Never write ~/.claude if worktree IS the home dir.
     Grok/codex: no Claude settings write. All harnesses with a non-home
-    worktree get neuron-identity skills (.grok/skills + .claude/skills +
-    AGENTS.md pointer). Persona is role.md, not CLI.
+    worktree get the AGENTS.md pointer to the Convoy plugin skills; retired
+    neuron-identity / neuron-receive copies Convoy wrote there are removed and
+    listed in identity_removed. Persona is role.md, not CLI.
     Never ola-brain, side-chat, grok -p/-c, --append-system-prompt.
     """
     to = str((seat or {}).get("to") or "").strip()
@@ -752,14 +810,20 @@ def ensure_first_run(seat: dict[str, Any], root: Path | str | None = None, live:
         "path_bashrc": None,
         "path_ok": False,
         "path_host": None,
+        # identity_* names kept for callers: the pointer write and the retired
+        # copies install_neuron_identity removed, not an identity skill.
         "identity_written": False,
-        "identity_paths": [],
+        "identity_removed": [],
         "identity_agents": None,
         "agent_written": False,
         "agent_path": None,
         "inbox_hook_written": False,
         "inbox_hook": None,
         "hook_trust": [],
+        "write_repo_files": bool(write_repo_files),
+        "would_write": [],
+        "left_visible": [],
+        "home_key": None,
     }
     path_card = ensure_interactive_path()
     out["path_written"] = bool(path_card.get("path_written"))
@@ -774,10 +838,12 @@ def ensure_first_run(seat: dict[str, Any], root: Path | str | None = None, live:
             home_worktree = wt_path.resolve() == Path.home().resolve()
         except Exception:
             home_worktree = False
-        if not home_worktree:
+        if not home_worktree and not write_repo_files:
+            out["would_write"] = repo_files_for(to)
+        elif not home_worktree:
             ident = install_neuron_identity(wt_path)
             out["identity_written"] = bool(ident.get("written"))
-            out["identity_paths"] = list(ident.get("paths") or [])
+            out["identity_removed"] = list(ident.get("removed") or [])
             out["identity_agents"] = ident.get("agents")
             if ident.get("error"):
                 out["identity_error"] = ident["error"]
@@ -819,6 +885,18 @@ def ensure_first_run(seat: dict[str, Any], root: Path | str | None = None, live:
             else:
                 out["hook_trust"] = []
                 out["hook_trust_skipped"] = "dry-run"
+            # Keep Convoy's machine state out of git, so a neuron's `git add -A` cannot commit it. The
+            # exclude is shared by every worktree of the clone, so only Convoy-named paths go in,
+            # anchored; a file the person could own (AGENTS.md, a hooks.json, an end command) stays
+            # visible and is named in left_visible instead.
+            from . import repo as _repo
+            written = repo_files_for(to)
+            out["left_visible"] = [f for f in written if not _convoy_named(f)]
+            try:
+                out["excluded"] = _repo.exclude_paths(wt_path, ["/" + f for f in written if _convoy_named(f)])
+            except OSError as e:
+                out["excluded"] = False
+                out["exclude_error"] = type(e).__name__ + ": " + str(e)
     if not _is_claude(to):
         return out
     if not (isinstance(wt, str) and wt.strip()) and not isinstance(wt, Path):
@@ -842,22 +920,32 @@ def ensure_first_run(seat: dict[str, Any], root: Path | str | None = None, live:
     except Exception:
         pass
     try:
-        data = _read_json_dict(settings_path)
-        data["skipDangerousModePermissionPrompt"] = True
-        perms = data.get("permissions")
-        if not isinstance(perms, dict):
-            perms = {}
-        perms["defaultMode"] = "bypassPermissions"
-        data["permissions"] = perms
-        _write_json_dict(settings_path, data)
-        out["wrote"] = True
-        out["settings"] = str(settings_path)
         home_path = _claude_home_settings_path()
-        home_data = _read_json_dict(home_path)
-        home_data["skipDangerousModePermissionPrompt"] = True
-        _write_json_dict(home_path, home_data)
-        out["home_written"] = True
+        home_data = _read_json_object(home_path)
+        out["home_key"] = HOME_SETTINGS_KEY
         out["settings_home"] = str(home_path)
+        if home_data is None:
+            out["home_error"] = "unparseable"  # never replace a file that cannot be read
+        elif HOME_SETTINGS_KEY not in home_data:
+            home_data[HOME_SETTINGS_KEY] = True
+            _write_json_dict(home_path, home_data)
+            out["home_written"] = True
+        if not write_repo_files:
+            return out
+        data = _read_json_object(settings_path)
+        if data is None:
+            out["settings_error"] = "unparseable"
+        # A neuron runs unattended: it must compact on its own even when the
+        # person turned auto-compact off in their own user settings.
+        elif data.get("autoCompactEnabled") is not True or not settings_path.is_file():
+            data["autoCompactEnabled"] = True
+            _write_json_dict(settings_path, data)
+            out["wrote"] = True
+        out["settings"] = str(settings_path)
+        if _read_json_object(_claude_home_state_path()) is None:
+            out["trust_error"] = "unparseable"
+            out["trust_settings_home"] = str(_claude_home_state_path())
+            return out
         trust_path, trust_rewritten = _write_claude_trust_projects(wt_path)
         # trust_written: the key is present after this call (read back);
         # trust_rewritten: this call actually wrote (False when hook trust or a prior run already did)
@@ -1344,7 +1432,7 @@ def _window_for(root: Path, seat: dict[str, Any], rect: dict[str, int] | None, c
     return win
 
 
-def bring_up(root: Path, convoy_id: str | None = None, thread: str | None = None, runner: Runner | None = None, tiler: Tiler | None = None, session_ids: list[str] | None = None) -> dict[str, Any]:
+def bring_up(root: Path, convoy_id: str | None = None, thread: str | None = None, runner: Runner | None = None, tiler: Tiler | None = None, session_ids: list[str] | None = None, *, allow_unverified_launch: bool = False) -> dict[str, Any]:
     """Resume seated neurons in ONE isolated wt.exe window. Conductor grok-bot is not a window.
 
     Default runner is None (dry / no-op). Dry-run still calls ensure_first_run and
@@ -1360,6 +1448,12 @@ def bring_up(root: Path, convoy_id: str | None = None, thread: str | None = None
     cid = resolved["convoy_id"]
     bound = resolved["thread"]
     hops = _pane_seats(_only(_hop_seats(root, cid), session_ids))
+    if runner is not None:
+        try:
+            for s in hops:
+                validate_launch_eligibility(s.get("to"), allow_unverified_launch=allow_unverified_launch)
+        except ValueError as exc:
+            return {"ok": False, "convoy_id": cid, "thread": bound, "windows": [], "error": str(exc)}
     tile_fn = tiler or tile_rects
     rects = tile_fn(len(hops))
     try:

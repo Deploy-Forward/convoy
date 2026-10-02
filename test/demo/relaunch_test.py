@@ -44,6 +44,8 @@ def _seat_row(root, sid):
     return [s for s in list_seats(root) if s.get("session_id") == sid][-1]
 
 
+
+
 class OccupancyOnRelaunch(unittest.TestCase):
     def setUp(self):
         self.root = Path(tempfile.mkdtemp())
@@ -152,7 +154,7 @@ class OccupancyOnRelaunch(unittest.TestCase):
 
     def test_chair_that_was_never_hosted_launches_with_no_host_evidence(self):
         seat(self.root, "grok", "fresh", worktree=str(Path(tempfile.mkdtemp())))
-        card = self._relaunch(seats=["fresh"], alive=lambda _pid: False)
+        card = self._relaunch(seats=["fresh"], alive=lambda _pid: False, allow_unverified_launch=True)
         rows = [r for r in _rows(self.root, "unreachable") if r.get("chair") == "fresh"]
         self.assertEqual(len(rows), 1, rows)
         self.assertIn("no-host", rows[0]["evidence"])

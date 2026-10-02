@@ -24,7 +24,9 @@ from typing import Any
 # A pulse older than this is not evidence of life. Ten minutes matches the
 # re-armed wait: one missed window is noticed, not one missed hour.
 PULSE_FRESH_SEC = 600
-PULSE_SOURCES = ("stop", "wait", "host")
+# `channel`: the chair's wake channel server, while it is loaded and alive (the wake directory reads
+# it to tell a loaded channel from a session that merely beats).
+PULSE_SOURCES = ("stop", "wait", "host", "channel")
 
 
 def _stamp() -> str:
@@ -48,6 +50,19 @@ def pulse_path(root: Path | str, chair: str) -> Path:
     return pulse_dir(root) / (_digest(chair) + ".json")
 
 
+def source_pulse_path(root: Path | str, chair: str, source: str) -> Path:
+    """One file per source beside the latest: a channel that stopped is not hidden by a host that
+    kept beating."""
+    return pulse_dir(root) / (_digest(chair) + "." + str(source) + ".json")
+
+
+def _write_atomic(path: Path, row: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(".tmp-" + str(os.getpid()))
+    temporary.write_text(json.dumps(row, separators=(",", ":")) + "\n", encoding="utf-8")
+    os.replace(temporary, path)
+
+
 def write_pulse(root: Path | str, chair: str, *, pulse_source: str,
                 incarnation: int | None = None, last_commit: dict[str, Any] | None = None,
                 rate_pct: float | None = None, ts: str | None = None) -> dict[str, Any]:
@@ -64,18 +79,12 @@ def write_pulse(root: Path | str, chair: str, *, pulse_source: str,
         "last_commit": last_commit,
         "rate_pct": rate_pct,
     }
-    path = pulse_path(root, chair)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_suffix(".tmp-" + str(os.getpid()))
-    temporary.write_text(json.dumps(row, separators=(",", ":")) + "\n", encoding="utf-8")
-    os.replace(temporary, path)
+    _write_atomic(source_pulse_path(root, chair, source), row)
+    _write_atomic(pulse_path(root, chair), row)
     return row
 
 
-def read_pulse(root: Path | str, chair: str) -> dict[str, Any] | None:
-    """The pulse, or None. Unreadable is None: a file nobody can parse is not
-    a heartbeat."""
-    path = pulse_path(root, chair)
+def _read(path: Path) -> dict[str, Any] | None:
     if not path.is_file():
         return None
     try:
@@ -83,6 +92,19 @@ def read_pulse(root: Path | str, chair: str) -> dict[str, Any] | None:
     except (OSError, json.JSONDecodeError):
         return None
     return value if isinstance(value, dict) else None
+
+
+def read_pulse(root: Path | str, chair: str) -> dict[str, Any] | None:
+    """The latest pulse from any source, or None. Unreadable is None: a file
+    nobody can parse is not a heartbeat."""
+    return _read(pulse_path(root, chair))
+
+
+def read_pulse_by_source(root: Path | str, chair: str, source: str) -> dict[str, Any] | None:
+    """The latest pulse from one source, or None when that source has never pulsed."""
+    if source not in PULSE_SOURCES:
+        raise ValueError("refuse pulse_source " + repr(source) + "; one of " + ", ".join(PULSE_SOURCES))
+    return _read(source_pulse_path(root, chair, source))
 
 
 def _parse(ts: Any) -> datetime | None:

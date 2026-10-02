@@ -105,7 +105,7 @@ class WidgetWalksTheOriginalSpec(unittest.TestCase):
         seats = [{"harness": "codex", "title": "builder", "model": "gpt-5.6", "where": "local"},
                  {"harness": "grok", "title": "scout", "effort": "high", "where": "local"},
                  {"harness": "claude", "title": "checker", "effort": "high", "where": "local"}]
-        r = self.post("/api/start", {"repo": str(self.root), "harnesses": ["codex", "grok", "claude"], "thread": "spec", "github": False, "seats": seats, "launch": True})
+        r = self.post("/api/start", {"repo": str(self.root), "harnesses": ["codex", "grok", "claude"], "thread": "spec", "github": False, "seats": seats, "launch": True, "allow_unverified_launch": True})
         self.assertTrue(r["ok"], r)
         cw = r["crew"]; self.assertEqual(len(cw["seats"]), 3)
         by = {s["title"]: s for s in cw["seats"]}

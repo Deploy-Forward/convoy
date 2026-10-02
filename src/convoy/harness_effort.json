@@ -30,6 +30,8 @@
   "harnesses": [
     {
       "id": "grok",
+      "launch_eligibility": {"state":"unverified","verified_at":null,"evidence":"Launch eligibility not accepted in this release assessment; requires an explicit override"},
+      "limit": {"state": "unverified", "verified_at": null, "evidence": "Classifier fixtures are synthetic, not captured live limit output (test/demo/limit_signals_test.py)"},
       "name": "Grok",
       "aliases": [
         "grok.exe"
@@ -66,6 +68,8 @@
     },
     {
       "id": "claude",
+      "launch_eligibility": {"state":"verified","verified_at":"2026-10-02","evidence":"Convoy Claude join at 2026-10-02T03:12:43Z reached token-matched seated at 2026-10-02T03:13:23Z; audited 2026-10-02"},
+      "limit": {"state": "unverified", "verified_at": null, "evidence": "Classifier fixtures are synthetic, not captured live limit output (test/demo/limit_signals_test.py)"},
       "name": "Claude Code",
       "aliases": [
         "claude-code",
@@ -104,6 +108,8 @@
     },
     {
       "id": "codex",
+      "launch_eligibility": {"state":"verified","verified_at":"2026-10-02","evidence":"Convoy Codex join at 2026-09-07T00:00:15Z reached token-matched seated at 2026-09-07T00:01:38Z; audited 2026-10-02"},
+      "limit": {"state": "unverified", "verified_at": null, "evidence": "Classifier fixtures are synthetic, not captured live limit output (test/demo/limit_signals_test.py)"},
       "name": "Codex",
       "aliases": [
         "codex.exe"
@@ -154,6 +160,8 @@
     },
     {
       "id": "cursor-agent",
+      "launch_eligibility": {"state":"verified","verified_at":"2026-10-02","evidence":"Convoy Cursor join at 2026-09-08T21:39:17Z reached token-matched seated at 2026-09-08T21:40:32Z; audited 2026-10-02"},
+      "limit": {"state": "unverified", "verified_at": null, "evidence": "Classifier fixtures are synthetic, not captured live limit output (test/demo/limit_signals_test.py)"},
       "name": "Cursor-Agent",
       "aliases": [
         "cursor_agent",
@@ -201,6 +209,8 @@
     },
     {
       "id": "agy",
+      "launch_eligibility": {"state":"unverified","verified_at":null,"evidence":"Launch eligibility not accepted in this release assessment; requires an explicit override"},
+      "limit": {"state": "unverified", "verified_at": null, "evidence": "No captured live limit output or classifier entry"},
       "name": "Antigravity (CLI)",
       "aliases": [
         "antigravity",
@@ -235,6 +245,8 @@
     },
     {
       "id": "hermes",
+      "launch_eligibility": {"state":"unverified","verified_at":null,"evidence":"Launch eligibility not accepted in this release assessment; requires an explicit override"},
+      "limit": {"state": "unverified", "verified_at": null, "evidence": "No captured live limit output or classifier entry"},
       "name": "Hermes",
       "aliases": [
         "hermes.exe"
@@ -260,6 +272,8 @@
     },
     {
       "id": "pi",
+      "launch_eligibility": {"state":"unverified","verified_at":null,"evidence":"Launch eligibility not accepted in this release assessment; requires an explicit override"},
+      "limit": {"state": "unverified", "verified_at": null, "evidence": "No captured live limit output or classifier entry"},
       "name": "Pi",
       "aliases": [
         "pi.exe"

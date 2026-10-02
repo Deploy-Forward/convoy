@@ -16,7 +16,8 @@ from convoy.end import end_task
 
 
 class FakeGit:
-    def __init__(self, *, dirty=False, detached=False, upstream="origin/topic", push_code=0):
+    def __init__(self, *, dirty=False, detached=False, upstream="origin/topic", push_code=0, pushed_paths=""):
+        self.pushed_paths = pushed_paths
         self.dirty = dirty
         self.detached = detached
         self.upstream = upstream
@@ -36,6 +37,8 @@ class FakeGit:
             return subprocess.CompletedProcess(args, 0, " M file.py\n" if self.dirty else "", "")
         if key == ("rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"):
             return subprocess.CompletedProcess(args, 0 if self.upstream else 1, (self.upstream or "") + ("\n" if self.upstream else ""), "")
+        if key == ("diff", "--name-only", "@{upstream}...HEAD"):
+            return subprocess.CompletedProcess(args, 0, self.pushed_paths, "")
         if key == ("push",):
             return subprocess.CompletedProcess(args, self.push_code, "" if self.push_code else "ok\n", "rejected\n" if self.push_code else "")
         raise AssertionError("unexpected git call: " + repr(args))
@@ -189,6 +192,18 @@ class EndHeartbeat(unittest.TestCase):
         self.assertEqual(row["summary"], "tests green")
         self.assertEqual(row["branch"], "topic")
         self.assertEqual(row["upstream"], "origin/topic")
+
+    def test_a_push_carrying_convoy_written_files_warns_and_names_them(self):
+        git = FakeGit(pushed_paths="src/app.py\n.codex/hooks.json\n.claude/convoy-root\n.claude/settings.local.json\n")
+        card = end_task(root=self.root, cwd=self.wt, push=True, git_runner=git)
+        self.assertEqual(card["push_status"], "pushed", "a warning, not a refusal")
+        self.assertEqual(card["convoy_files"], [".claude/convoy-root", ".claude/settings.local.json", ".codex/hooks.json"])
+        self.assertIn("Convoy", card["warning"])
+
+    def test_a_push_without_convoy_files_says_nothing(self):
+        card = end_task(root=self.root, cwd=self.wt, push=True, git_runner=FakeGit(pushed_paths="src/app.py\n"))
+        self.assertEqual(card["push_status"], "pushed")
+        self.assertNotIn("convoy_files", card)
 
     def test_cli_hook_stdout_is_only_empty_hook_json(self):
         payload = json.dumps({

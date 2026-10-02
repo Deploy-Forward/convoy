@@ -138,20 +138,25 @@ def _install_hint(hid: str) -> dict[str, Any] | None:
     }
 
 
-def _first_run_card(hid: str, root: Path) -> dict[str, Any]:
-    row = ensure_first_run({"to": hid, "worktree": str(root)})
+def _first_run_card(hid: str, root: Path, write_repo_files: bool) -> dict[str, Any]:
+    row = ensure_first_run({"to": hid, "worktree": str(root)}, write_repo_files=write_repo_files)
     out: dict[str, Any] = {
         "prepared": bool(row.get("prepared")),
         "wrote": bool(row.get("wrote")),
         "settings": row.get("settings"),
         "home_written": bool(row.get("home_written")),
+        "home_key": row.get("home_key"),
         "settings_home": row.get("settings_home"),
+        "would_write": list(row.get("would_write") or []),
     }
     if row.get("error"):
         out["error"] = row["error"]
+    for key in ("home_error", "settings_error", "trust_error", "exclude_error", "left_visible"):
+        if row.get(key):
+            out[key] = row[key]
     out["identity_written"] = bool(row.get("identity_written"))
-    if row.get("identity_paths"):
-        out["identity_paths"] = row["identity_paths"]
+    if row.get("identity_removed"):
+        out["identity_removed"] = row["identity_removed"]
     if row.get("identity_agents"):
         out["identity_agents"] = row["identity_agents"]
     out["agent_written"] = bool(row.get("agent_written"))
@@ -160,7 +165,7 @@ def _first_run_card(hid: str, root: Path) -> dict[str, Any]:
     return out
 
 
-def _harness_card(hid: str, target_root: Path, run_first_run: bool) -> dict[str, Any]:
+def _harness_card(hid: str, target_root: Path, run_first_run: bool, write_repo_files: bool) -> dict[str, Any]:
     path = _which(hid)
     present = path is not None
     usage_remaining = None
@@ -183,7 +188,7 @@ def _harness_card(hid: str, target_root: Path, run_first_run: bool) -> dict[str,
         "limited": limited,
     }
     if run_first_run:
-        out["first_run"] = _first_run_card(hid, target_root)
+        out["first_run"] = _first_run_card(hid, target_root, write_repo_files)
     if not present:
         hint = _install_hint(hid)
         if hint is not None:
@@ -199,7 +204,11 @@ def onboard(
     checkout_root: str | None = None,
     github: bool | None = None,
     clone_runner: Runner | None = None,
+    write_repo_files: bool = False,
 ) -> dict[str, Any]:
+    """Bind a root to a thread and prepare the named harnesses. On a repo root nothing is
+    written into the repo except under .convoy/: the files a first run would add are listed
+    as would_write, and written only with write_repo_files."""
     named, unknown, refused = _normalize_harnesses(harnesses)
     if not named:
         return {
@@ -267,7 +276,8 @@ def onboard(
     else:
         lead_card = {"harness": standing, "set": False}
 
-    harness_cards = [_harness_card(hid, target_root, declared_checkout) for hid in named]
+    harness_cards = [_harness_card(hid, target_root, declared_checkout, write_repo_files) for hid in named]
+    would_write = sorted({f for h in harness_cards for f in (h.get("first_run") or {}).get("would_write") or []})
     missing = [h["to"] for h in harness_cards if not h.get("present")]
     return {
         "ok": True,
@@ -281,6 +291,8 @@ def onboard(
         "named": named,
         "harnesses": harness_cards,
         "missing": missing,
+        "write_repo_files": bool(write_repo_files),
+        "would_write": would_write,
         "path": path_card,
         "notes": {
             "byo_harness": True,

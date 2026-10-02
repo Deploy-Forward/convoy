@@ -48,6 +48,7 @@ def resume_neuron(
     go: bool = False,
     spawn: Callable[[list[str], str], int] | None = None,
     liveness: Callable[[Path, str], bool] | None = None,
+    allow_unverified_launch: bool = False,
 ) -> dict[str, Any]:
     root = Path(root)
     sid = str(session_id or "").strip()
@@ -69,6 +70,12 @@ def resume_neuron(
         "current": n["chair"]["current"], "place": n["place"], "thread": n["thread"],
     }
     if not go:
+        return card
+    try:
+        from .harness_contract import validate_launch_eligibility
+        validate_launch_eligibility(seat.get("to"), allow_unverified_launch=allow_unverified_launch)
+    except ValueError as exc:
+        card.update({"ok": False, "error": str(exc)})
         return card
     alive = (liveness or _chair_live)(root, sid)
     if alive:

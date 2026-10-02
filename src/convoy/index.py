@@ -67,21 +67,40 @@ def is_temp_root(root: str | Path) -> bool:
         return False
 
 
-def _load() -> list[dict[str, Any]]:
+def _load_checked() -> tuple[list[dict[str, Any]], str | None]:
+    """(rows, error): error is "unparseable" when the index exists but is not a JSON list, and then
+    no writer may replace it, or every other thread's row would be lost."""
     path = index_path()
     if not path.is_file():
-        return []
+        return [], None
     try:
-        data = json.loads(path.read_text(encoding="utf-8-sig") or "[]")
-    except json.JSONDecodeError:
-        return []
-    return [r for r in data if isinstance(r, dict) and isinstance(r.get("convoy_id"), str)] if isinstance(data, list) else []
+        text = path.read_text(encoding="utf-8-sig")
+        if not text.strip():
+            return [], "unparseable"  # an empty file is a write cut short, not an empty index
+        data = json.loads(text)
+    except (OSError, ValueError):
+        return [], "unparseable"
+    if not isinstance(data, list):
+        return [], "unparseable"
+    return [r for r in data if isinstance(r, dict) and isinstance(r.get("convoy_id"), str)], None
+
+
+def _load() -> list[dict[str, Any]]:
+    return _load_checked()[0]
+
+
+def index_error() -> str | None:
+    """"unparseable" when the machine index cannot be read (and so is never rewritten), else None."""
+    return _load_checked()[1]
 
 
 def _save(rows: list[dict[str, Any]]) -> None:
     path = index_path()
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(rows, indent=1), encoding="utf-8")
+    # Atomic: a reader never sees a truncated file, and a crash leaves the old one whole.
+    temporary = path.with_name(path.name + ".tmp-" + str(os.getpid()))
+    temporary.write_text(json.dumps(rows, indent=1), encoding="utf-8")
+    os.replace(temporary, path)
 
 
 def record(root: str | Path, convoy_id: str, thread: str | None) -> dict[str, Any]:
@@ -90,10 +109,14 @@ def record(root: str | Path, convoy_id: str, thread: str | None) -> dict[str, An
     row = {"convoy_id": convoy_id, "thread": thread, "root": str(Path(root)),
            "updated_at": datetime.now(timezone.utc).isoformat(timespec="microseconds").replace("+00:00", "Z")}
     try:
-        prev = [r for r in _load() if r.get("convoy_id") == convoy_id]
+        loaded, error = _load_checked()
+        if error:
+            row["index_error"] = error  # never rewrite an index that cannot be read
+            return row
+        prev = [r for r in loaded if r.get("convoy_id") == convoy_id]
         if prev and prev[0].get("hidden"):
             row["hidden"] = True   # a thread you archived stays archived across writes
-        rows = [r for r in _load() if r.get("convoy_id") != convoy_id]
+        rows = [r for r in loaded if r.get("convoy_id") != convoy_id]
         rows.append(row)
         _save(rows)
     except OSError:
@@ -106,7 +129,10 @@ def set_hidden(convoy_id: str, hidden: bool) -> dict[str, Any]:
     row, the root, and every seat stay exactly as they are; only the strip
     stops showing it. The strip clipped past four threads and offered no
     way to put one away."""
-    rows = _load()
+    rows, error = _load_checked()
+    if error:
+        return {"ok": False, "error": "thread index " + error + "; left alone: " + str(index_path()),
+                "index_error": error}
     hit = [r for r in rows if r.get("convoy_id") == convoy_id]
     if not hit:
         return {"ok": False, "error": "unknown thread: " + str(convoy_id)}

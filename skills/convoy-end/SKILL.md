@@ -29,9 +29,9 @@ convoy end [--summary "one line"] [--push]
   upstream exists, report the refusal and leave git unchanged.
 
 Codex's native invocation is `$convoy-end --push`; there is no supported
-arbitrary `/end` extension point. Claude receives a project command at
-`.claude/commands/end.md`, so `/end
---push` is available there after the command is installed/reloaded.
+arbitrary `/end` extension point. Claude invokes the Convoy plugin's
+convoy-end skill (`/convoy-end --push`), or runs `convoy end --push` from a
+shell.
 
 The Codex and Claude `Stop` hooks use `convoy end --hook`. That automatic path
 records a turn-end heartbeat only, emits no transcript or vendor identifiers,

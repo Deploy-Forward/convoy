@@ -339,6 +339,7 @@ def end_task(
         return {"ok": True, "deduplicated": True, "chair": chair, "event_key": key, "hook": {}}
 
     git: dict[str, Any] | None = None
+    convoy_files: list[str] = []
     push_status = "not-requested"
     ok = True
     command_error: str | None = None
@@ -371,6 +372,13 @@ def end_task(
                 command_error = "refuse --push: current branch has no configured upstream"
                 feed_error = command_error
             else:
+                try:
+                    names = git_runner(["diff", "--name-only", "@{upstream}...HEAD"], worktree)
+                    if names.returncode == 0:
+                        from .identity import is_convoy_written
+                        convoy_files = sorted(p for p in names.stdout.splitlines() if p.strip() and is_convoy_written(p))
+                except (OSError, subprocess.SubprocessError):
+                    convoy_files = []  # the warning is advice; it never blocks the push
                 try:
                     result = git_runner(["push"], worktree)
                 except (OSError, subprocess.SubprocessError) as exc:
@@ -431,6 +439,10 @@ def end_task(
     }
     if command_error:
         card["error"] = command_error
+    if convoy_files:
+        card["convoy_files"] = convoy_files
+        card["warning"] = ("these commits carry files Convoy writes into a worktree (" + ", ".join(convoy_files)
+                           + "); check they were meant to be committed")
     if automatic:
         card.update(_stop_work(thread_root, chair, seat, git or {}))
     return card

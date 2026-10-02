@@ -11,7 +11,7 @@ from typing import Any, Callable
 from .context import pack, stdin_for
 from .gitstate import git_state
 from .inbox import enqueue
-from .layer import hook
+from .layer import _VERIFIED_METHODS, hook
 from .usage import normalize_usage_remaining, probe
 from .convoy import list_seats, read_id, read_thread
 from .registry import live_on_branch, lookup, lookup_any, parse_agents_jsonl, parse_session_id, register
@@ -193,6 +193,21 @@ def try_codex_queue(thread: str, body: str) -> dict[str, Any] | None:
     return {"ok": True, "runner": "codex-queue", "delivery": "native-queued", "exit_code": 0}
 
 
+def proven_sender(sender: dict[str, Any] | None) -> tuple[str | None, str | None]:
+    """(author, verified_by) for a synapse row: the sender only with its proof's method.
+
+    `sender` is {chair, verified_by} from the caller's own proof: the chair whoami proves for
+    a CLI body, or the conductor of a checked bearer. A sender without a verified method is
+    a claim, and a synapse row records the sender as unknown rather than a claim."""
+    if not isinstance(sender, dict):
+        return None, None
+    chair = sender.get("chair")
+    method = sender.get("verified_by")
+    if not isinstance(chair, str) or not chair.strip() or method not in _VERIFIED_METHODS:
+        return None, None
+    return chair.strip(), method
+
+
 def deliver_to_live_seat(
     root: Path,
     to: str,
@@ -208,6 +223,7 @@ def deliver_to_live_seat(
     card: dict[str, Any] | None = None,
     origin: dict[str, Any] | None = None,
     local_writer: bool = True,
+    sender: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Queue a body for an existing occupant. Never spawn --resume.
 
@@ -262,8 +278,9 @@ def deliver_to_live_seat(
     }
     if extra_state:
         extra.update(extra_state)
-    hook(root, kind="synapse", summary="send " + to, instance_id=sid, author=None,
-         to=to, extra=extra, local_writer=local_writer)
+    author, verified_by = proven_sender(sender)
+    hook(root, kind="synapse", summary="send " + to, instance_id=sid, author=author,
+         to=to, extra=extra, local_writer=local_writer, verified_by=verified_by)
     return {
         "ok": True,
         "to": to,
@@ -316,6 +333,8 @@ def _send_one(
     card: dict[str, Any] | None = None,
     origin: dict[str, Any] | None = None,
     local_writer: bool = True,
+    allow_unverified_launch: bool = False,
+    sender: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     # Address a CHAIR by its name (`send --to codex-1`): a `to` that is a
     # chair session_id resolves to that chair's harness, id and worktree. A
@@ -368,6 +387,34 @@ def _send_one(
             "convoy_id": cid,
         }
         return card
+    def _launch_refusal():
+        from .harness_contract import validate_launch_eligibility
+        try:
+            validate_launch_eligibility(to, allow_unverified_launch=allow_unverified_launch)
+        except ValueError as exc:
+            return {"ok": False, "refused": True, "to": to, "session_id": None,
+                    "error": str(exc), "pointers": packed, "convoy_id": cid}
+        return None
+
+    # A new headless send must report eligibility before a usage snapshot
+    # can refuse or write a misleading limited/bring_up remedy. Existing
+    # Registered chair/resume addresses retain their queue and no-steal
+    # routing below. An unregistered resume token is not an existing chair.
+    if runner is native_runner and not resolved_instance_id:
+        if resume_token:
+            resume_seat = lookup_any(root, resume_token, to=target_name, worktree=worktree)
+            registered_resume = (isinstance(resume_seat, dict) and
+                                 isinstance(resume_seat.get("session_id"), str) and
+                                 bool(resume_seat["session_id"].strip()))
+            needs_early_gate = not registered_resume
+        else:
+            existing_harness_seat = bool(cid) and any(
+                s.get("to") == to for s in list_seats(root, convoy_id=cid))
+            needs_early_gate = not existing_harness_seat
+        if needs_early_gate:
+            refusal = _launch_refusal()
+            if refusal is not None:
+                return refusal
     if probe_fn is not None:
         usage = probe_fn(to)
     elif runner is native_runner:
@@ -485,6 +532,7 @@ def _send_one(
             card=card,
             origin=origin,
             local_writer=local_writer,
+            sender=sender,
         )
     if not resolved_instance_id and not resume_token:
         cid = read_id(root)
@@ -513,6 +561,12 @@ def _send_one(
                 "pointers": packed,
                 "convoy_id": cid,
             }
+    # Queuing to an existing chair above is not a launch. A native headless
+    # invocation here is, even when it resumes a vendor session.
+    if runner is native_runner:
+        refusal = _launch_refusal()
+        if refusal is not None:
+            return refusal
     run = runner or fake_runner
     card = run(
         to,
@@ -531,10 +585,11 @@ def _send_one(
     argv = card.get("argv")
     argv0 = argv[0] if isinstance(argv, list) and argv else None
     # instance_id here is the TARGET/spawned session (the row's subject), not
-    # the sender — author=None records "sender unknown" instead of a lie.
-    hook(root, kind="synapse", summary="send " + to, instance_id=sid, author=None, to=to,
+    # the sender: the sender is recorded only when proven, else "unknown".
+    author, verified_by = proven_sender(sender)
+    hook(root, kind="synapse", summary="send " + to, instance_id=sid, author=author, to=to,
          extra={"ok": card.get("ok"), "dry_run": False, "runner": runner_kind(run), "argv0": argv0, **extra},
-         local_writer=local_writer)
+         local_writer=local_writer, verified_by=verified_by)
     card["pointers"] = packed
     card["stdin"] = message
     card["usage_remaining"] = normalize_usage_remaining(usage.get("usage_remaining"))
@@ -551,6 +606,8 @@ def send_many(
     dry_run: bool = False,
     probe_fn=None,
     allow_interactive_resume: bool = True,
+    allow_unverified_launch: bool = False,
+    sender: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     if len(targets) < 1:
         raise ValueError("need at least one --to")
@@ -570,6 +627,8 @@ def send_many(
             worktree=wt,
             probe_fn=probe_fn,
             allow_interactive_resume=allow_interactive_resume,
+            allow_unverified_launch=allow_unverified_launch,
+            sender=sender,
         )
     with ThreadPoolExecutor(max_workers=len(targets)) as pool:
         futs = [pool.submit(job, i, t, wts[i]) for i, t in enumerate(targets)]

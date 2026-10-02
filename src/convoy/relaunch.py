@@ -142,7 +142,8 @@ def relaunch(root: Path | str, *, thread: str | None = None, runner: Runner | No
              timeout: float = 0.0, seats: list[str] | None = None, take_over: bool = False,
              alive: Callable[[Any], bool] = pid_alive,
              sleep: Callable[[float], None] = time.sleep,
-             evict_timeout: float = EVICT_TIMEOUT_SEC) -> dict[str, Any]:
+             evict_timeout: float = EVICT_TIMEOUT_SEC,
+             allow_unverified_launch: bool = False) -> dict[str, Any]:
     """seats: relaunch only these chairs (their panes died; the others are
     alive and must not be duplicated). Default: every chair.
 
@@ -176,6 +177,14 @@ def relaunch(root: Path | str, *, thread: str | None = None, runner: Runner | No
     if not chairs:
         card["error"] = "no chairs on this thread: crew first"
         return card
+    if runner is not None:
+        try:
+            from .harness_contract import validate_launch_eligibility
+            for s in chairs:
+                validate_launch_eligibility(s.get("to"), allow_unverified_launch=allow_unverified_launch)
+        except ValueError as exc:
+            card["error"] = str(exc)
+            return card
     rows = feed_since(root, EPOCH)
     now = utc_now()
     card["relaunched_at"] = now
@@ -269,7 +278,7 @@ def relaunch(root: Path | str, *, thread: str | None = None, runner: Runner | No
             update_seat(root, sid, boot_prompt=prompt)
             c["boot_prompt_rearmed"] = True
             c["token_found"] = tok is not None
-    up = bring_up(root, thread=bound, runner=runner, session_ids=sids)
+    up = bring_up(root, thread=bound, runner=runner, session_ids=sids, allow_unverified_launch=allow_unverified_launch)
     card["windows"] = up.get("windows") or []
     if up.get("error"):
         card["error"] = str(up["error"])

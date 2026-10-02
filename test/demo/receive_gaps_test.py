@@ -52,7 +52,7 @@ class SkillsVerbInstallsHooks(unittest.TestCase):
         self.assertEqual(card["hooks"]["resolved_via"], "interpreter")
         grok = json.loads((self.wt / ".grok" / "hooks" / "convoy-inbox.json").read_text(encoding="utf-8"))
         self.assertEqual(grok["hooks"]["PreToolUse"][0]["hooks"][0]["command"], fake)
-        claude = json.loads((self.wt / ".claude" / "settings.json").read_text(encoding="utf-8"))
+        claude = json.loads((self.wt / ".claude" / "settings.local.json").read_text(encoding="utf-8"))
         self.assertIn("UserPromptSubmit", claude["hooks"])
         self.assertEqual((self.wt / ".grok" / "convoy-root").read_text(encoding="utf-8").strip(), str(self.root.resolve()))
         self.assertEqual((self.wt / ".claude" / "convoy-root").read_text(encoding="utf-8").strip(), str(self.root.resolve()))
@@ -82,7 +82,7 @@ class StaleHookEntriesArePruned(unittest.TestCase):
         (self.wt / ".claude").mkdir()
         mine = {"type": "command", "command": "echo user-hook-keep-me"}
         dead = {"type": "command", "command": "C:/gone/python.exe -m convoy inbox --hook-pretooluse"}
-        (self.wt / ".claude" / "settings.json").write_text(json.dumps({
+        (self.wt / ".claude" / "settings.local.json").write_text(json.dumps({
             "permissions": {"defaultMode": "bypassPermissions"},
             "hooks": {"PreToolUse": [{"hooks": [dead]}, {"hooks": [mine]}],
                       "UserPromptSubmit": [{"hooks": [dead]}]},
@@ -93,7 +93,7 @@ class StaleHookEntriesArePruned(unittest.TestCase):
         with mock.patch.object(cmd, "_probe_inbox_command", lambda c: c == good):
             rc, card = _run_cli(self.root, "skills", "--worktree", str(self.wt))
         self.assertEqual(rc, 0)
-        data = json.loads((self.wt / ".claude" / "settings.json").read_text(encoding="utf-8"))
+        data = json.loads((self.wt / ".claude" / "settings.local.json").read_text(encoding="utf-8"))
         pre = [h["command"] for e in data["hooks"]["PreToolUse"] for h in e["hooks"]]
         self.assertIn(good, pre)
         self.assertIn("echo user-hook-keep-me", pre)
@@ -111,7 +111,7 @@ class StaleHookEntriesArePruned(unittest.TestCase):
         quoted = cmd._quote(sys.executable) + ' -c "import sys; sys.exit(0)" inbox --hook-pretooluse'
         # Seed it as an existing working hook so the writer keeps it: the point
         # under test is duplication of a command containing double quotes.
-        (self.wt / ".claude" / "settings.json").write_text(json.dumps({
+        (self.wt / ".claude" / "settings.local.json").write_text(json.dumps({
             "hooks": {"PreToolUse": [{"hooks": [{"type": "command", "command": quoted}]}],
                       "UserPromptSubmit": [{"hooks": [{"type": "command", "command": quoted}]}]},
         }, indent=2), encoding="utf-8")
@@ -125,7 +125,7 @@ class StaleHookEntriesArePruned(unittest.TestCase):
             _run_cli(self.root, "skills", "--worktree", str(self.wt))
             rc, card = _run_cli(self.root, "skills", "--worktree", str(self.wt))
         self.assertEqual(rc, 0)
-        data = json.loads((self.wt / ".claude" / "settings.json").read_text(encoding="utf-8"))
+        data = json.loads((self.wt / ".claude" / "settings.local.json").read_text(encoding="utf-8"))
         for event in ("PreToolUse", "UserPromptSubmit"):
             ours = [h["command"] for e in data["hooks"][event] for h in e["hooks"]
                     if "inbox --hook-pretooluse" in h["command"]]
@@ -135,18 +135,18 @@ class StaleHookEntriesArePruned(unittest.TestCase):
         good = cmd._quote(sys.executable) + " -m convoy inbox --hook-pretooluse"
         with mock.patch.object(cmd, "_probe_inbox_command", lambda c: c == good):
             _run_cli(self.root, "skills", "--worktree", str(self.wt))
-            before = (self.wt / ".claude" / "settings.json").read_text(encoding="utf-8")
+            before = (self.wt / ".claude" / "settings.local.json").read_text(encoding="utf-8")
             rc, card = _run_cli(self.root, "skills", "--worktree", str(self.wt))
         self.assertEqual(rc, 0)
         self.assertFalse(card["hooks"]["claude_hook"]["written"])
-        self.assertEqual((self.wt / ".claude" / "settings.json").read_text(encoding="utf-8"), before)
+        self.assertEqual((self.wt / ".claude" / "settings.local.json").read_text(encoding="utf-8"), before)
 
 
 class CodexQueueStillPendsForTheReceiver(unittest.TestCase):
     """`codex queue` exiting 0 is not a receipt: a queued row was found sitting
     in codex's own sqlite for a dead pane (audit 2026-09-03). Convoy's inbox
     row therefore stays PENDING until the receiver drains it, exactly as for
-    every other harness, so the receive loop in neuron-receive/SKILL.md is the
+    every other harness, so the receive loop in the convoy-listen skill is the
     same on all seven. The row records that a native route was also used."""
 
     def setUp(self):

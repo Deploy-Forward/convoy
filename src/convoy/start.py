@@ -10,6 +10,7 @@ from .install import _which
 from .onboard import SUPPORTED_HARNESSES, onboard
 from .panes import bodies, identify
 from .repo import checkout_path_for, is_repo_url
+from .start_card import TRUST_NOTE, build_start_card
 
 IdentifyFn = Callable[[Path], dict[str, Any]]
 BodiesFn = Callable[[Path], dict[str, Any]]
@@ -50,8 +51,10 @@ def start(
     clone_runner=None,
     identify_fn: IdentifyFn | None = None,
     bodies_fn: BodiesFn | None = None,
+    write_repo_files: bool = False,
 ) -> dict[str, Any]:
-    """Compose existing verbs. Never auto-picks newest. Never bring_up."""
+    """Compose existing verbs. Never auto-picks newest. Never bring_up. Writes nothing into the
+    repo outside .convoy/ unless write_repo_files (see onboard)."""
     if cancel:
         return {"ok": True, "bound": False, "ask": "cancelled", "brought_up": False}
 
@@ -91,10 +94,12 @@ def start(
     except ValueError as e:
         return {"ok": False, "error": str(e), "bound": False, "brought_up": False}
 
+    notes = [] if write_repo_files else [TRUST_NOTE]
     if existing.exists() and read_id(existing) is not None and _live_on_root(existing, who, roster):
         card = attach(existing)
         card["attached"] = True
         card["brought_up"] = False
+        card["start_card"] = build_start_card(existing, notes=notes)
         return card
 
     card = onboard(
@@ -104,14 +109,33 @@ def start(
         checkout_root=want,
         github=github,
         clone_runner=clone_runner,
+        write_repo_files=write_repo_files,
     )
     card["brought_up"] = False
     if card.get("ok") and read_id(Path(str(card.get("root") or root))) is not None:
         dest = Path(str(card["root"]))
+        notes = notes + _first_run_notes(card)
         if _live_on_root(dest, who, roster):
             attached = attach(dest)
             attached["attached"] = True
             attached["brought_up"] = False
             attached["onboard"] = card
+            attached["start_card"] = build_start_card(dest, notes=notes)
             return attached
+        card["start_card"] = build_start_card(dest, notes=notes)
     return card
+
+
+def _first_run_notes(card: dict[str, Any]) -> list[str]:
+    """One note per kind across every harness: what the first runs could not exclude, and the files
+    they wrote that git still shows (a file the person could own is never hidden)."""
+    errors, visible = [], set()
+    for harness in card.get("harnesses") or []:
+        first = harness.get("first_run") or {}
+        if first.get("exclude_error") and first["exclude_error"] not in errors:
+            errors.append(first["exclude_error"])
+        visible.update(first.get("left_visible") or [])
+    notes = ["info/exclude not written: " + str(e) for e in errors]
+    if visible:
+        notes.append("written and left visible to git: " + ", ".join(sorted(visible)))
+    return notes

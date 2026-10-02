@@ -72,6 +72,7 @@ def crew(
     runner: Runner | None = None,
     mint_runner: GitRunner | None = None,
     author: str | None = None,
+    allow_unverified_launch: bool = False,
 ) -> dict[str, Any]:
     """Validate -> mint -> join each -> bring_up once. runner=None joins the
     chairs and shows the argv without spawning; live_runner pops the window.
@@ -90,6 +91,11 @@ def crew(
         return card
     try:
         plan = _plan(root, seats, bound)
+        if runner is not None:
+            from .harness_contract import validate_launch_eligibility
+            for p in plan:
+                if p["where"] == "local":
+                    validate_launch_eligibility(p["harness"], allow_unverified_launch=allow_unverified_launch)
     except ValueError as e:
         card["error"] = str(e)
         return card
@@ -121,7 +127,7 @@ def crew(
         card["seats"].append({**joined["seat"], "token": joined["token"], "connect_mode": connect_mode(p["harness"])})
     sids = [s["session_id"] for s in card["seats"]]
     try:
-        up = bring_up(root, thread=bound, runner=runner, session_ids=sids)
+        up = bring_up(root, thread=bound, runner=runner, session_ids=sids, allow_unverified_launch=allow_unverified_launch)
     except OSError as e:
         return _mark_partial(card, root, sids, "launch failed: " + str(e))
     card["windows"] = up.get("windows") or []

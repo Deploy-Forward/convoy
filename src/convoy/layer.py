@@ -48,7 +48,7 @@ def _is_conductor_alias(val: Any) -> bool:
 
 
 _AUTHOR_IS_INSTANCE = object()
-_VERIFIED_METHODS = frozenset(("environment", "token", "pane-host", "worktree"))
+_VERIFIED_METHODS = frozenset(("environment", "token", "pane-host", "worktree", "bearer"))
 STAMPED_KINDS = frozenset(("note", "synapse", "seated"))
 _RESERVED_FIELDS = frozenset(("ts", "kind", "summary", "instance_id", "from", "to",
                               "device", "verified_by", "author_claimed"))
@@ -76,7 +76,12 @@ def hook(root: Path, kind: str, summary: str, instance_id: str | None = None, ex
     # would raise post-runner on synapse rows, discarding the card and leaving
     # a hop with zero feed rows (a pre-merge review finding). Constraining
     # subject names belongs at seat/register write time, where nothing has run.
-    if _is_conductor_alias(author) and not (kind == "conductor" and allow_conductor_author):
+    # A conductor authors its stamps, and is the sender of a send it made over a
+    # checked bearer (verified_by=bearer, set only by the MCP send from the
+    # request's principal). It never authors a note or any other row.
+    conductor_ok = ((kind == "conductor" and allow_conductor_author)
+                    or (kind == "synapse" and verified_by == "bearer"))
+    if _is_conductor_alias(author) and not conductor_ok:
         raise ValueError("refuse grok-bot as author; conductor identity is stamp-only")
     event = {"ts": utc_now(), "kind": kind, "instance_id": instance_id, "summary": summary}
     if author:

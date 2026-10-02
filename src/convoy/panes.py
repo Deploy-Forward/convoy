@@ -65,17 +65,19 @@ _HELPER_MARKS = ("--type=", "daemon run", "--bg-pty-host", "app-server", "mcp-se
                  "--mcp", "language-server", "crashpad", "--utility")
 
 
-def enumerate_processes() -> list[dict[str, Any]]:
+def enumerate_processes(*, attempts: int = 3, timeout: float = 150) -> list[dict[str, Any]]:
     """{pid, ppid, cmdline, cwd|None} for every process the OS will show.
-    Raises on failure; callers turn that into source=null + error."""
+    Raises on failure; callers turn that into source=null + error. attempts and
+    timeout bound the external call (seconds); a caller on a send's path passes
+    one short attempt so a slow process table can never hold the send."""
     if os.name == "nt":
-        return _enumerate_windows()
+        return _enumerate_windows(attempts=attempts, timeout=timeout)
     if sys.platform.startswith("linux") and Path("/proc").is_dir():
         return _enumerate_proc()
-    return _enumerate_ps()
+    return _enumerate_ps(timeout=min(float(timeout), 20.0))
 
 
-def _enumerate_windows() -> list[dict[str, Any]]:
+def _enumerate_windows(*, attempts: int = 3, timeout: float = 150) -> list[dict[str, Any]]:
     shell = shutil.which("powershell") or shutil.which("pwsh")
     if not shell:
         raise OSError("neither powershell nor pwsh on PATH")
@@ -85,15 +87,15 @@ def _enumerate_windows() -> list[dict[str, Any]]:
     # -OperationTimeoutSec: without it CIM answered "Call cancelled"
     # (0x80041032) on a loaded host with ~1000 processes (live 2026-09-03).
     ps = ("try { [Console]::OutputEncoding=[Text.Encoding]::UTF8 } catch { }; "
-          "Get-CimInstance Win32_Process -OperationTimeoutSec 120 "
+          "Get-CimInstance Win32_Process -OperationTimeoutSec " + str(max(1, min(120, int(timeout)))) + " "
           "| Select-Object ProcessId,ParentProcessId,CommandLine | ConvertTo-Json -Compress")
     last: Exception | None = None
     out = ""
-    for attempt in range(3):
+    for attempt in range(max(1, int(attempts))):
         if attempt:
             time.sleep(1.0)
         proc = subprocess.run([shell, "-NoProfile", "-NonInteractive", "-Command", ps],
-                              capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=150,
+                              capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout,
                               **quiet_spawn_kwargs())
         if proc.returncode == 0 and proc.stdout.strip():
             out = proc.stdout
@@ -131,9 +133,9 @@ def _enumerate_proc() -> list[dict[str, Any]]:
     return procs
 
 
-def _enumerate_ps() -> list[dict[str, Any]]:
+def _enumerate_ps(*, timeout: float = 20) -> list[dict[str, Any]]:
     out = subprocess.run(["ps", "-eww", "-o", "pid=,ppid=,args="], capture_output=True, text=True,
-                         encoding="utf-8", errors="replace", timeout=20, check=True, **quiet_spawn_kwargs()).stdout
+                         encoding="utf-8", errors="replace", timeout=timeout, check=True, **quiet_spawn_kwargs()).stdout
     procs: list[dict[str, Any]] = []
     for line in out.splitlines():
         parts = line.strip().split(None, 2)

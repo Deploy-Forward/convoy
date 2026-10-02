@@ -190,8 +190,14 @@ class Server(unittest.TestCase):
              mock.patch("convoy.bringup.ensure_first_run", return_value={"ok": True, "prepared": False, "wrote": False, "settings": None, "home_written": False, "settings_home": None}), \
              mock.patch("convoy.relaunch.bring_up", return_value={"ok": True, "windows": [{"ok": True, "session_id": "grok-1"}]}) as bu:
             rr = self.post("/api/relaunch", {"root": str(self.root), "seat": "grok-1"})
-        self.assertTrue(rr["ok"], rr); self.assertTrue(bu.called)
-        self.assertEqual(bu.call_args.kwargs.get("session_ids"), ["grok-1"], "only this chair relaunches")
+        self.assertFalse(rr["ok"], rr)
+        self.assertIn("unverified launch eligibility", rr["error"])
+        bu.assert_not_called()  # widget must never supply an implicit override
+        self.assertTrue(list_seats(self.root)[0].get("archived"), "refusal must not unarchive")
+        with mock.patch("convoy.relaunch.bring_up", return_value={"ok": True, "windows": [{"ok": True, "session_id": "grok-1"}]}) as bu:
+            rr = self.post("/api/relaunch", {"root": str(self.root), "seat": "grok-1", "allow_unverified_launch": True})
+        self.assertTrue(rr["ok"], rr)
+        self.assertIs(bu.call_args.kwargs["allow_unverified_launch"], True)
         self.assertFalse(list_seats(self.root)[0].get("archived"), "relaunch un-archives")
         self.assertFalse(self.post("/api/archive", {"root": str(self.root), "seat": "nobody"})["ok"])
 

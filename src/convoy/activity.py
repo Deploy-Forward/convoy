@@ -26,6 +26,7 @@ from .convoy import list_seats, read_thread, read_id
 from .inbox import pending
 from .layer import STAMPED_KINDS, feed_path, feed_since
 from .panes import match_processes
+from .wake_routes import reachability_detail
 
 EPOCH = "1970-01-01T00:00:00.000000Z"
 DEFAULT_WINDOW_MIN = 90
@@ -100,6 +101,9 @@ def neuron_activity(
         except (OSError, ValueError):
             inbox_n = 0
         proc = proc_by_chair.get(sid) if view is not None else None
+        # The wake directory: the recorded route and whether it can wake the chair now. Null only
+        # when no route is registered, which is unknown, never down.
+        reach = reachability_detail(root, sid)
         spoke_in_window = bool(last_ts and last_ts >= since)
         active = bool(spoke_in_window or proc is True)
         if spoke_in_window and proc is True:
@@ -127,6 +131,9 @@ def neuron_activity(
             "verified_by": last_stamp.get("verified_by") if last_stamp else None,
             "author_claimed": last_stamp.get("author_claimed") if last_stamp else None,
             "device": last_stamp.get("device") if last_stamp else None,
+            "wake_route": reach["route"],
+            "reachable": reach["reachable"],
+            "reachable_reason": reach["reason"],
             "unread": len(waiting),
             "last_addressed_by": (waiting[-1].get("from") if waiting else None),
             "inbox_pending": inbox_n,
@@ -246,6 +253,8 @@ def neurons_everywhere(since: str | None = None) -> dict[str, Any]:
                          "evidence": n.get("evidence"), "last_authored": n.get("last_authored"),
                          "verified_by": n.get("verified_by"), "author_claimed": n.get("author_claimed"),
                          "device": n.get("device"),
+                         "wake_route": n.get("wake_route"), "reachable": n.get("reachable"),
+                         "reachable_reason": n.get("reachable_reason"),
                          "inbox_pending": n.get("inbox_pending"), "send_command": n.get("send_command")})
     rows.sort(key=lambda r: (not r["active"], str(r.get("last_authored") or "")), reverse=False)
     rows.sort(key=lambda r: str(r.get("last_authored") or ""), reverse=True)

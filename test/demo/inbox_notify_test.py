@@ -287,7 +287,7 @@ class LiveSeatInbox(unittest.TestCase):
                 self.assertTrue(card.get("ok"), hid)
                 self.assertTrue(card.get("inbox_hook_written"), hid)
                 grok_hook = Path(wt) / ".grok" / "hooks" / "convoy-inbox.json"
-                claude_settings = Path(wt) / ".claude" / "settings.json"
+                claude_settings = Path(wt) / ".claude" / "settings.local.json"
                 self.assertTrue(grok_hook.is_file(), hid)
                 self.assertIn("inbox --hook-pretooluse", grok_hook.read_text(encoding="utf-8"))
                 data = json.loads(claude_settings.read_text(encoding="utf-8"))
@@ -300,15 +300,16 @@ class LiveSeatInbox(unittest.TestCase):
                     self.assertFalse(card.get("wrote"))
                     self.assertFalse(card.get("home_written"))
 
-    def test_claude_first_run_merges_hooks_without_dropping_ungate(self):
+    def test_claude_first_run_merges_hooks_into_the_local_file_without_permissions(self):
         fake_home = Path(tempfile.mkdtemp())
         with mock.patch("convoy.bringup.Path.home", return_value=fake_home):
             card = ensure_first_run({"to": "claude", "worktree": str(self.wt)}, root=self.root)
         self.assertTrue(card.get("ok"))
         self.assertTrue(card.get("wrote"))
-        data = json.loads((self.wt / ".claude" / "settings.json").read_text(encoding="utf-8"))
-        self.assertTrue(data.get("skipDangerousModePermissionPrompt"))
-        self.assertEqual(data.get("permissions", {}).get("defaultMode"), "bypassPermissions")
+        data = json.loads((self.wt / ".claude" / "settings.local.json").read_text(encoding="utf-8"))
+        self.assertNotIn("skipDangerousModePermissionPrompt", data)
+        self.assertNotIn("permissions", data, "the launch argv carries the mode, never a project file")
+        self.assertIs(data.get("autoCompactEnabled"), True)
         self.assertTrue(
             data["hooks"]["UserPromptSubmit"][0]["hooks"][0]["command"].endswith("inbox --hook-pretooluse")
         )

@@ -316,17 +316,25 @@ class WidgetApi:
         self.invalidate()
         return {"ok": True, "seat": seat, "archived": bool(archived), "row": row}
 
-    def relaunch_seat(self, root: str, seat: str) -> dict[str, Any]:
+    def relaunch_seat(self, root: str, seat: str, *, allow_unverified_launch: bool = False) -> dict[str, Any]:
         """Relaunch ONE chair (its pane died or it was archived): un-archive,
         then the same relaunch the CLI runs for that seat only, live."""
         from .bringup import live_runner
         from .relaunch import relaunch
         r = Path(root)
+        try:
+            from .convoy import list_seats
+            from .harness_contract import validate_launch_eligibility
+            row = next((s for s in list_seats(r) if s.get("session_id") == seat), None)
+            if row is not None:
+                validate_launch_eligibility(row.get("to"), allow_unverified_launch=allow_unverified_launch)
+        except ValueError as exc:
+            return {"ok": False, "launched": False, "error": str(exc)}
         un = self.archive(root, seat, archived=False)
         if not un.get("ok"):
             return un
         try:
-            card = relaunch(r, runner=live_runner, timeout=0.0, seats=[seat])
+            card = relaunch(r, runner=live_runner, timeout=0.0, seats=[seat], allow_unverified_launch=allow_unverified_launch)
         except (ValueError, OSError) as e:
             return {"ok": False, "error": str(e)}
         return {"ok": bool(card.get("ok")), "launched": bool(card.get("launched")), "error": card.get("error"),
@@ -351,7 +359,7 @@ class WidgetApi:
         return c
 
     def start(self, repo: str | None, harnesses: list[str], thread: str | None, github: bool | None,
-              seats: list[dict[str, Any]], launch: bool) -> dict[str, Any]:
+              seats: list[dict[str, Any]], launch: bool, *, allow_unverified_launch: bool = False) -> dict[str, Any]:
         """Original spec: GitHub? -> repo -> harnesses -> N seats (harness, model,
         effort, where) -> launch. onboard binds (URL cloned once), crew mints
         one worktree per seat, joins with boot prompts, brings ONE window up.
@@ -369,7 +377,7 @@ class WidgetApi:
         root = Path(str(ob.get("root") or base))
         specs = [{k: v for k, v in s.items() if k in ("harness", "model", "effort", "where", "title") and v not in (None, "")} for s in seats if s.get("harness")]
         if specs:
-            cw = crew(root, specs, thread=ob.get("thread"), runner=live_runner if launch else None)
+            cw = crew(root, specs, thread=ob.get("thread"), runner=live_runner if launch else None, allow_unverified_launch=allow_unverified_launch)
             out["crew"] = cw
             out["ok"] = bool(cw.get("ok"))
         out["root"] = str(root)
@@ -441,7 +449,7 @@ def make_handler(api: WidgetApi):
             if p == "/api/thread-hide":
                 return self._json(api.hide_thread(str(body.get("convoy_id") or ""), bool(body.get("hidden", True))))
             if p == "/api/relaunch":
-                return self._json(api.relaunch_seat(str(body.get("root") or "."), str(body.get("seat") or "")))
+                return self._json(api.relaunch_seat(str(body.get("root") or "."), str(body.get("seat") or ""), allow_unverified_launch=body.get("allow_unverified_launch", False)))
             if p == "/api/feed":
                 return self._json(api.feed(str(body.get("root") or "."), str(body.get("since") or "10m"), int(body.get("limit") or 40)))
             if p == "/api/tune":
@@ -456,7 +464,7 @@ def make_handler(api: WidgetApi):
                 return self._json(api.card(body.get("root")))
             if p == "/api/start":
                 return self._json(api.start(body.get("repo"), list(body.get("harnesses") or []), body.get("thread"),
-                                            body.get("github"), list(body.get("seats") or []), bool(body.get("launch"))))
+                                            body.get("github"), list(body.get("seats") or []), bool(body.get("launch")), allow_unverified_launch=body.get("allow_unverified_launch", False)))
             if p == "/api/open":
                 url = str(body.get("url") or "")
                 if url.startswith("https://"):

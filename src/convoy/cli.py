@@ -3,8 +3,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
+from typing import Any
 
 from .bringup import bring_up, hide_windows, live_applier, live_runner, terminals
 from .consent import grant_consent
@@ -20,7 +22,7 @@ from .graph_html import render_html, resume_neuron
 from .identity import ensure_inbox_hooks, install_neuron_identity
 from .index import find_root, index_path, list_threads, prune_threads, routable_threads
 from .activity import neuron_activity
-from .panes import bodies, identify
+from .panes import bodies, enumerate_processes, identify
 from .provenance import build_provenance, rebase_check, record_commit
 from .layer import SCHEMA_VERSION, STAMPED_KINDS, conductor_stamp, feed_since, hook, parse_since
 from .rail import build_rail, root_for
@@ -52,6 +54,26 @@ def _seat_spec(text: str) -> dict:
     return spec
 
 
+# The sender probe sits on a send's path: one attempt at the process table, this many seconds.
+SENDER_PROBE_TIMEOUT_S = 5
+
+
+def _proven_sender(root: Path, dry_run: bool) -> dict[str, Any] | None:
+    """The chair whoami proves for this body, as the sender of a send; None when
+    nothing proves one. A dry run records no send, and a probe that fails or runs
+    out of time never stops a send: the sender is then unknown."""
+    if dry_run:
+        return None
+    try:
+        procs = enumerate_processes(attempts=1, timeout=SENDER_PROBE_TIMEOUT_S)
+        me = identify(root, procs=procs, env=os.environ)
+    except Exception:
+        return None
+    if not isinstance(me, dict) or not me.get("chair"):
+        return None
+    return {"chair": me["chair"], "verified_by": me.get("via")}
+
+
 def main(argv: list[str] | None = None) -> int:
     raw_argv = list(argv) if argv is not None else sys.argv[1:]
     p = argparse.ArgumentParser(prog="convoy")
@@ -71,6 +93,7 @@ def main(argv: list[str] | None = None) -> int:
     f.add_argument("--since", required=True, help="10m | 2h | 1d | 45s, or an ISO UTC timestamp")
 
     rlx = sub.add_parser("relaunch", help="after the panes died: bring every chair up again from seats.jsonl in its worktree, queue each a 'you left off at <ts>' inbox row, and prove connected only from acks stamped after the relaunch")
+    rlx.add_argument("--allow-unverified-launch", action="store_true", help="explicitly accept unverified harness launch eligibility for this launch")
     rlx.add_argument("--thread", help="must match the bound thread")
     rlx.add_argument("--timeout", type=float, default=0.0, help="seconds to wait for fresh seated acks; 0 is one snapshot")
     rlx.add_argument("--dry-run", action="store_true", help="show the windows and the per-chair timeline; spawn and write nothing")
@@ -112,6 +135,7 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--id", dest="neuron_id", help="short neuron id from `convoy neurons --all` (n + 6 hex); resolves the thread root, harness and chair itself, so --root and --to are not needed")
     s.add_argument("body")
     s.add_argument("--live", action="store_true")
+    s.add_argument("--allow-unverified-launch", action="store_true", help="explicitly accept unverified harness launch eligibility for a headless --live launch")
     s.add_argument("--dry-run", action="store_true")
     s.add_argument("--label")
     s.add_argument("--instance-id")
@@ -151,6 +175,7 @@ def main(argv: list[str] | None = None) -> int:
     se.add_argument("--where", choices=["local", "cloud"], help="local (default) or cloud; cloud is refused unless convoy choices offers it for the harness, and takes no --worktree")
 
     jn = sub.add_parser("join")
+    jn.add_argument("--allow-unverified-launch", action="store_true", help="explicitly accept unverified harness launch eligibility for --launch")
     jn.add_argument("--to", required=True, help="harness for the new chair")
     jn.add_argument("--session-id")
     jn.add_argument("--worktree")
@@ -163,6 +188,7 @@ def main(argv: list[str] | None = None) -> int:
     jn.add_argument("--consent", help="one-time scoped consent returned by `convoy consent --grant`")
 
     cw = sub.add_parser("crew", help="N neurons at once: mint one worktree per seat, join every chair with a boot prompt, bring them up in ONE window")
+    cw.add_argument("--allow-unverified-launch", action="store_true", help="explicitly accept unverified harness launch eligibility for --launch")
     cw.add_argument("--seat", action="append", required=True, metavar="SPEC",
                     help="one per neuron: <harness>[,model=M][,effort=E][,where=local|cloud][,title=T]")
     cw.add_argument("--checkout", help="git checkout to mint worktrees from (default: the root)")
@@ -177,6 +203,7 @@ def main(argv: list[str] | None = None) -> int:
     ch = sub.add_parser("choices", help="list installed harnesses, known worktrees, seats, and active-pane support")
 
     ln = sub.add_parser("launch", help="split one already-joined fresh chair into the active pane host")
+    ln.add_argument("--allow-unverified-launch", action="store_true", help="explicitly accept unverified harness launch eligibility for this launch")
     ln.add_argument("--seat", required=True, help="fresh join/swap chair session_id")
     ln.add_argument("--dry-run", action="store_true")
     ln.add_argument("--consent", help="one-time scoped consent returned by `convoy consent --grant`")
@@ -235,9 +262,12 @@ def main(argv: list[str] | None = None) -> int:
     gr.add_argument("--out", help="file to write with --html (default .convoy/graph.html under the root)")
     gr.add_argument("--also-root", action="append", default=[], help="another root whose thread the page should also show")
 
-    sk = sub.add_parser("skills", help="(re)install the Convoy-owned identity skill copies into a worktree; refreshes stale copies after an upgrade")
+    sk = sub.add_parser("skills", help="(re)install the Convoy-owned AGENTS.md pointer and convoy-end copies into a worktree; refreshes stale copies after an upgrade")
     sk.add_argument("--worktree", required=True)
 
+    sc = sub.add_parser("start-card", help="read-only: the start card for this thread (where, who, commitments, board, next); one line per item")
+    sc.add_argument("--json", action="store_true", help="print the whole card as JSON")
+    sc.add_argument("--all", action="store_true", help="lift the 60-line budget")
     nr = sub.add_parser("neurons", help="who is active on this thread and the command that messages each: bus recency first, process evidence second, never a token")
     nr.add_argument("--since", help="ISO UTC lower bound for active (default: last 90 minutes)")
     nr.add_argument("--all", action="store_true", help="every thread the machine index knows, one flat table: harness | model | neuron | thread")
@@ -249,6 +279,7 @@ def main(argv: list[str] | None = None) -> int:
                     help="drop rows whose root is under the OS temp dir or is absent; reports every dropped row")
 
     rs = sub.add_parser("resume", help="resume one neuron at its most recent place: native argv + cwd (dry) or --go to spawn once")
+    rs.add_argument("--allow-unverified-launch", action="store_true", help="explicitly accept unverified harness launch eligibility for --go")
     rs.add_argument("--neuron", required=True, help="chair session_id")
     rs.add_argument("--go", action="store_true", help="spawn in the chair's worktree, inheriting this terminal; refuses when a live body holds the chair")
 
@@ -267,6 +298,7 @@ def main(argv: list[str] | None = None) -> int:
 
     for name in ("bring-up", "open"):
         bu = sub.add_parser(name)
+        bu.add_argument("--allow-unverified-launch", action="store_true", help="explicitly accept unverified harness launch eligibility for this launch")
         bu.add_argument("convoy_id", nargs="?")
         bu.add_argument("--thread")
         bu.add_argument("--dry-run", action="store_true")
@@ -321,12 +353,16 @@ def main(argv: list[str] | None = None) -> int:
     go.add_argument("--to", action="append", help="harness you already have (repeat); default: those on PATH")
     go.add_argument("--thread")
     go.add_argument("--cancel", action="store_true", help="do not bind; leave unbound")
+    go.add_argument("--write-repo-files", action="store_true",
+                    help="also write the hooks, AGENTS.md pointer and skill copies listed as would_write into the repo")
 
     ob = sub.add_parser("onboard")
     ob.add_argument("--to", action="append", required=True, help="named harness id(s) you already have")
     ob.add_argument("--thread")
     ob.add_argument("--checkout-root", help="existing path, or a git URL cloned under $CONVOY_HOME/checkouts/<owner>/<repo>")
     ob.add_argument("--github", choices=("yes", "no"), default=None, help="record the wizard's GitHub? answer on the bind")
+    ob.add_argument("--write-repo-files", action="store_true",
+                    help="also write the hooks, AGENTS.md pointer and skill copies listed as would_write into the repo")
 
     pf = sub.add_parser("preflight", help="fail-closed wizard preflight: live MCP tools/list vs the verbs the @convoy wizard needs")
     pf.add_argument("--url", default=None, help="MCP endpoint (default: your own Convoy, http://127.0.0.1:8788/mcp)")
@@ -425,7 +461,7 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps({"schema_version": SCHEMA_VERSION, "since": args.since, "since_iso": since_iso, "events": rows}))
         return 0
     if args.cmd == "relaunch":
-        card = relaunch(root, thread=args.thread, runner=None if args.dry_run else live_runner, timeout=args.timeout, seats=args.seat, take_over=args.take_over)
+        card = relaunch(root, thread=args.thread, runner=None if args.dry_run else live_runner, timeout=args.timeout, seats=args.seat, take_over=args.take_over, allow_unverified_launch=args.allow_unverified_launch)
         if card.get("ok") and not args.dry_run:
             card["widget_service"] = auto_widget_service(disabled=bool(args.no_widget))
         print(json.dumps(card))
@@ -562,6 +598,7 @@ def main(argv: list[str] | None = None) -> int:
                         card["seat"]["session_id"],
                         runner=active_pane_runner,
                         consent=args.consent,
+                        allow_unverified_launch=args.allow_unverified_launch,
                     )
                     card["launch"] = launched
                     card["ok"] = bool(card.get("ok")) and bool(launched.get("ok"))
@@ -610,7 +647,7 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps({"ok": False, "error": str(e)}))
             return 1
         card = crew(root, seats, thread=args.thread, checkout=args.checkout,
-                    runner=live_runner if args.launch else None)
+                    runner=live_runner if args.launch else None, allow_unverified_launch=args.allow_unverified_launch)
         if card.get("ok") and args.launch:
             card["widget_service"] = auto_widget_service(disabled=bool(args.no_widget))
         print(json.dumps(card))
@@ -633,6 +670,7 @@ def main(argv: list[str] | None = None) -> int:
             args.seat,
             runner=None if args.dry_run else active_pane_runner,
             consent=args.consent,
+            allow_unverified_launch=args.allow_unverified_launch,
         )
         print(json.dumps(card))
         return 0 if card.get("ok") else 1
@@ -698,6 +736,11 @@ def main(argv: list[str] | None = None) -> int:
     if args.cmd == "panes":
         print(json.dumps(bodies(root)))
         return 0
+    if args.cmd == "start-card":
+        from .start_card import LINE_BUDGET, build_start_card
+        card = build_start_card(root, budget=None if args.all else LINE_BUDGET)
+        print(json.dumps(card) if args.json else "\n".join(card["lines"]))
+        return 0
     if args.cmd == "neurons":
         if getattr(args, "all", False):
             from .activity import neurons_everywhere
@@ -717,7 +760,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0 if card["ok"] else 1
     if args.cmd == "resume":
         try:
-            card = resume_neuron(root, args.neuron, go=args.go)
+            card = resume_neuron(root, args.neuron, go=args.go, allow_unverified_launch=args.allow_unverified_launch)
         except ValueError as e:
             print(json.dumps({"ok": False, "error": str(e)}))
             return 1
@@ -753,7 +796,7 @@ def main(argv: list[str] | None = None) -> int:
             return 1
     if args.cmd in ("bring-up", "open"):
         runner = None if args.dry_run else live_runner
-        card = bring_up(root, convoy_id=args.convoy_id, thread=args.thread, runner=runner)
+        card = bring_up(root, convoy_id=args.convoy_id, thread=args.thread, runner=runner, allow_unverified_launch=args.allow_unverified_launch)
         print(json.dumps(card))
         if args.dry_run:
             existing = {s.get("session_id") for s in list_seats(root, convoy_id=card.get("convoy_id"))}
@@ -844,12 +887,14 @@ def main(argv: list[str] | None = None) -> int:
             harnesses=args.to,
             thread=args.thread,
             cancel=bool(args.cancel),
+            write_repo_files=bool(args.write_repo_files),
         )
         print(json.dumps(card))
         return 0 if card.get("ok") else 1
     if args.cmd == "onboard":
         card = run_onboard(root, args.to, thread=args.thread, checkout_root=args.checkout_root,
-                           github=None if args.github is None else args.github == "yes")
+                           github=None if args.github is None else args.github == "yes",
+                           write_repo_files=bool(args.write_repo_files))
         print(json.dumps(card))
         return 0 if card.get("ok") else 1
     if args.cmd == "preflight":
@@ -874,7 +919,9 @@ def main(argv: list[str] | None = None) -> int:
                 print(json.dumps(hit))
                 return 1
             card = send_one(Path(hit["root"]), hit["to"], args.body, instance_id=hit["session_id"], label=args.label,
-                            runner=runner, dry_run=args.dry_run, allow_interactive_resume=allow_interactive_resume)
+                            runner=runner, dry_run=args.dry_run, allow_interactive_resume=allow_interactive_resume,
+                            allow_unverified_launch=args.allow_unverified_launch,
+                            sender=_proven_sender(Path(hit["root"]), args.dry_run))
             card["id"] = hit["id"]
             card["thread"] = hit["thread"]
             card["root"] = hit["root"]
@@ -898,6 +945,8 @@ def main(argv: list[str] | None = None) -> int:
                 dry_run=args.dry_run,
                 worktree=wt,
                 allow_interactive_resume=allow_interactive_resume,
+                allow_unverified_launch=args.allow_unverified_launch,
+                sender=_proven_sender(root, args.dry_run),
             )
             print(json.dumps(card))
             if args.dry_run and card.get("session_id"):
@@ -913,6 +962,8 @@ def main(argv: list[str] | None = None) -> int:
             label=args.label,
             dry_run=args.dry_run,
             allow_interactive_resume=allow_interactive_resume,
+            allow_unverified_launch=args.allow_unverified_launch,
+            sender=_proven_sender(root, args.dry_run),
         )
         print(json.dumps(cards))
         if args.dry_run and any(c.get("session_id") for c in cards):

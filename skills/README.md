@@ -1,23 +1,30 @@
 # Convoy skills
 
-Skills are neuron-side instruction files. Convoy installs them into each seat
-worktree at first run (`ensure_first_run`), so a freshly launched model knows
-what it is and how to behave on the thread — before its first turn.
+Skills are neuron-side instruction files. Convoy agent guidance lives in the
+Convoy plugin (`convoy@deploy-forward`): `convoy-operate` (first turn,
+identity via `convoy whoami`, how to work on a thread), `convoy-listen`
+(receive: wait, drain the inbox, acknowledge with a note citing the token)
+and `convoy-send` (send one neuron a message and prove it arrived). Claude
+Code and Codex install the convoy plugin from the deploy-forward marketplace
+(Claude Code: `claude plugin install convoy@deploy-forward`). Grok and
+Cursor get rendered copies when the person runs the plugin's installer
+(`node plugin/install.mjs --apply`). agy, hermes and pi have none yet: run
+`convoy --root <root> whoami` and the receive loop in `convoy-listen`. The
+older `neuron-identity` and `neuron-receive` skills are retired (2026-09-28).
 
 ## How a skill reaches a neuron
 
-Per harness, `identity.install_neuron_identity` writes the same text to the
-places each harness reads:
+At first run (`ensure_first_run`), `identity.install_neuron_identity` writes
+an `AGENTS.md` pointer block naming the three plugin skills and removes any
+retired `neuron-identity` / `neuron-receive` copy Convoy wrote before. It still
+copies `convoy-end` to the places each harness reads:
 
 | Harness | Where it lands | Auto-load verified? |
 | --- | --- | --- |
-| `claude` | `<worktree>/.claude/skills/<name>/SKILL.md` | n/a (native skills dir, not AGENTS.md) |
-| `grok` | `<worktree>/.grok/skills/<name>/SKILL.md` | n/a (native skills dir, not AGENTS.md) |
-| all | `<worktree>/AGENTS.md` pointer naming both paths | `codex`: yes. `cursor-agent`: unverified. `agy`, `hermes`, `pi`: unverified. |
-
-Whether or not a harness auto-loads `AGENTS.md`, the boot prompt Convoy
-passes at launch names the `SKILL.md` path directly, so a neuron reads it
-regardless.
+| `claude` | `<worktree>/.claude/skills/convoy-end/SKILL.md` | n/a (native skills dir, not AGENTS.md) |
+| `grok` | `<worktree>/.grok/skills/convoy-end/SKILL.md` | n/a (native skills dir, not AGENTS.md) |
+| `codex` | `<worktree>/.agents/skills/convoy-end/SKILL.md` | n/a (native skills dir, not AGENTS.md) |
+| all | `<worktree>/AGENTS.md` pointer to the plugin skills | `codex`: yes. `cursor-agent`: unverified. `agy`, `hermes`, `pi`: unverified. |
 
 ## Canonical vs packaged copies
 
@@ -39,14 +46,5 @@ Codex custom-prompt namespace, not a second Convoy identity skill.
 ## Skills
 
 - `convoy-nudge/` — lead-side recovery for a deaf pane: detect from the tape, relaunch dead chairs scoped, or wake an idle pane with a title-verified keystroke (`scripts/wt-nudge.ps1`); live-proven 2026-09-05
-- `neuron-receive/` — how a neuron on ANY harness receives from the thread
-  (feed rows addressed to it, its inbox file), which hook drains for it at
-  tool time (grok, claude) and which harnesses must run the loop by hand
-  (codex, cursor-agent, agy, hermes, pi), and the one rule that makes a
-  message delivered: the receiver's own ack row. Installed beside
-  `neuron-identity`; named in `AGENTS.md`.
-
-- `neuron-identity/` — who a neuron is: one BYO harness session on a
-  `cvy_` thread, not the conductor. Installed into every seat worktree.
 - `convoy/` — the canonical `/convoy` slash sheet: what each public MCP tool
   does, what is live vs tree-only, and where the CLI is the primary surface.

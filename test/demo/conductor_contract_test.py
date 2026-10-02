@@ -134,10 +134,12 @@ class Replies(unittest.TestCase):
             gb = json.loads(gated["result"]["content"][0]["text"])
             self.assertFalse(gb["ok"]); self.assertIn("write gate", gb["error"])
 
-    def test_agents_block_tells_seats_how_to_answer_the_conductor(self):
+    def test_agents_block_points_at_convoy_listen_for_the_token_ack(self):
         from convoy.identity import install_neuron_identity
         wt = Path(tempfile.mkdtemp())
         install_neuron_identity(wt)
         text = (wt / "AGENTS.md").read_text(encoding="utf-8")
-        self.assertIn("--to grok-bot", text); self.assertIn("token", text)
-        self.assertIn("conductor", text.lower())
+        # Since 2026-09-28: the block is a pointer; convoy-listen carries the
+        # ack-with-a-note-citing-the-token rule (and convoy-operate how to
+        # answer the conductor).
+        self.assertIn("convoy-listen (wait, drain your inbox, acknowledge with a note citing the token)", text)

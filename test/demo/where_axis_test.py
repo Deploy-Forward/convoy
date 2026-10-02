@@ -73,6 +73,8 @@ def _which(*present):
     return lookup_name
 
 
+
+
 class ContractCarriesACloudBlock(unittest.TestCase):
     def test_every_harness_has_a_cloud_block_with_mode_and_evidence(self):
         for row in load_harness_contract()["harnesses"]:
@@ -295,7 +297,7 @@ class NoCloudLauncherExists(unittest.TestCase):
         join(self.root, self.hid, session_id="cl-pane", where="cloud")
         runner = mock.Mock(return_value={"ok": True, "pid": 7})
         with mock.patch("convoy.bringup.shutil.which", return_value="C:\\Tools\\wt.exe"):
-            card = bring_up(self.root, runner=runner)
+            card = bring_up(self.root, runner=runner, allow_unverified_launch=True)
         self.assertEqual([w["session_id"] for w in card["windows"]], ["g-pane"])
         self.assertEqual(runner.call_count, 1)
         wt_argv = runner.call_args[0][0]

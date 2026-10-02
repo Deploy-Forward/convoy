@@ -157,7 +157,7 @@ class HappyPath(unittest.TestCase):
         self.assertEqual(self.run_cli("lead")["lead"], "claude")
 
         # 4 SUMMON: one worktree per seat, two chairs, one window
-        cw = self.run_cli("crew", "--seat", "codex", "--seat", "grok,effort=high", "--thread", "demo", "--launch")
+        cw = self.run_cli("crew", "--seat", "codex", "--seat", "grok,effort=high", "--thread", "demo", "--launch", "--allow-unverified-launch")
         self.assertTrue(cw["ok"], cw)
         chairs = cw["seats"] if "seats" in cw else cw["chairs"]
         sids = [c["session_id"] for c in chairs]
@@ -231,7 +231,7 @@ class HappyPath(unittest.TestCase):
     def test_relaunch_after_the_panes_die_carries_the_timeline(self):
         self.run_cli("onboard", "--to", "claude", "--to", "codex", "--to", "grok", "--thread", "demo",
                      "--checkout-root", str(self.root), "--github", "no")
-        cw = self.run_cli("crew", "--seat", "codex", "--seat", "grok", "--thread", "demo", "--launch")
+        cw = self.run_cli("crew", "--seat", "codex", "--seat", "grok", "--thread", "demo", "--launch", "--allow-unverified-launch")
         sids = [c["session_id"] for c in cw["seats"]]
         tokens = self._join_tokens()
         for sid in sids:
@@ -246,7 +246,7 @@ class HappyPath(unittest.TestCase):
         self.assertFalse(dry["launched"])
         inbox_before = (self.root / ".convoy" / "inbox" / (sids[0] + ".jsonl")).read_text(encoding="utf-8")
 
-        live = self.run_cli("relaunch", "--thread", "demo")
+        live = self.run_cli("relaunch", "--thread", "demo", "--allow-unverified-launch")
         self.assertTrue(live["launched"], live)
         self.assertEqual(len(self.spawns), 1, "one window again")
         by = {c["session_id"]: c for c in live["chairs"]}
@@ -304,7 +304,7 @@ class HappyPath(unittest.TestCase):
         self.assertEqual(doc["hooks"]["Stop"], doc["hooks"]["PreToolUse"])
 
         self.run_cli("onboard", "--to", "claude", "--thread", "demo", "--checkout-root", str(self.root), "--github", "no")
-        cw = self.run_cli("crew", "--seat", "grok", "--thread", "demo", "--launch")
+        cw = self.run_cli("crew", "--seat", "grok", "--thread", "demo", "--launch", "--allow-unverified-launch")
         sid = cw["seats"][0]["session_id"]; wt = cw["seats"][0]["worktree"]
 
         # the pane's hook resolves its thread root the way a live pane does

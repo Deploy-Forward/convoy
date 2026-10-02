@@ -153,7 +153,9 @@ _END_RESOLVED: dict | None = None
 def resolve_inbox_hook_command(refresh: bool = False) -> dict:
     """The command a hook file should carry, PROBED in the hook shell.
 
-    Hook files are gitignored per-worktree state and never travel, so an
+    Hook files are per-worktree state that never travels (Convoy-named ones are kept out of git
+    through info/exclude; a shared .codex/hooks.json is not, and `convoy end --push` warns when
+    commits carry it), so an
     absolute interpreter path is not a portability bug; a bare name that
     resolves to nothing (or to a shim) is a delivery bug (audit 2026-09-03:
     every hook written since PR 40 was dead; only a baked path ever fired).

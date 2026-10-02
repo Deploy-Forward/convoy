@@ -357,6 +357,7 @@ def launch_seat(
     platform_name: str | None = None,
     consent: str | None = None,
     trust_probe: Callable[[dict[str, Any]], bool] = grok_project_trusted,
+    allow_unverified_launch: bool = False,
 ) -> dict[str, Any]:
     """Plan or launch one fresh join/swap chair.
 
@@ -367,6 +368,9 @@ def launch_seat(
     """
     try:
         row = _seat_for_launch(root, session_id)
+        if runner is not None:
+            from .harness_contract import validate_launch_eligibility
+            validate_launch_eligibility(row.get("to"), allow_unverified_launch=allow_unverified_launch)
         if resume_target(row) is not None or not str(row.get("boot_prompt") or "").strip():
             raise ValueError("refuse launch: chair is not a fresh join/swap")
         if row.get("where") == "cloud":

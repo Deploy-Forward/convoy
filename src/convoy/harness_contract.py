@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+from datetime import date
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -67,6 +68,42 @@ def harness_exec(harness_id: str) -> str:
         exe = _normalize(row.get("exec"))
         return exe or wanted
     return wanted
+
+
+def limit_contract(harness_id: str) -> dict[str, Any]:
+    """Live limit coverage, independently of usage probes and fixture tests."""
+    wanted = canonical_harness_id(harness_id)
+    for row in harness_entries():
+        if row["id"] == wanted and isinstance(row.get("limit"), dict):
+            return dict(row["limit"])
+    return {"state": "unverified", "evidence": "No limit coverage recorded"}
+
+
+def launch_eligibility_contract(harness_id: str) -> dict[str, Any]:
+    """Accepted launch/seated evidence; independent of limit detection."""
+    wanted = canonical_harness_id(harness_id)
+    for row in harness_entries():
+        if row["id"] == wanted and isinstance(row.get("launch_eligibility"), dict):
+            return dict(row["launch_eligibility"])
+    return {"state": "unverified", "evidence": "No launch eligibility recorded"}
+
+
+def validate_launch_eligibility(harness_id: str, *, allow_unverified_launch: bool = False) -> None:
+    """Require dated live evidence or an explicit per-call boolean override."""
+    if not isinstance(allow_unverified_launch, bool):
+        raise ValueError("allow_unverified_launch must be a boolean")
+    cell = launch_eligibility_contract(harness_id)
+    try:
+        date.fromisoformat(cell.get("verified_at"))
+        dated = True
+    except (TypeError, ValueError):
+        dated = False
+    verified = (cell.get("state") == "verified" and
+                isinstance(cell.get("evidence"), str) and bool(cell["evidence"].strip()) and
+                dated)
+    if not verified and not allow_unverified_launch:
+        raise ValueError("refuse launch: " + canonical_harness_id(harness_id) +
+                         " has unverified launch eligibility; pass --allow-unverified-launch explicitly to override")
 
 
 def session_id_flag(harness_id: str) -> str | None:

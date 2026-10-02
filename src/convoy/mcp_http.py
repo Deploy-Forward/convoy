@@ -156,6 +156,16 @@ AWAIT_SEATED_MAX_S = 600.0
 # the threading server.
 _PRINCIPAL: contextvars.ContextVar[dict[str, Any] | None] = contextvars.ContextVar("convoy_principal", default=None)
 
+
+def _conductor_sender() -> dict[str, Any] | None:
+    """The sender of an MCP send: the conductor of this request's checked bearer, never a
+    name from the arguments. No bearer, no proven sender."""
+    principal = _PRINCIPAL.get()
+    if isinstance(principal, dict) and isinstance(principal.get("conductor"), str) and principal["conductor"].strip():
+        return {"chair": principal["conductor"].strip(), "verified_by": "bearer"}
+    return None
+
+
 # Did this request arrive from outside the machine? Set per request by handle_rpc.
 _PUBLIC: contextvars.ContextVar[bool] = contextvars.ContextVar("convoy_public", default=False)
 
@@ -538,6 +548,11 @@ TOOLS: list[dict[str, Any]] = [
     # the card carries its Gate 0 verdict. outputSchema is declared so a host
     # can render structuredContent as a card without parsing the text copy.
     {
+        "name": "start_card",
+        "description": "Read-only: the start card for the bound thread, so a new session starts synced: where (repo, branch, ahead/behind, dirty, thread, lead), who (the neurons), commitments (open sends, the latest handoff per neuron, recent commits, asks from limited sends), board, next. One line per item with a path or id; never file contents. Send tokens are withheld on the ungated wire (behind the write gate they are shown). all=true lifts the 60-line budget.",
+        "inputSchema": _schema({"all": {"type": "boolean", "default": False}}),
+    },
+    {
         "name": "card",
         "description": "Read-only: the one card a host renders for @convoy - header, tagline, summary (installed harnesses, seats, thread, GitHub? answer), this server's own wizard preflight verdict, repo (checkout, worktrees), and one row per harness in contract order: where offered, installed, USAGE REMAINING (number|object|null from the live probe, never an invented 0), models catalog or null, effort keys, connect_mode, and attach (a crew call for that harness). Never a token, never a resume id, never a boot prompt.",
         "inputSchema": _schema({}),
@@ -645,6 +660,9 @@ TOOLS: list[dict[str, Any]] = [
 ]
 for _t in TOOLS:
     _props = _t.setdefault("inputSchema", {}).setdefault("properties", {})
+    if _t.get("name") in {"bring_up", "open", "launch", "crew", "resume", "send"}:
+        _props["allow_unverified_launch"] = {"type": "boolean", "default": False,
+                                          "description": "Explicitly accept unverified harness launch eligibility for this launch; does not bypass authorization or consent"}
     for _k, _v in _THREAD_PROPS.items():
         _props.setdefault(_k, _v)
 del _t, _props, _k, _v
@@ -943,6 +961,9 @@ def _call_tool_at(root: Path, name: str, args: dict[str, Any]) -> dict[str, Any]
     if name == "context":
         return pack(root, instance_id=_opt_str(args, "instance_id"))
     if name == "send":
+        override = args.get("allow_unverified_launch", False)
+        if not isinstance(override, bool):
+            return {"ok": False, "error": "allow_unverified_launch must be a boolean"}
         to = _opt_str(args, "to")
         body = args.get("body")
         if not to or body is None:
@@ -1000,6 +1021,8 @@ def _call_tool_at(root: Path, name: str, args: dict[str, Any]) -> dict[str, Any]
             worktree=worktree,
             allow_interactive_resume=not live,
             local_writer=False,
+            allow_unverified_launch=override,
+            sender=_conductor_sender(),
         )
         model = _opt_str(args, "model")
         if model is not None and card.get("model") is None:
@@ -1027,7 +1050,7 @@ def _call_tool_at(root: Path, name: str, args: dict[str, Any]) -> dict[str, Any]
             return {"ok": False, "neuron": neuron, "spawned": False,
                     "error": "resume go=true is behind the write gate on this process (set CONVOY_MCP_WRITE_TOOLS=1 on a gated/loopback deploy); dry read allowed"}
         try:
-            return resume_neuron(root, neuron, go=go)
+            return resume_neuron(root, neuron, go=go, allow_unverified_launch=args.get("allow_unverified_launch", False))
         except ValueError as e:
             return {"ok": False, "error": str(e)}
     if name == "replies":
@@ -1108,6 +1131,7 @@ def _call_tool_at(root: Path, name: str, args: dict[str, Any]) -> dict[str, Any]
             convoy_id=_opt_str(args, "convoy_id"),
             thread=_opt_str(args, "thread"),
             runner=runner,
+            allow_unverified_launch=args.get("allow_unverified_launch", False),
         )
         card["dry_run"] = dry
         return card
@@ -1148,6 +1172,11 @@ def _call_tool_at(root: Path, name: str, args: dict[str, Any]) -> dict[str, Any]
         return build_card(root, listed=[t["name"] for t in _listed_tools()], probe_fn=probe)
     if name == "neurons":
         return neuron_activity(root, since=_opt_str(args, "since"))
+    if name == "start_card":
+        from .start_card import LINE_BUDGET, build_start_card
+        # Behind the write gate the reader may hold a token; on the ungated wire, never.
+        return build_start_card(root, budget=None if _opt_bool(args, "all", False) else LINE_BUDGET,
+                                redact_tokens=not _write_tools_enabled())
     if name == "inbox":
         sid = (_opt_str(args, "seat") or "").strip()
         if not sid:
@@ -1201,7 +1230,7 @@ def _call_tool_at(root: Path, name: str, args: dict[str, Any]) -> dict[str, Any]
             # Refused BEFORE launch_seat is reached: nothing is spawned.
             return {"ok": False, "seat": sid, "spawned": False, "error": _gate_text("launch")}
         try:
-            return launch_seat(root, sid, runner=active_pane_runner, consent=_opt_str(args, "consent"))
+            return launch_seat(root, sid, runner=active_pane_runner, consent=_opt_str(args, "consent"), allow_unverified_launch=args.get("allow_unverified_launch", False))
         except ValueError as e:
             return {"ok": False, "seat": sid, "spawned": False, "error": str(e)}
     if name == "focus":
@@ -1220,7 +1249,7 @@ def _call_tool_at(root: Path, name: str, args: dict[str, Any]) -> dict[str, Any]
             return {"ok": False, "seats": [], "launched": False, "error": _gate_text("crew")}
         launch = _opt_bool(args, "launch", False)
         return crew_chairs(root, seats, thread=_opt_str(args, "thread"), checkout=_opt_str(args, "checkout"),
-                           runner=live_runner if launch else None)
+                           runner=live_runner if launch else None, allow_unverified_launch=args.get("allow_unverified_launch", False))
     if name == "seated":
         sid = (_opt_str(args, "seat") or "").strip()
         token = _opt_str(args, "token") or ""

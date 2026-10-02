@@ -55,6 +55,8 @@ def _overlap_area(a, b):
     y2 = min(a["y"] + a["h"], b["y"] + b["h"])
     return max(0, x2 - x1) * max(0, y2 - y1)
 
+
+
 class Phase7BringUp(unittest.TestCase):
     def setUp(self):
         self.root = Path(tempfile.mkdtemp())
@@ -413,7 +415,7 @@ class Phase7BringUp(unittest.TestCase):
             recorded.append({"argv": list(argv), "cwd": cwd, "rect": rect, "k": k})
             return {"ok": True, "pid": 4242, "note": "isolated wt"}
         with mock.patch("convoy.bringup.shutil.which", side_effect=self._which_map()):
-            d = bring_up(self.root, runner=fake_runner)
+            d = bring_up(self.root, runner=fake_runner, allow_unverified_launch=True)
         self.assertTrue(d["ok"])
         self.assertEqual(len(d["windows"]), 2)
         self.assertEqual(len(recorded), 1)
@@ -430,7 +432,7 @@ class Phase7BringUp(unittest.TestCase):
         with mock.patch("convoy.bringup.shutil.which", side_effect=self._which_map()):
             # bring_up passes its root so every pane is an owned body
             expected = isolated_wt_argv(self.thread, self._wt_seats(), wt=r"C:\\Windows\\System32\\wt.exe", root=self.root)
-            d = bring_up(self.root, runner=fake_runner)
+            d = bring_up(self.root, runner=fake_runner, allow_unverified_launch=True)
         self.assertTrue(d["ok"])
         self.assertEqual(len(recorded), 1)
         argv = recorded[0]["argv"]
@@ -760,7 +762,7 @@ class OwnedBodyWindowTest(unittest.TestCase):
             with mock.patch("convoy.bringup.shutil.which", side_effect=self._which), \
                  mock.patch("convoy.targeted_launch.shutil.which", side_effect=self._which), \
                  mock.patch("convoy.bringup._absolute_harness", return_value="C:\Tools\grok.exe"):
-                bring_up(root, thread="demo", runner=runner, session_ids=["g-1"])
+                bring_up(root, thread="demo", runner=runner, session_ids=["g-1"], allow_unverified_launch=True)
         blob = " ".join(seen.get("argv", []))
         self.assertIn("convoy-pane-host", blob, seen)
         self.assertIn("--seat g-1", blob)

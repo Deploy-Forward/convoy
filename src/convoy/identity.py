@@ -1,10 +1,11 @@
-"""Install harness self-identity skills into a neuron worktree.
+"""Prepare a neuron worktree: the AGENTS.md pointer, convoy-end, hooks.
 
-Canonical text lives at skills/neuron-identity/SKILL.md (repo top level);
-convoy/harness_skills/neuron-identity/SKILL.md is the packaged mirror this
-module resolves at runtime — a byte-equality test keeps the two identical.
-Copies land where grok and claude actually load skills. AGENTS.md gets a
-short pointer block so Codex (and grok project rules) see the same contract.
+Agent guidance lives in the Convoy plugin (convoy@deploy-forward): the
+convoy-operate, convoy-listen and convoy-send skills. AGENTS.md gets a short
+pointer block naming them. The retired neuron-identity and neuron-receive
+copies Convoy used to write are removed. convoy-end is still copied where
+grok, claude and codex load skills; canonical text is skills/convoy-end/,
+harness_skills/convoy-end/ is the packaged mirror resolved at runtime.
 Never writes ~/.grok or ~/.claude user-global skills. Never ola-brain.
 """
 from __future__ import annotations
@@ -21,20 +22,12 @@ from .cmd import (
     inbox_hook_command,
 )
 
-SKILL_NAME = "neuron-identity"
 SKILL_BEGIN = "# >>> convoy neuron identity >>>"
 SKILL_END = "# <<< convoy neuron identity <<<"
-SKILL_RELATIVE = (
-    Path(".grok") / "skills" / SKILL_NAME / "SKILL.md",
-    Path(".claude") / "skills" / SKILL_NAME / "SKILL.md",
-)
-# Second harness-agnostic skill: how ANY neuron receives and proves receipt
-# Same install path as identity; AGENTS.md names it too.
-RECEIVE_SKILL_NAME = "neuron-receive"
-RECEIVE_SKILL_RELATIVE = (
-    Path(".grok") / "skills" / RECEIVE_SKILL_NAME / "SKILL.md",
-    Path(".claude") / "skills" / RECEIVE_SKILL_NAME / "SKILL.md",
-)
+# Retired 2026-09-28 in favour of the plugin skills; first run removes the
+# copies Convoy wrote here before.
+RETIRED_SKILL_NAMES = ("neuron-identity", "neuron-receive")
+RETIRED_SKILL_HOMES = (Path(".grok") / "skills", Path(".claude") / "skills")
 END_SKILL_NAME = "convoy-end"
 END_SKILL_RELATIVE = (
     Path(".grok") / "skills" / END_SKILL_NAME / "SKILL.md",
@@ -45,7 +38,8 @@ END_SKILL_RELATIVE = (
 GROK_AGENT_NAME = "convoy-neuron"
 GROK_AGENT_RELATIVE = Path(".grok") / "agents" / (GROK_AGENT_NAME + ".md")
 GROK_INBOX_HOOK_RELATIVE = Path(".grok") / "hooks" / "convoy-inbox.json"
-CLAUDE_SETTINGS_RELATIVE = Path(".claude") / "settings.json"
+# Convoy's Claude hooks live in the local settings file, which Claude Code keeps out of git.
+CLAUDE_SETTINGS_RELATIVE = Path(".claude") / "settings.local.json"
 CLAUDE_END_COMMAND_RELATIVE = Path(".claude") / "commands" / "end.md"
 CODEX_HOOKS_RELATIVE = Path(".codex") / "hooks.json"
 CODEX_PROMPT_NAME = "convoy.md"
@@ -60,7 +54,7 @@ You are a Convoy neuron: one grok session on a Convoy thread, not Grok Bot.
 
 - Persona: read `role.md` in this worktree.
 - Identity: read `thread.md`, `.convoy/id`, `.convoy/thread`, and the
-  neuron-identity skill (`.grok/skills/neuron-identity/SKILL.md`). Missing
+  convoy-operate skill from the Convoy plugin (convoy@deploy-forward). Missing
   files mean unknown — JSON null. Never invent a `cvy_` or session id.
 - Detect, identify, then send: `convoy panes` shows every body on the
   thread; `convoy whoami` names YOUR chair; write as yourself with
@@ -79,25 +73,19 @@ You are a Convoy neuron: one grok session on a Convoy thread, not Grok Bot.
 
 _AGENTS_BLOCK = (
     SKILL_BEGIN + "\n"
-    "You are a Convoy neuron on this thread, not Grok Bot. Read thread.md and "
-    "the neuron-identity skill (.grok/skills/neuron-identity/SKILL.md or "
-    ".claude/skills/neuron-identity/SKILL.md). Detect, identify, then send: "
-    "`convoy panes`, `convoy whoami`, `convoy hook note \"...\" --as-me --to <chair>`, "
-    "`convoy graph --neuron <chair>`. Synapse via `convoy send` (or `python -m convoy`). "
-    "RECEIVE (every turn start, any harness; see .grok/skills/neuron-receive/SKILL.md or "
-    ".claude/skills/neuron-receive/SKILL.md): `convoy --root <root> whoami`, "
-    "`feed --since <last ack>`, `inbox --drain --seat <you>`, then ack with "
-    "`hook note ... --as-me --to <sender>`; a message is delivered only when YOU write that row. "
-    "END: Codex/Claude Stop hooks run `convoy end --hook` as a heartbeat; this never pushes. "
-    "Only explicit Codex `$convoy-end --push` or Claude `/convoy-end --push` grants one plain git push. "
-    "CONDUCTOR: grok-bot speaks to you only through `send` (a row in your inbox carrying a token) and `stamp` rows; "
-    "answer with `convoy hook note \"<text>\" --as-me --to grok-bot` citing that token; your own note row is the receipt, nothing else is; the conductor's contract is <root>/.convoy/conductor.md. "
-    "RECORD: everything Convoy reads lives under .convoy/ (feed.jsonl, inbox/, brief.md, handoff/); "
-    "write briefs to .convoy/brief.md and handoffs to .convoy/handoff/. the legacy .ola/ tree belongs to another product: never write it. "
-    "RESUME: Resume is still being improved: before promising to resume a neuron, run the dry "
-    "`convoy resume --neuron <chair>` and read the command it would run (README, Resume). "
-    "If usage is dying, ask the user to bring_up a "
-    "pane; do not steal a TUI. Never invent cvy_ or session ids. Never ola-brain.\n"
+    "You are a Convoy neuron on this thread. Run `convoy --root <root> whoami` first. "
+    "Your guidance is the Convoy plugin's skills (convoy@deploy-forward): "
+    "convoy-operate (first turn, identity, how to work on a thread), "
+    "convoy-listen (wait, drain your inbox, acknowledge with a note citing the token) and "
+    "convoy-send (send one neuron a message and prove it arrived). "
+    "Claude Code and Codex install the convoy plugin from the deploy-forward marketplace "
+    "(Claude Code: `claude plugin install convoy@deploy-forward`). "
+    "Grok and Cursor get rendered copies when the person runs the plugin's installer "
+    "(`node plugin/install.mjs --apply`). "
+    "agy, hermes and pi have none yet: run `convoy --root <root> whoami` "
+    "and the receive loop in convoy-listen. "
+    "Convoy files: don't commit .codex/hooks.json changes Convoy made; "
+    "`convoy end --push` names any Convoy-written file in the commits it pushes.\n"
     + SKILL_END + "\n"
 )
 
@@ -144,21 +132,27 @@ def install_codex_prompt() -> dict[str, Any]:
         return out
 
 
-def skill_source_path() -> Path:
-    return Path(__file__).resolve().parent / "harness_skills" / SKILL_NAME / "SKILL.md"
+def remove_retired_skills(worktree: Path | str) -> list[str]:
+    """Delete the retired skill copies Convoy itself wrote; return their paths.
 
-
-def skill_text() -> str:
-    path = skill_source_path()
-    return path.read_text(encoding="utf-8")
-
-
-def receive_skill_source_path() -> Path:
-    return Path(__file__).resolve().parent / "harness_skills" / RECEIVE_SKILL_NAME / "SKILL.md"
-
-
-def receive_skill_text() -> str:
-    return receive_skill_source_path().read_text(encoding="utf-8")
+    Only a SKILL.md whose front matter says exactly `name: <that skill>` is
+    Convoy's; anything else is left alone. The folder goes only once empty.
+    """
+    removed: list[str] = []
+    for home in RETIRED_SKILL_HOMES:
+        for name in RETIRED_SKILL_NAMES:
+            dest = Path(worktree) / home / name / "SKILL.md"
+            if not dest.is_file():
+                continue
+            lines = dest.read_text(encoding="utf-8-sig", errors="replace").splitlines()
+            front = lines[1:lines.index("---", 1)] if lines[:1] == ["---"] and "---" in lines[1:] else []
+            if "name: " + name not in (line.rstrip() for line in front):
+                continue
+            dest.unlink()
+            removed.append(str(dest))
+            if not any(dest.parent.iterdir()):
+                dest.parent.rmdir()
+    return removed
 
 
 def end_skill_source_path() -> Path:
@@ -183,33 +177,22 @@ def _merge_agents_block(existing: str) -> str:
     return _AGENTS_BLOCK
 
 
+# Name kept for callers: it now writes the AGENTS.md pointer (and convoy-end)
+# and removes retired skill copies; it no longer installs an identity skill.
 def install_neuron_identity(worktree: Path | str) -> dict[str, Any]:
-    """Write Convoy-owned identity skill copies into worktree. Idempotent."""
+    """Write the AGENTS.md pointer and Convoy-owned copies into worktree;
+    remove the retired skill copies Convoy wrote before. Idempotent."""
     out: dict[str, Any] = {
         "ok": True,
         "written": False,
-        "paths": [],
+        "removed": [],
         "agents": None,
     }
     wt = Path(worktree)
     try:
-        src = skill_text()
-    except OSError as e:
-        out["ok"] = False
-        out["error"] = type(e).__name__ + ": " + str(e)
-        return out
-    try:
-        paths: list[str] = []
-        recv = receive_skill_text()
-        for rels, text in ((SKILL_RELATIVE, src), (RECEIVE_SKILL_RELATIVE, recv)):
-            for rel in rels:
-                dest = wt / rel
-                dest.parent.mkdir(parents=True, exist_ok=True)
-                prev = dest.read_text(encoding="utf-8") if dest.is_file() else None
-                if prev != text:
-                    dest.write_text(text, encoding="utf-8")
-                    out["written"] = True
-                paths.append(str(dest))
+        out["removed"] = remove_retired_skills(wt)
+        if out["removed"]:
+            out["written"] = True
         end_text = end_skill_text()
         end_paths: list[str] = []
         for rel in END_SKILL_RELATIVE:
@@ -226,7 +209,6 @@ def install_neuron_identity(worktree: Path | str) -> dict[str, Any]:
         if merged != before:
             agents.write_text(merged, encoding="utf-8")
             out["written"] = True
-        out["paths"] = paths
         out["agents"] = str(agents)
         prompt = install_codex_prompt()
         out["codex_prompt"] = prompt
@@ -234,15 +216,14 @@ def install_neuron_identity(worktree: Path | str) -> dict[str, Any]:
             out["written"] = True
         if not prompt.get("ok"):
             out["ok"] = False
+        # The plugin's convoy-end skill carries the end command. A copy Convoy wrote earlier, still
+        # exactly Convoy's text, is removed; one the person changed is theirs and stays.
         claude_command = wt / CLAUDE_END_COMMAND_RELATIVE
-        claude_command.parent.mkdir(parents=True, exist_ok=True)
-        before_command = claude_command.read_text(encoding="utf-8") if claude_command.is_file() else None
         command_text = (Path(__file__).resolve().parent / "harness_skills" / "end.md").read_text(encoding="utf-8")
-        if before_command != command_text:
-            claude_command.write_text(command_text, encoding="utf-8")
-            out["written"] = True
+        if claude_command.is_file() and claude_command.read_text(encoding="utf-8") == command_text:
+            claude_command.unlink()
+            out["removed"] = list(out.get("removed") or []) + [str(claude_command)]
         out["end_paths"] = end_paths
-        out["claude_end_command"] = str(claude_command)
         return out
     except OSError as e:
         out["ok"] = False
@@ -253,7 +234,7 @@ def install_neuron_identity(worktree: Path | str) -> dict[str, Any]:
 def ensure_grok_agent(worktree: Path | str) -> dict[str, Any]:
     """Write the Convoy-owned grok agent file into worktree. Idempotent.
 
-    Points grok --agent at seat identity (role.md + neuron-identity skill).
+    Points grok --agent at seat identity (role.md + the plugin's convoy-operate).
     Never overwrites a user agent elsewhere; owns only GROK_AGENT_RELATIVE.
     """
     out: dict[str, Any] = {"ok": True, "written": False, "agent": None}
@@ -390,6 +371,26 @@ def _strip_convoy_entries(data: dict[str, Any], marker: str) -> tuple[dict[str, 
     return data, changed
 
 
+def is_convoy_written(path: str) -> bool:
+    """A repo path Convoy writes into a worktree: its hooks, root pointers, local Claude settings and
+    convoy-* copies. A push whose commits carry one is warned about."""
+    rel = "/" + str(path).replace("\\", "/").lstrip("/")
+    name = rel.rsplit("/", 1)[-1]
+    return (rel.endswith("/.codex/hooks.json") or rel.endswith("/.claude/settings.local.json")
+            or name in ("convoy-root", "convoy-inbox.json", "convoy-neuron.md") or "/convoy-end/" in rel)
+
+
+def _json_object_or_none(text: str | None) -> dict[str, Any] | None:
+    """{} for no file, the object for a JSON object, None for anything else (refuse to write)."""
+    if text is None:
+        return {}
+    try:
+        raw = json.loads(text)
+    except json.JSONDecodeError:
+        return None
+    return raw if isinstance(raw, dict) else None
+
+
 def _strip_dead_hook_file(dest: Path, prev_text: str | None, markers: tuple[str, ...]) -> bool:
     """Rewrite dest without Convoy's entries for the given markers. True when written."""
     if prev_text is None or not dest.is_file():
@@ -495,14 +496,11 @@ def _ensure_end_hook_file(
         return out
     try:
         dest.parent.mkdir(parents=True, exist_ok=True)
-        if prev_text is not None:
-            try:
-                raw = json.loads(prev_text)
-            except json.JSONDecodeError:
-                raw = {}
-            data = raw if isinstance(raw, dict) else {}
-        else:
-            data = {}
+        data = _json_object_or_none(prev_text)
+        if data is None:
+            # A file that exists but is not a JSON object is the person's, and is never replaced.
+            out.update({"ok": False, "error": "unparseable; left alone: " + str(dest)})
+            return out
         data, changed = _merge_end_hook(data, command)
         if relative == CODEX_HOOKS_RELATIVE:
             # codex fires PostToolUse (the ola-brain codex plugin declares it
@@ -604,10 +602,10 @@ def ensure_grok_inbox_hook(worktree: Path | str, root: Path | str | None = None)
 
 
 def ensure_claude_inbox_hook(worktree: Path | str, root: Path | str | None = None) -> dict[str, Any]:
-    """Merge UserPromptSubmit + PreToolUse into project .claude/settings.json.
+    """Merge UserPromptSubmit + PreToolUse into the worktree's .claude/settings.local.json.
 
-    Does not write skipDangerousModePermissionPrompt or permissions.defaultMode
-    (those stay Claude first-run ungate). Refuses a baked interpreter path.
+    Never writes skipDangerousModePermissionPrompt or permissions: the launch argv
+    carries the mode. Refuses a baked interpreter path.
     """
     dest = Path(worktree) / CLAUDE_SETTINGS_RELATIVE
     prev_text = dest.read_text(encoding="utf-8-sig") if dest.is_file() else None
@@ -625,14 +623,11 @@ def ensure_claude_inbox_hook(worktree: Path | str, root: Path | str | None = Non
         return out
     try:
         dest.parent.mkdir(parents=True, exist_ok=True)
-        if prev_text is not None:
-            try:
-                raw = json.loads(prev_text)
-            except json.JSONDecodeError:
-                raw = {}
-            data = raw if isinstance(raw, dict) else {}
-        else:
-            data = {}
+        data = _json_object_or_none(prev_text)
+        if data is None:
+            # A file that exists but is not a JSON object is the person's, and is never replaced.
+            out.update({"ok": False, "error": "unparseable; left alone: " + str(dest)})
+            return out
         data, changed = _merge_claude_inbox_hooks(data, command)
         if changed or not dest.is_file():
             dest.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")

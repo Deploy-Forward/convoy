@@ -14,13 +14,19 @@ class SkillsFolderContract(unittest.TestCase):
     the generic `skills` package name — design option B). Byte-equality
     is the invariant: editing one copy without the other goes red loudly."""
 
-    def test_neuron_identity_canonical_matches_packaged(self):
-        canonical = REPO / "skills" / "neuron-identity" / "SKILL.md"
-        packaged = REPO / "src" / "convoy" / "harness_skills" / "neuron-identity" / "SKILL.md"
-        self.assertTrue(canonical.is_file(), "skills/neuron-identity/SKILL.md missing")
-        self.assertTrue(packaged.is_file())
+    def test_retired_neuron_skills_are_gone_from_both_homes(self):
+        # Retired 2026-09-28: the Convoy plugin's skills (convoy-operate,
+        # convoy-listen, convoy-send) replace neuron-identity and neuron-receive.
+        for name in ("neuron-identity", "neuron-receive"):
+            for home in (REPO / "skills", REPO / "src" / "convoy" / "harness_skills"):
+                self.assertFalse((home / name).exists(), str(home / name))
+
+    def test_convoy_end_canonical_matches_packaged(self):
+        canonical = REPO / "skills" / "convoy-end" / "SKILL.md"
+        packaged = REPO / "src" / "convoy" / "harness_skills" / "convoy-end" / "SKILL.md"
+        self.assertTrue(canonical.is_file(), "skills/convoy-end/SKILL.md missing")
         self.assertEqual(canonical.read_bytes(), packaged.read_bytes(),
-                         "canonical and packaged neuron-identity skills diverged")
+                         "canonical and packaged convoy-end skills diverged")
 
     def test_convoy_sheet_exists_with_honest_front_matter(self):
         sheet = REPO / "skills" / "convoy" / "SKILL.md"

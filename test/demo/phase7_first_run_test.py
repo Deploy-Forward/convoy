@@ -67,7 +67,12 @@ class Phase7FirstRun(unittest.TestCase):
         self.addCleanup(self._assert_real_home_untouched)
 
     def _settings(self, wt):
-        return Path(wt) / ".claude" / "settings.json"
+        # Convoy writes the untracked local file; the tracked settings.json is the person's.
+        return Path(wt) / ".claude" / "settings.local.json"
+
+    def _assert_no_permission_keys(self, data):
+        self.assertNotIn("skipDangerousModePermissionPrompt", data)
+        self.assertNotIn("defaultMode", data.get("permissions") or {})
 
     def _home_settings(self):
         return self.fake_home / ".claude" / "settings.json"
@@ -89,13 +94,16 @@ class Phase7FirstRun(unittest.TestCase):
         self.assertTrue(path.is_file())
         self.assertEqual(card.get("settings"), str(path))
         data = json.loads(path.read_text(encoding="utf-8"))
-        self.assertIs(data["skipDangerousModePermissionPrompt"], True)
-        self.assertEqual(data["permissions"]["defaultMode"], "bypassPermissions")
+        self._assert_no_permission_keys(data)
+        self.assertNotIn("permissions", data, "the launch argv carries the mode, never a project file")
+        self.assertIs(data["autoCompactEnabled"], True)
+        self.assertFalse((wt / ".claude" / "settings.json").exists(), "the tracked file is never written")
         blob = path.read_text(encoding="utf-8").lower()
         self.assertNotIn("ola-brain", blob)
         self.assertNotIn("side-chat", blob)
         self.assertNotIn("--append-system-prompt", blob)
         self.assertTrue(card.get("home_written"))
+        self.assertEqual(card.get("home_key"), "skipDangerousModePermissionPrompt")
         home_path = self._home_settings()
         self.assertEqual(card.get("settings_home"), str(home_path))
         self.assertTrue(card.get("trust_written"))
@@ -127,8 +135,7 @@ class Phase7FirstRun(unittest.TestCase):
         self.assertEqual(data["other"], 42)
         self.assertEqual(data["permissions"]["allow"], ["Read"])
         self.assertEqual(data["permissions"]["deny"], ["WebSearch"])
-        self.assertEqual(data["permissions"]["defaultMode"], "bypassPermissions")
-        self.assertIs(data["skipDangerousModePermissionPrompt"], True)
+        self._assert_no_permission_keys(data)
 
     def test_ensure_first_run_writes_home_skip_key_not_default_mode(self):
         wt = Path(tempfile.mkdtemp())
@@ -144,8 +151,8 @@ class Phase7FirstRun(unittest.TestCase):
         self.assertTrue(card.get("ok"))
         self.assertTrue(self._settings(wt).is_file())
         proj = json.loads(self._settings(wt).read_text(encoding="utf-8"))
-        self.assertIs(proj["skipDangerousModePermissionPrompt"], True)
-        self.assertEqual(proj["permissions"]["defaultMode"], "bypassPermissions")
+        self._assert_no_permission_keys(proj)
+        self.assertNotIn("permissions", proj)
         home_path = self._home_settings()
         self.assertTrue(home_path.is_file())
         self.assertTrue(card.get("home_written"))
@@ -160,6 +167,47 @@ class Phase7FirstRun(unittest.TestCase):
         self.assertEqual(home["permissions"]["allow"], ["Bash"])
         self.assertNotIn("defaultMode", home.get("permissions") or {})
         self.assertFalse((wt.parent / ".claude" / "settings.json").exists())
+
+    def test_ensure_first_run_turns_on_auto_compact_in_worktree_only(self):
+        wt = Path(tempfile.mkdtemp())
+        home_dir = self.fake_home / ".claude"
+        home_dir.mkdir()
+        (home_dir / "settings.json").write_text(
+            json.dumps({"autoCompactEnabled": False, "other": 1}), encoding="utf-8"
+        )
+        card = ensure_first_run({"to": "claude", "worktree": str(wt)})
+        self.assertTrue(card.get("ok"))
+        proj = json.loads(self._settings(wt).read_text(encoding="utf-8"))
+        self.assertIs(proj["autoCompactEnabled"], True)
+        home = json.loads(self._home_settings().read_text(encoding="utf-8"))
+        self.assertIs(home["autoCompactEnabled"], False)
+        self.assertEqual(home["other"], 1)
+
+    def test_ensure_first_run_auto_compact_keeps_existing_worktree_keys(self):
+        wt = Path(tempfile.mkdtemp())
+        (wt / ".claude").mkdir()
+        existing = {
+            "env": {"FOO": "keep-me"},
+            "permissions": {"allow": ["Read"]},
+            "autoCompactEnabled": False,
+            "other": 42,
+        }
+        self._settings(wt).write_text(json.dumps(existing), encoding="utf-8")
+        card = ensure_first_run({"to": "claude", "worktree": str(wt)})
+        self.assertTrue(card.get("ok"))
+        data = json.loads(self._settings(wt).read_text(encoding="utf-8"))
+        self.assertIs(data["autoCompactEnabled"], True)
+        self.assertEqual(data["env"], {"FOO": "keep-me"})
+        self.assertEqual(data["other"], 42)
+        self.assertEqual(data["permissions"]["allow"], ["Read"])
+        self._assert_no_permission_keys(data)
+
+    def test_ensure_first_run_does_not_add_auto_compact_to_home(self):
+        wt = Path(tempfile.mkdtemp())
+        card = ensure_first_run({"to": "claude", "worktree": str(wt)})
+        self.assertTrue(card.get("ok"))
+        home = json.loads(self._home_settings().read_text(encoding="utf-8"))
+        self.assertNotIn("autoCompactEnabled", home)
 
     def test_ensure_first_run_writes_trust_for_both_windows_slash_spellings(self):
         wt = Path(tempfile.mkdtemp())
@@ -214,12 +262,11 @@ class Phase7FirstRun(unittest.TestCase):
                 self.assertEqual(card.get("path_host"), "bash-interactive")
                 self.assertEqual(card.get("path_bashrc"), str(self.fake_home / ".bashrc"))
             self.assertTrue(card.get("identity_written"))
-            grok_skill = wt / ".grok" / "skills" / "neuron-identity" / "SKILL.md"
-            claude_skill = wt / ".claude" / "skills" / "neuron-identity" / "SKILL.md"
-            self.assertTrue(grok_skill.is_file())
-            self.assertTrue(claude_skill.is_file())
-            self.assertTrue((wt / "AGENTS.md").is_file())
-            self.assertIn(str(grok_skill), card.get("identity_paths") or [])
+            for d in (".grok", ".claude"):
+                for name in ("neuron-identity", "neuron-receive"):
+                    self.assertFalse((wt / d / "skills" / name).exists(), (d, name))
+            self.assertIn("convoy-operate", (wt / "AGENTS.md").read_text(encoding="utf-8"))
+            self.assertEqual(card.get("identity_removed"), [])
 
     def test_ensure_interactive_path_writes_bashrc_when_profile_only(self):
         profile = self.fake_home / ".profile"
@@ -271,8 +318,8 @@ class Phase7FirstRun(unittest.TestCase):
         self.assertTrue(by["grok"]["first_run"]["prepared"])
         self.assertTrue(self._settings(self.wt_c).is_file())
         data = json.loads(self._settings(self.wt_c).read_text(encoding="utf-8"))
-        self.assertIs(data["skipDangerousModePermissionPrompt"], True)
-        self.assertEqual(data["permissions"]["defaultMode"], "bypassPermissions")
+        self._assert_no_permission_keys(data)
+        self.assertNotIn("permissions", data)
         grok_settings = self._settings(self.wt_g)
         if grok_settings.exists():
             grok_data = json.loads(grok_settings.read_text(encoding="utf-8"))

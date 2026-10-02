@@ -38,6 +38,8 @@ def _run(root, *argv):
     return rc, (json.loads(raw) if raw else None), err.getvalue()
 
 
+
+
 class ConsentRail(unittest.TestCase):
     def setUp(self):
         self.root = Path(tempfile.mkdtemp())
@@ -123,6 +125,7 @@ class ConsentRail(unittest.TestCase):
         )["seat"]
         calls = []
         common = {
+            "allow_unverified_launch": True,  # Grok eligibility is independent of trust consent.
             "runner": lambda argv: calls.append(argv) or {"ok": True, "pid": 44},
             "env": {"WT_SESSION": "window"},
             "which": _which("wt"),
@@ -167,6 +170,7 @@ class ConsentRail(unittest.TestCase):
             which=_which("wt"),
             platform_name="nt",
             trust_probe=lambda _seat: True,
+            allow_unverified_launch=True,
         )
         self.assertTrue(launched["ok"])
         self.assertEqual(len(calls), 1)
