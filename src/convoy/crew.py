@@ -10,20 +10,29 @@ bring_up: one wt window, N panes, never launch_seat per chair.
 Launched is not connected. await_seated reads kind=seated rows back and calls
 a chair connected only when its ack cites the token this mint issued; the
 time waited is measured on an injectable clock so the suite never sleeps.
+
+add is the one-neuron verb: the same validate -> mint -> join for one chair,
+then the TARGETED launch (a split of the caller's pane, or a detached tmux
+session) instead of a whole new window, which it uses only as the fallback.
 """
 from __future__ import annotations
 
+import os
+import shutil
 import time
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Mapping
 
-from .bringup import Runner, bring_up, pane_host_available
+from .bringup import Runner, _resolve_wt_bin, bring_up, isolated_wt_argv, pane_host_available
 from .convoy import list_seats, read_id, read_thread
-from .harness_contract import canonical_harness_id, harness_entries, validate_effort, validate_model, validate_where
+from .harness_contract import (canonical_harness_id, harness_entries, validate_effort, validate_launch_eligibility,
+                               validate_model, validate_where)
 from .inbox import connect_mode
 from .layer import feed_since
 from .lifecycle import join
-from .repo import Runner as GitRunner, mint_worktrees
+from .repo import _SEAT_NAME, Runner as GitRunner, mint_worktrees, minted_worktree_path
+from .targeted_launch import (Runner as PaneRunner, Which, active_pane_argv, grok_project_trusted, launch_seat,
+                              placement_capability, terminal_capability, tmux_attach_command)
 
 EPOCH = "1970-01-01T00:00:00.000000Z"
 STATES = ("connected", "pending", "stale")
@@ -94,7 +103,6 @@ def crew(
     try:
         plan = _plan(root, seats, bound)
         if runner is not None:
-            from .harness_contract import validate_launch_eligibility
             for p in plan:
                 if p["where"] == "local":
                     validate_launch_eligibility(p["harness"], allow_unverified_launch=allow_unverified_launch)
@@ -104,6 +112,17 @@ def crew(
     if runner is not None and not pane_host_available():
         card["error"] = "no pane host (wt) on PATH; refuse mint and join"
         return card
+    sids = _mint_and_join(card, root, plan, checkout=checkout, mint_runner=mint_runner, author=author)
+    if sids is None:
+        return card
+    return _bring_up_window(card, root, sids, bound, runner=runner, allow_unverified_launch=allow_unverified_launch,
+                            write_repo_files=write_repo_files, opt_in_route=opt_in_route)
+
+
+def _mint_and_join(card: dict[str, Any], root: Path, plan: list[dict[str, Any]], *, checkout: Path | str | None,
+                   mint_runner: GitRunner | None, author: str | None) -> list[str] | None:
+    """Mint one worktree per local chair, then join each with its boot prompt.
+    Returns the joined session ids, or None with card["error"] set."""
     base = Path(checkout) if checkout else root
     card["checkout"] = str(base)
     local = [p for p in plan if p["where"] == "local"]
@@ -113,7 +132,7 @@ def crew(
         card["mint"] = mint
         if not mint.get("ok"):
             card["error"] = "mint refused: " + str(mint.get("error"))
-            return card
+            return None
         minted = {row["name"]: row["path"] for row in mint["worktrees"]}
     else:
         card["mint"] = {"ok": True, "checkout": str(base), "worktrees": []}
@@ -126,14 +145,20 @@ def crew(
             card["error"] = "join refused for " + p["session_id"] + ": " + str(e) + " (" + str(len(card["seats"])) + " chairs already joined)"
             if card["seats"]:
                 _mark_partial(card, root, [s["session_id"] for s in card["seats"]], card["error"])
-            return card
+            return None
         card["seats"].append({**joined["seat"], "token": joined["token"], "connect_mode": connect_mode(p["harness"])})
-    sids = [s["session_id"] for s in card["seats"]]
+    return [s["session_id"] for s in card["seats"]]
+
+
+def _bring_up_window(card: dict[str, Any], root: Path, sids: list[str], bound: str | None, *, runner: Runner | None,
+                     allow_unverified_launch: bool, write_repo_files: bool | None, opt_in_route: str,
+                     retry: str = "launch --seat {sid}") -> dict[str, Any]:
+    """Launch the joined chairs once through bring_up: one new window, N panes."""
     try:
         up = bring_up(root, thread=bound, runner=runner, session_ids=sids, allow_unverified_launch=allow_unverified_launch,
                       write_repo_files=write_repo_files, opt_in_route=opt_in_route)
     except OSError as e:
-        return _mark_partial(card, root, sids, "launch failed: " + str(e))
+        return _mark_partial(card, root, sids, "launch failed: " + str(e), retry=retry)
     card["windows"] = up.get("windows") or []
     card["cloud"] = up.get("cloud") or []
     # Live 2026-09-09: two cursor-agent seats launched with dead hook files (the
@@ -169,17 +194,180 @@ def crew(
     card["ok"] = bool(up.get("ok"))
     card["next"] = "await_seated"
     if not card["ok"] and sids:
-        _mark_partial(card, root, sids, str(card.get("error") or "launch failed"))
+        _mark_partial(card, root, sids, str(card.get("error") or "launch failed"), retry=retry)
     return card
 
 
-def _mark_partial(card: dict[str, Any], root: Path, sids: list[str], error: str) -> dict[str, Any]:
+def _auto(value: Any) -> str | None:
+    """Blank and "auto" both mean: pass no flag, so the harness picks its own default."""
+    text = str(value).strip() if isinstance(value, str) else ""
+    return None if not text or text.lower() == "auto" else text
+
+
+def _placement(env: Mapping[str, str] | None, which: Which, platform_name: str | None) -> tuple[str, str]:
+    """Where one new neuron goes, decided before anything is written:
+    split | detached | new-window | none, with the reason the card shows."""
+    cap = terminal_capability(env=env, which=which, platform_name=platform_name)
+    if cap.get("can_split"):
+        return "split", "inside " + str(cap.get("adapter")) + ": a split of the caller's active pane"
+    if cap.get("detached"):
+        return "detached", "not inside tmux; tmux is installed, so a detached tmux session"
+    nt = (os.name if platform_name is None else platform_name) == "nt"
+    if nt and which("wt"):
+        return "new-window", "not inside Windows Terminal (no WT_SESSION); bring-up opens a new window"
+    # The pane host runs an interactive harness only inside a terminal. One
+    # headless turn is a different verb, and it is not a seat.
+    tail = "; a harness with headless turns can still take one through `convoy send --live`, which is not a seat"
+    if nt:
+        return "none", "no terminal to split and no Windows Terminal (wt) on PATH; install it or run from one" + tail
+    return "none", "no terminal to split and no tmux; install tmux or use crew in a desktop session" + tail
+
+
+def _dry(card: dict[str, Any], root: Path, p: dict[str, Any], bound: str | None, *, checkout: Path | str | None,
+         env: Mapping[str, str] | None, which: Which, platform_name: str | None) -> dict[str, Any]:
+    """What a live add would run, built from the chair it would write, writing nothing."""
+    seat = {"to": p["harness"], "session_id": p["session_id"], "title": p["title"], "model": p["model"],
+            "effort": p["effort"], "worktree": str(minted_worktree_path(Path(checkout) if checkout else root, p["title"]))}
+    card["ok"] = True
+    card["session_id"] = p["session_id"]
+    card["worktree"] = seat["worktree"]
+    try:
+        if card["placement"] == "new-window":
+            # rootless: the pure builder, which writes no launch record; live,
+            # each pane runs the Convoy pane host around this same harness argv.
+            card["argv"] = isolated_wt_argv(bound or "", [seat], wt=_resolve_wt_bin())
+            return card
+        capability = placement_capability(root, seat, env=env, which=which, platform_name=platform_name) or {}
+        card["argv"] = active_pane_argv(seat, capability, root=root)
+        if not capability.get("can_split"):
+            card["session_name"] = capability.get("target")
+            card["attach"] = tmux_attach_command(str(capability.get("target")))
+    except ValueError as e:
+        card["argv"] = None
+        card["argv_error"] = str(e)
+    return card
+
+
+def _free_name(root: Path, harness: str, bound: str | None) -> str:
+    """<harness>-<n>, the lowest n whose chair does not exist yet."""
+    existing = {str(s.get("session_id") or "") for s in list_seats(root)}
+    n = 1
+    while (harness + "-" + str(n) + "-" + (bound or "thread")) in existing:
+        n += 1
+    return harness + "-" + str(n)
+
+
+def add(
+    root: Path,
+    harness: str,
+    model: str | None = None,
+    *,
+    effort: str | None = None,
+    title: str | None = None,
+    thread: str | None = None,
+    checkout: Path | str | None = None,
+    runner: PaneRunner | None = None,
+    window_runner: Runner | None = None,
+    mint_runner: GitRunner | None = None,
+    author: str | None = None,
+    allow_unverified_launch: bool = False,
+    write_repo_files: bool | None = None,
+    opt_in_route: str = "cli",
+    env: Mapping[str, str] | None = None,
+    which: Which = shutil.which,
+    platform_name: str | None = None,
+    trust_probe: Callable[[dict[str, Any]], bool] = grok_project_trusted,
+) -> dict[str, Any]:
+    """One neuron: validate -> place -> mint -> join -> launch.
+
+    runner=None is a dry run: it writes nothing and reports the placement.
+    Live, `runner` splits the caller's pane or starts a detached tmux session
+    (launch_seat), and `window_runner` is bring_up's new window, used only
+    where neither exists. Placement is decided before the first write, so
+    "nowhere to launch" refuses with no chair and no worktree left behind. A
+    spawn that fails AFTER the join leaves the chair joined and the card says
+    not launched, with the `launch --seat` that retries it: the token and
+    boot prompt are already on the thread, and rolling them back would erase
+    the record of a join that did happen.
+    """
+    root = Path(root)
+    bound = read_thread(root)
+    hid = canonical_harness_id(harness)
+    chosen_model, chosen_effort = _auto(model), _auto(effort)
+    card: dict[str, Any] = {"ok": False, "convoy_id": read_id(root), "thread": bound, "harness": hid,
+                            "model": chosen_model or "auto", "effort": chosen_effort or "auto",
+                            "seats": [], "launched": False, "dry_run": runner is None}
+    if card["convoy_id"] is None:
+        card["error"] = "add requires a bound thread root (onboard, or init + bind)"
+        return card
+    if thread is not None and bound != thread:
+        card["error"] = "thread mismatch: root is bound to " + repr(bound) + ", not " + repr(thread)
+        return card
+    name = str(title or "").strip() or _free_name(root, hid, bound)
+    if not _SEAT_NAME.fullmatch(name):
+        card["error"] = "refuse seat name (letters, digits, . _ - only): " + repr(name)
+        return card
+    try:
+        plan = _plan(root, [{"harness": harness, "model": chosen_model, "effort": chosen_effort, "title": name}], bound)
+        if runner is not None:
+            validate_launch_eligibility(hid, allow_unverified_launch=allow_unverified_launch)
+    except ValueError as e:
+        card["error"] = str(e)
+        return card
+    card["placement"], card["placement_reason"] = _placement(env, which, platform_name)
+    if card["placement"] == "none":
+        card["error"] = card["placement_reason"]
+        return card
+    if runner is None:
+        return _dry(card, root, plan[0], bound, checkout=checkout, env=env, which=which, platform_name=platform_name)
+    # The retry each path prints is the command that works on that path, with
+    # the person's own opt-ins, so it is never refused for a flag left off.
+    flags = ((" --allow-unverified-launch" if allow_unverified_launch else "") +
+             (" --write-repo-files" if write_repo_files else ""))
+    sids = _mint_and_join(card, root, plan, checkout=checkout, mint_runner=mint_runner, author=author)
+    if sids is None:
+        return card
+    if card["placement"] == "new-window":
+        # `launch` has no pane to split here; bring-up for this one chair does.
+        return _bring_up_window(card, root, sids, bound, runner=window_runner,
+                                allow_unverified_launch=allow_unverified_launch,
+                                write_repo_files=write_repo_files, opt_in_route=opt_in_route,
+                                retry="bring-up --seat {sid}" + flags)
+    launched = launch_seat(root, sids[0], runner=runner, env=env, which=which, platform_name=platform_name,
+                           trust_probe=trust_probe, allow_unverified_launch=allow_unverified_launch,
+                           write_repo_files=write_repo_files, opt_in_route=opt_in_route)
+    card["launch"] = launched
+    if launched.get("state") == "awaiting-user-consent":
+        # The chair waits on the person, not on a retry: grant, then launch it.
+        card["error"] = "launch waits for the person's consent to trust the worktree"
+        card["next"] = "consent"
+        card["consent_request"] = launched.get("consent_request")
+        request = str((launched.get("consent_request") or {}).get("request_id") or "<request_id>")
+        # Only after the person's explicit yes: grant prints the one-time consent the verb takes.
+        card["recovery"] = [{"session_id": sids[0], "grant": "consent --grant " + request,
+                             "verb": "launch --seat " + sids[0] + flags + " --consent <consent>"}]
+        card["seated"] = await_seated(root, sids, timeout=0)
+        return card
+    if not launched.get("ok"):
+        return _mark_partial(card, root, sids, "launch failed: " + str(launched.get("error") or "terminal adapter failed"),
+                             retry="launch --seat {sid}" + flags)
+    if launched.get("attach"):
+        card["attach"] = launched["attach"]
+    card["ok"] = True
+    card["launched"] = True
+    card["seated"] = await_seated(root, sids, timeout=0)
+    card["next"] = "await_seated"
+    return card
+
+
+def _mark_partial(card: dict[str, Any], root: Path, sids: list[str], error: str,
+                  retry: str = "launch --seat {sid}") -> dict[str, Any]:
     """Chairs from this call exist; the window did not. Recovery is per chair."""
     card["ok"] = False
     card["launched"] = False
     card["partial"] = True
     card["error"] = error
-    card["recovery"] = [{"session_id": sid, "verb": "launch --seat " + sid} for sid in sids]
+    card["recovery"] = [{"session_id": sid, "verb": retry.format(sid=sid)} for sid in sids]
     card["seated"] = await_seated(root, sids, timeout=0)
     card["next"] = "launch"
     return card

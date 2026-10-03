@@ -15,7 +15,7 @@ from .onboard import onboard as run_onboard
 from .start import start as run_start
 from .context import pack
 from .convoy import attach, bind, ensure_id, list_seats, read_id, read_lead, seat, set_lead, CONDUCTOR
-from .crew import await_seated, crew
+from .crew import add as add_neuron, await_seated, crew
 from .glance import build_glance, run_tray
 from .graph import build_graph, neighborhood
 from .graph_html import render_html, resume_neuron
@@ -195,7 +195,7 @@ def main(argv: list[str] | None = None) -> int:
     jn.add_argument("--effort")
     jn.add_argument("--where", choices=["local", "cloud"], help="local (default) or cloud; cloud is refused unless convoy choices offers it for the harness")
     jn.add_argument("--as", dest="author", help="authoring seat (neuron-authored)")
-    jn.add_argument("--launch", action="store_true", help="split exactly one fresh chair into the active supported pane host")
+    jn.add_argument("--launch", action="store_true", help="launch exactly one fresh chair: a split of the active pane (tmux or Windows Terminal), or, on POSIX outside tmux with tmux installed, a detached tmux session")
     jn.add_argument("--consent", help="one-time scoped consent returned by `convoy consent --grant`")
     jn.add_argument("--write-repo-files", action="store_true", help=_WRITE_REPO_FILES_HELP)
 
@@ -209,13 +209,25 @@ def main(argv: list[str] | None = None) -> int:
     cw.add_argument("--no-widget", action="store_true", help="do not start the widget service after --launch")
     cw.add_argument("--write-repo-files", action="store_true", help=_WRITE_REPO_FILES_HELP)
 
+    ad = sub.add_parser("add", help="one neuron: mint its worktree, join its chair, and split it into your terminal (tmux or Windows Terminal); a detached tmux session or a new window only where no split exists")
+    ad.add_argument("harness", help="harness id (convoy choices lists them)")
+    ad.add_argument("model", nargs="?", help="model id, or auto (the default): no model flag, the harness picks")
+    ad.add_argument("--effort", help="effort, or auto (the default): no effort flag; validated against the harness's own keys")
+    ad.add_argument("--title", help="chair name (default <harness>-<n>)")
+    ad.add_argument("--checkout", help="git checkout to mint the worktree from (default: the root)")
+    ad.add_argument("--thread", help="must match the bound thread")
+    ad.add_argument("--allow-unverified-launch", action="store_true", help="explicitly accept unverified harness launch eligibility for this launch")
+    ad.add_argument("--dry-run", action="store_true", help="write nothing; report where the neuron would go")
+    ad.add_argument("--write-repo-files", action="store_true", help=_WRITE_REPO_FILES_HELP)
+
     aw = sub.add_parser("await-seated", help="observe the chairs' seated acks (connected | pending | stale) with the seconds waited")
     aw.add_argument("--seat", action="append", required=True, help="chair session_id (repeat)")
     aw.add_argument("--timeout", type=float, default=120.0, help="seconds; 0 is one snapshot")
 
     ch = sub.add_parser("choices", help="list installed harnesses, known worktrees, seats, and active-pane support")
 
-    ln = sub.add_parser("launch", help="split one already-joined fresh chair into the active pane host")
+    ln = sub.add_parser("launch", description="Launch one already-joined fresh chair. The card's placement says where: split (a split of the active pane, in tmux or Windows Terminal) or detached (on POSIX outside tmux with tmux installed, a detached tmux session; the card's attach command opens it).",
+                        help="launch one already-joined fresh chair: a split of the active pane, or a detached tmux session")
     ln.add_argument("--allow-unverified-launch", action="store_true", help="explicitly accept unverified harness launch eligibility for this launch")
     ln.add_argument("--seat", required=True, help="fresh join/swap chair session_id")
     ln.add_argument("--dry-run", action="store_true")
@@ -327,6 +339,7 @@ def main(argv: list[str] | None = None) -> int:
         bu.add_argument("--allow-unverified-launch", action="store_true", help="explicitly accept unverified harness launch eligibility for this launch")
         bu.add_argument("convoy_id", nargs="?")
         bu.add_argument("--thread")
+        bu.add_argument("--seat", action="append", help="bring up only this chair (repeat); default every chair")
         bu.add_argument("--dry-run", action="store_true")
         bu.add_argument("--write-repo-files", action="store_true", help=_WRITE_REPO_FILES_HELP)
 
@@ -693,6 +706,16 @@ def main(argv: list[str] | None = None) -> int:
             card["widget_service"] = auto_widget_service(disabled=bool(args.no_widget))
         print(json.dumps(card))
         return 0 if card.get("ok") else 1
+    if args.cmd == "add":
+        if args.dry_run and args.write_repo_files:
+            print(json.dumps({"ok": False, "dry_run": True, "error": dry_opt_in_refusal(args.cmd, cli=True)}))
+            return 1
+        card = add_neuron(root, args.harness, args.model, effort=args.effort, title=args.title, thread=args.thread,
+                          checkout=args.checkout, runner=None if args.dry_run else active_pane_runner,
+                          window_runner=None if args.dry_run else live_runner,
+                          allow_unverified_launch=args.allow_unverified_launch, write_repo_files=_opt_in(args))
+        print(json.dumps(card))
+        return 0 if card.get("ok") else 1
     if args.cmd == "await-seated":
         try:
             card = await_seated(root, args.seat, timeout=args.timeout)
@@ -879,7 +902,7 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps({"ok": False, "dry_run": True, "windows": [], "error": dry_opt_in_refusal(args.cmd, cli=True)}))
             return 1
         runner = None if args.dry_run else live_runner
-        card = bring_up(root, convoy_id=args.convoy_id, thread=args.thread, runner=runner,
+        card = bring_up(root, convoy_id=args.convoy_id, thread=args.thread, runner=runner, session_ids=args.seat,
                         allow_unverified_launch=args.allow_unverified_launch, write_repo_files=_opt_in(args))
         print(json.dumps(card))
         if args.dry_run:

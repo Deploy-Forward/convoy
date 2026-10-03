@@ -127,6 +127,7 @@ An indexed thread root outranks the main checkout only when its known index upda
 - `seat --to <harness> --session-id <chair> [--worktree <path>] [--model M] [--resume <vendor-id>] [--title T] [--effort E]` — register a seated neuron.
 - `join --to <harness> [--worktree <path>] [--title T] [--as <chair>] [--launch] [--consent <id>]` — register one fresh chair.
 - `crew --seat <harness>[,model=M][,effort=E][,where=local|cloud][,title=T] [--seat ...] [--checkout <path>] [--launch]` — N neurons at once: validates every seat first, mints one worktree per local seat, joins every chair with a boot prompt, and (with `--launch`) brings them up in ONE window. Launched is not connected: the card's `seated` snapshot says `pending`.
+- `add <harness> [<model>|auto] [--effort E] [--title T] [--checkout <path>] [--dry-run]` — one neuron: mints its worktree, joins its chair, and launches it as a split of your terminal (tmux or Windows Terminal). Outside one it falls back to a detached tmux session (POSIX) or a new Windows Terminal window (Windows), and refuses before any write when there is neither. Model and effort are auto unless given: no flag, the harness picks. The card's `placement` is `split`, `detached`, `new-window` or `none`; a failed launch leaves the chair joined with a `recovery` verb that works on that path.
 - `await-seated --seat <chair> [--seat ...] [--timeout <s>]` — observe the acks: per chair `connected` (its own `seated` row cites the minted token) | `pending` | `stale`, with the seconds waited.
 - `swap --seat <chair> --to <harness> --handoff <.convoy/handoff/<chair>-<ts>.md> --as <chair>` — replace the occupant, keep the chair.
 - `seated --seat <chair> --token <token>` — proof-of-life echo from the new occupant.
@@ -322,6 +323,13 @@ Supported active-pane adapters:
 | --- | --- | --- |
 | Windows Terminal | Windows, `WT_SESSION`, and `wt` on PATH | `wt -w 0 split-pane`; targets the most-recent WT window and its active pane |
 | tmux on macOS/Linux | `TMUX`, `TMUX_PANE`, and `tmux` on PATH | `tmux split-window -t <caller-pane>`; exact caller pane |
+
+On macOS or Linux outside tmux, with tmux installed, `launch` and `join --launch`
+start a detached tmux session (`convoy-<thread>-<title>-<hash>`) instead of
+refusing. The card says `placement: detached` and gives `attach`
+(`tmux attach -t =<session>`). The session is created synchronously, so a
+refused `new-session` is reported as not launched. The MCP `launch` tool, behind
+the write gate, does the same.
 
 Other terminal hosts fail closed with a manual-pane instruction. Convoy never
 injects keystrokes or guesses an iTerm, Terminal.app, WezTerm, kitty, or shell

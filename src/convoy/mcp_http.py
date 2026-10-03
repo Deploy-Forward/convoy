@@ -76,7 +76,7 @@ probe: Any = CachedProbe(_live_probe, ttl_s=60.0)
 PROTOCOL_LATEST = "2025-03-26"
 PROTOCOL_SUPPORTED = frozenset({PROTOCOL_LATEST, "2024-11-05"})
 SERVER_NAME = "convoy"
-_BASE_VERSION = "1.0.0"
+_BASE_VERSION = "1.1.0"
 
 
 def _server_version(repo_dir: Path | None = None) -> str:
@@ -600,7 +600,7 @@ TOOLS: list[dict[str, Any]] = [
     },
     {
         "name": "launch",
-        "description": "Split one already-joined fresh chair into the active pane host. This SPAWNS a process, so it is behind the write gate and refused on a public deploy without spawning anything. consent carries the user's explicit yes when the host asks for it. Never a token.",
+        "description": "Launch one already-joined fresh chair: a split of the active pane (tmux or Windows Terminal), or, on POSIX outside tmux with tmux installed, a detached tmux session the person opens with the card's attach command; the card's placement says which. This SPAWNS a process, so it is behind the write gate and refused on a public deploy without spawning anything. consent carries the user's explicit yes when the host asks for it. Never a token.",
         "inputSchema": _schema(
             {"seat": {"type": "string", "description": "chair session_id from join"},
              "consent": {"type": "string"}},

@@ -376,6 +376,12 @@ def clone(url: str, dest: Path | str, runner: Runner | None = None) -> dict[str,
     return card
 
 
+def minted_worktree_path(checkout: Path | str, name: str) -> Path:
+    """Where mint_worktrees puts the worktree for seat `name`: a sibling of the checkout."""
+    base = Path(checkout)
+    return base.parent / (base.name + "-wt-" + name)
+
+
 def mint_worktrees(checkout: Path | str, n: int, names: list[str] | None = None,
                    runner: Runner | None = None) -> dict[str, Any]:
     """One worktree per seat, DERIVED from the checkout: a sibling directory
@@ -404,7 +410,7 @@ def mint_worktrees(checkout: Path | str, n: int, names: list[str] | None = None,
         card["error"] = "not a git checkout: " + str(base)
         return card
     for name in seat_names:
-        path = base.parent / (base.name + "-wt-" + name)
+        path = minted_worktree_path(base, name)
         branch = "convoy/" + name
         row = {"name": name, "path": str(path), "branch": branch, "created": False}
         if (path / ".git").exists():

@@ -1516,6 +1516,13 @@ def bring_up(root: Path, convoy_id: str | None = None, thread: str | None = None
         return resolved
     cid = resolved["convoy_id"]
     bound = resolved["thread"]
+    if session_ids is not None:
+        # A named chair that does not exist is a typo, not an empty success.
+        known = {str(s.get("session_id") or "") for s in list_seats(root, convoy_id=cid, require_session=False)}
+        unknown = [str(s) for s in session_ids if str(s) not in known]
+        if unknown:
+            return {"ok": False, "convoy_id": cid, "thread": bound, "windows": [],
+                    "error": "unknown seat: " + ", ".join(unknown)}
     hops = _pane_seats(_only(_hop_seats(root, cid), session_ids))
     if runner is not None:
         try:

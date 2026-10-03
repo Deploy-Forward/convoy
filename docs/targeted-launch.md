@@ -29,9 +29,12 @@ pane only.
 | --- | --- | --- | --- |
 | Windows Terminal | Windows + `WT_SESSION` + `wt` | `wt -w 0 split-pane`; MRU window / active pane | No; WT CLI has no `closePane` command |
 | tmux | `TMUX` + `TMUX_PANE` + `tmux` | `split-window -t <caller-pane>` | No; prototype does not yet capture the returned new pane id |
+| tmux, detached | POSIX + `tmux` on PATH, caller not in tmux | `new-session -d -s convoy-<thread>-<title>-<hash> -c <worktree>`, run synchronously; a non-zero exit is not a launch | No |
 | Other hosts | none | Refuse | Refuse |
 
-macOS and Linux are supported when the caller is inside tmux. Terminal.app,
+macOS and Linux are supported when the caller is inside tmux, and outside it
+when tmux is installed (a detached session; the card's `attach` is
+`tmux attach -t =<session>`). Terminal.app,
 iTerm2, WezTerm, kitty, and other hosts require explicit future adapters; a
 model must not infer or simulate them.
 

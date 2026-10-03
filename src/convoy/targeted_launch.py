@@ -9,6 +9,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import shlex
 import shutil
 import subprocess
@@ -29,7 +30,7 @@ from .bringup import (
     resume_target,
 )
 from .consent import consume_consent, request_consent
-from .convoy import list_seats, update_seat
+from .convoy import list_seats, read_thread, update_seat
 from .resume_first import ensure_session_id
 from .harness_contract import effort_contract, harness_entries, harness_exec, model_catalog, where_options
 from .inbox import connect_mode
@@ -82,7 +83,7 @@ def terminal_capability(
             "close_reason": "windows-terminal-cli-has-no-close-pane-command",
         }
 
-    return {
+    refusal: dict[str, Any] = {
         "can_split": False,
         "adapter": None,
         "target": None,
@@ -91,6 +92,61 @@ def terminal_capability(
         "can_close_exact": False,
         "close_reason": "no-supported-active-terminal",
     }
+    # Outside tmux, a POSIX box with tmux installed (a remote terminal over
+    # ssh) can still host a body: a DETACHED session the person attaches to.
+    # It is not a split, so can_split stays False and the refusal above stays
+    # the answer for anything that needs the caller's own pane.
+    tmux_installed = which("tmux") if platform != "nt" else None
+    if tmux_installed:
+        refusal["detached"] = {
+            "can_split": False,
+            "can_detach": True,
+            "adapter": "tmux-detached",
+            "executable": str(tmux_installed),
+            "target_semantics": "new-detached-session",
+            "can_close_exact": False,
+            "close_reason": "created-pane-id-not-yet-captured",
+        }
+    return refusal
+
+
+def tmux_session_name(thread: Any, seat: dict[str, Any], root: Path | str) -> str:
+    """`convoy-<thread>-<seat>-<6 hex>`, reduced to what tmux keeps in a target
+    name (it rewrites '.' and ':', and anything else is a quoting hazard).
+
+    The readable part folds ("a.b" and "a-b", thread "a" + title "b-c" and
+    thread "a-b" + title "c"), and two roots on one tmux server can share a
+    thread name, so the suffix hashes the root and the chair: two chairs never
+    share a session, and `attach` never opens the other neuron."""
+    who = str(seat.get("title") or seat.get("session_id") or seat.get("to") or "seat")
+    raw = "convoy-" + str(thread or "thread") + "-" + who
+    key = str(Path(root).resolve()) + "\0" + str(seat.get("session_id") or "")
+    digest = hashlib.sha256(key.encode("utf-8")).hexdigest()[:6]
+    return re.sub(r"[^A-Za-z0-9_-]+", "-", raw).strip("-") + "-" + digest
+
+
+def tmux_attach_command(name: str) -> str:
+    """`=` makes tmux match the session name exactly, never by prefix."""
+    return "tmux attach -t " + shlex.quote("=" + name)
+
+
+def placement_capability(
+    root: Path,
+    row: dict[str, Any],
+    *,
+    env: Mapping[str, str] | None = None,
+    which: Which = shutil.which,
+    platform_name: str | None = None,
+) -> dict[str, Any] | None:
+    """The adapter this chair launches through: a split of the caller's pane,
+    else a detached tmux session named for this chair, else None."""
+    capability = terminal_capability(env=env, which=which, platform_name=platform_name)
+    if capability.get("can_split"):
+        return capability
+    detached = capability.get("detached")
+    if not detached:
+        return None
+    return {**detached, "target": tmux_session_name(read_thread(root), row, root)}
 
 
 # Harnesses that accept a session id for a NEW conversation, and the flag
@@ -189,8 +245,8 @@ def active_pane_argv(
     *,
     root: Path | None = None,
 ) -> list[str]:
-    """Build one terminal split command containing one harness invocation."""
-    if not capability.get("can_split"):
+    """Build one terminal split (or detached tmux session) command containing one harness invocation."""
+    if not (capability.get("can_split") or capability.get("can_detach")):
         raise ValueError(str(capability.get("reason") or "terminal cannot split"))
     worktree = str(seat.get("worktree") or "").strip()
     if not worktree:
@@ -231,13 +287,40 @@ def active_pane_argv(
             worktree,
             shlex.join(inner),
         ]
+    if adapter == "tmux-detached":
+        name = str(capability.get("target") or "").strip()
+        if not name:
+            raise ValueError("detached tmux adapter has no session name")
+        # tmux hands the command to the shell as ONE string: quoted here, so a
+        # worktree or boot prompt with spaces stays one argument.
+        return [terminal, "new-session", "-d", "-s", name, "-c", worktree, shlex.join(inner)]
     raise ValueError("unsupported terminal adapter: " + str(adapter))
 
 
 def active_pane_runner(argv: list[str]) -> dict[str, Any]:
-    """Launch one allowlisted terminal split without a shell."""
+    """Launch one allowlisted terminal split without a shell.
+
+    A detached tmux session is created synchronously: `new-session -d`
+    returns at once, and its exit code is the only evidence the session
+    exists (a duplicate name exits 1). A split is fire-and-forget."""
+    parts = [str(a) for a in argv]
+    if len(parts) > 2 and Path(parts[0]).name.lower().removesuffix(".exe") == "tmux" and parts[1:3] == ["new-session", "-d"]:
+        try:
+            done = subprocess.run(parts, capture_output=True, text=True, timeout=30, check=False)
+        except subprocess.TimeoutExpired:
+            # tmux may have made the session and then stalled: not a launch,
+            # but a body may exist, and the card says where to look.
+            name = parts[4] if len(parts) > 4 else ""
+            return {"ok": False, "error": "tmux did not answer in 30 s; a session may exist: tmux ls" +
+                    ("; if it is there: " + tmux_attach_command(name) if name else "")}
+        except (OSError, subprocess.SubprocessError) as exc:
+            return {"ok": False, "error": type(exc).__name__ + ": " + str(exc)}
+        if done.returncode != 0:
+            return {"ok": False, "error": "tmux new-session exited " + str(done.returncode) + ": " +
+                    ((done.stderr or "") + (done.stdout or "")).strip()}
+        return {"ok": True, "pid": None}
     try:
-        proc = subprocess.Popen([str(a) for a in argv])
+        proc = subprocess.Popen(parts)
         return {"ok": True, "pid": int(proc.pid)}
     except Exception as exc:
         return {"ok": False, "error": type(exc).__name__ + ": " + str(exc)}
@@ -406,8 +489,8 @@ def launch_seat(
                 worktree=worktree,
             )
             row = update_seat(root, session_id, trust_worktree=True)
-        capability = terminal_capability(env=env, which=which, platform_name=platform_name)
-        if not capability.get("can_split"):
+        capability = placement_capability(root, row, env=env, which=which, platform_name=platform_name)
+        if capability is None:
             raise ValueError(
                 "no supported active pane; use `convoy choices` and open a pane manually"
             )
@@ -431,10 +514,13 @@ def launch_seat(
             "target_semantics": capability.get("target_semantics"),
             "can_close_exact": bool(capability.get("can_close_exact")),
             "close_reason": capability.get("close_reason"),
+            "placement": "split" if capability.get("can_split") else "detached",
             "argv": argv,
             "harness_argv": harness_argv,
             "dry_run": runner is None,
         }
+        if not capability.get("can_split"):
+            card["attach"] = tmux_attach_command(str(capability.get("target")))
         if first_run is not None:
             card["first_run"] = {"would_write": list(first_run.get("would_write") or []),
                                  "notes": list(first_run.get("notes") or []),
