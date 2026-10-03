@@ -23,7 +23,7 @@ from .index import routable_threads
 from .layer import feed_since, parse_since, utc_now
 from .provenance import rail_provenance
 from .pulse import chair_reachable, read_pulse
-from .wait import read_wait_file
+from .wait import listening_wait_file
 from .bringup import is_conductor
 from .usage import probe, surface
 
@@ -78,7 +78,7 @@ def build_rail(root: Path | str, *, since: str = "10m", probe_fn: ProbeFn | None
     card["chairs"] = [{"session_id": st["session_id"], "harness": st["to"], "where": st["where"],
                        "state": st["state"],
                        "reachable": chair_reachable(read_pulse(root, st["session_id"]),
-                                                    read_wait_file(root, st["session_id"]), now)}
+                                                    listening_wait_file(root, st["session_id"]), now)}
                       for st in states]
 
     fn = probe_fn or probe

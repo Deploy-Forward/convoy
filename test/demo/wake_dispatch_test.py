@@ -572,6 +572,69 @@ class TheHoldOnEveryFire(Case):
         self.assertEqual([route for route, _ in self.fired_to(RECEIVER)], ["channel", "channel"], "no waiter")
 
 
+class TheBudgetMidLadder(Case):
+    """A wake that went out unread, whose next wake the budget refuses, still reaches the person:
+    the refusal alert, and one "did not read" alert, so the person is never left with silence."""
+
+    def key(self):
+        return tok(1) + ":" + RECEIVER + ":send"
+
+    def fill_target_budget(self):
+        outbox_path(self.root).parent.mkdir(parents=True, exist_ok=True)
+        with outbox_path(self.root).open("a", encoding="utf-8") as f:
+            for n in range(LIMITS["per_target_per_hour"]):
+                f.write(json.dumps(settled_row(n + 100, result="fired", reason="reply", ts=iso(self.now))) + "\n")
+
+    def unread_alerts(self):
+        return [text for target, text in self.routes.alerts if target == RECEIVER and "did not read" in text]
+
+    def test_a_refire_the_budget_refuses_still_alerts_that_the_wake_was_not_read(self):
+        self.live(RECEIVER)
+        self.send(RECEIVER, tok(1), inbox=False)
+        self.d.start()
+        self.d.step()
+        self.fill_target_budget()
+        self.advance(T_ACK["channel"] + 1, pulse=[RECEIVER])
+        self.d.step()
+        self.assertEqual(len(self.fired_to(RECEIVER)), 1, "the refire was refused")
+        rows = self.rows_for(self.key())
+        self.assertIn("refused", [r["result"] for r in rows])
+        self.assertEqual((rows[-1]["route"], rows[-1]["result"], rows[-1]["alerted"]), ("alert", "held", True))
+        self.assertEqual(len(self.routes.alerts), 2, "the refusal, and that the wake was not read")
+        [text] = self.unread_alerts()
+        self.assertIn(self.key(), text)
+        self.advance(T_ACK_LONG + 1, pulse=[RECEIVER])
+        self.d.step()
+        self.assertEqual(len(self.routes.alerts), 2, "once")
+
+    def test_a_ladder_step_the_budget_refuses_still_alerts_that_the_wake_was_not_read(self):
+        self.live(RECEIVER)
+        self.send(RECEIVER, tok(1), inbox=False)
+        self.d.start()
+        self.d.step()
+        self.advance(T_ACK["channel"] + 1, pulse=[RECEIVER])
+        self.d.step()
+        self.fill_target_budget()
+        self.advance(T_ACK["channel"] + 1, pulse=[RECEIVER])
+        self.d.step()
+        self.assertEqual([route for route, _ in self.fired_to(RECEIVER)], ["channel", "channel"], "no waiter")
+        results = [r["result"] for r in self.rows_for(self.key())]
+        self.assertIn("dropped", results)
+        self.assertIn("refused", results)
+        self.assertEqual(len(self.unread_alerts()), 1)
+
+    def test_a_hold_mid_ladder_is_the_person_s_own_word_and_adds_no_unread_alert(self):
+        self.live(RECEIVER)
+        self.send(RECEIVER, tok(1), inbox=False)
+        self.d.start()
+        self.d.step()
+        set_hold(self.root, RECEIVER, until=iso(self.now + timedelta(hours=1)), by="person")
+        self.advance(T_ACK["channel"] + 1, pulse=[RECEIVER])
+        self.d.step()
+        self.assertEqual(self.unread_alerts(), [])
+        self.assertEqual(self.rows_for(self.key())[-1]["result"], "refused")
+
+
 class TheAckTimer(Case):
     def key(self, token=tok(1)):
         return token + ":" + RECEIVER + ":send"
@@ -828,6 +891,215 @@ class TheTimerErrors(Case):
             self.d.step()
         errors = [r for r in self.rows_for(self.key()) if r["result"] == "error"]
         self.assertEqual(len(errors), 2)
+
+
+def settled_row(n, target=RECEIVER, *, result="acked", reason="send", ts="2030-01-01T11:00:00Z", **extra):
+    """An outbox row as the dispatcher writes it, for a synthetic token."""
+    return {"wake_id": "wk_" + format(n, "016x"), "dedupe_key": tok(n) + ":" + target + ":" + reason,
+            "target": target, "reason": reason, "token": tok(n), "from": extra.pop("sender", None), "stamp": {},
+            "route": extra.pop("route", "channel"), "attempt": 1, "result": result, "why": "synthetic",
+            "alerted": extra.pop("alerted", False), "ts": ts}
+
+
+class TheOutboxCache(Case):
+    """The outbox is read incrementally: each read takes only the bytes appended since the last, so a
+    step never re-reads the settled history. A row the pass writes is seen by the rest of it, a row
+    written between passes is read by the next, and a file shorter than what was read is read again."""
+
+    def append_rows(self, rows):
+        outbox_path(self.root).parent.mkdir(parents=True, exist_ok=True)
+        with outbox_path(self.root).open("a", encoding="utf-8") as f:
+            for row in rows:
+                f.write(json.dumps(row) + "\n")
+
+    def recording(self):
+        from unittest import mock
+        import convoy.wake_dispatch as wd
+        real = wd._rows_after
+        self.reads = []
+
+        def recorded(path, offset):
+            rows, end = real(path, offset)
+            if Path(path) == outbox_path(self.root):
+                self.reads.append((offset, end))
+            return rows, end
+
+        return mock.patch.object(wd, "_rows_after", recorded)
+
+    def test_a_step_reads_only_the_bytes_appended_since_the_last_pass(self):
+        self.live(RECEIVER)
+        self.append_rows([settled_row(n + 100) for n in range(300)])
+        self.d.start()
+        before = outbox_path(self.root).stat().st_size
+        for n in range(5):
+            self.send(RECEIVER, tok(n + 1), sender="neuron-" + str(n) + "-thread", inbox=False)
+        with self.recording():
+            self.d.step()
+        after = outbox_path(self.root).stat().st_size
+        self.assertEqual(len(self.fired_to(RECEIVER)), 5)
+        self.assertTrue(self.reads, "the step read the outbox")
+        self.assertTrue(all(start >= before for start, _ in self.reads), "never the settled history again")
+        self.assertEqual(sum(end - start for start, end in self.reads), after - before,
+                         "every appended byte is read once, and nothing else")
+
+    def test_an_idle_step_reads_no_outbox_bytes(self):
+        self.live(RECEIVER)
+        self.append_rows([settled_row(n + 100) for n in range(50)])
+        self.d.start()
+        self.d.step()
+        with self.recording():
+            self.d.step()
+        self.assertEqual(sum(end - start for start, end in self.reads), 0)
+
+    def test_an_outbox_shorter_than_what_was_read_is_read_again(self):
+        self.live(RECEIVER)
+        self.append_rows([settled_row(1)] + [settled_row(n + 100) for n in range(20)])
+        self.d.start()
+        self.d.step()
+        outbox_path(self.root).write_text("", encoding="utf-8")  # replaced: the acked row for tok(1) is gone
+        self.send(RECEIVER, tok(1), inbox=False)
+        self.d.step()
+        self.assertEqual([p["token"] for _, p in self.fired_to(RECEIVER)], [tok(1)])
+
+    def test_the_dispatcher_only_ever_appends_to_the_outbox(self):
+        self.live(RECEIVER)
+        self.d.start()
+        self.send(RECEIVER, tok(1), inbox=False)
+        self.d.step()
+        before = outbox_path(self.root).read_bytes()
+        self.send(RECEIVER, tok(2), inbox=False)
+        self.advance(T_ACK["channel"] + 1, pulse=[RECEIVER])
+        self.d.step()
+        self.advance(T_ACK["channel"] + 1, pulse=[RECEIVER])
+        self.d.step()
+        after = outbox_path(self.root).read_bytes()
+        self.assertGreater(len(after), len(before))
+        self.assertEqual(after[:len(before)], before, "every write is an append: what was read stays as it was")
+
+    def test_a_half_written_row_is_held_back_then_read_exactly_once(self):
+        self.live(RECEIVER)
+        self.d.start()
+        row = json.dumps(settled_row(1)) + "\n"
+        half = len(row) // 2
+        outbox_path(self.root).parent.mkdir(parents=True, exist_ok=True)
+        with outbox_path(self.root).open("a", encoding="utf-8", newline="") as f:
+            f.write(row[:half])
+        self.d.step()
+        self.assertEqual([r for r in self.d._outbox() if r.get("token") == tok(1)], [], "a torn row is not read")
+        with outbox_path(self.root).open("a", encoding="utf-8", newline="") as f:
+            f.write(row[half:])
+        self.d.step()
+        self.d.step()
+        self.assertEqual(len([r for r in self.d._outbox() if r.get("token") == tok(1)]), 1)
+
+    def test_a_failed_outbox_write_leaves_the_cache_as_the_file_is(self):
+        from unittest import mock
+        import convoy.wake_dispatch as wd
+        self.live(RECEIVER)
+        self.d.start()
+        self.send(RECEIVER, tok(1), inbox=False)
+        real = wd._append
+
+        def failing(path, row):
+            if Path(path) == outbox_path(self.root):
+                raise OSError("disk full")
+            return real(path, row)
+
+        with mock.patch.object(wd, "_append", failing):
+            self.d.step()
+        self.assertEqual(self.d._outbox(), read_outbox(self.root))
+
+    def test_a_pass_sees_its_own_writes_and_the_next_pass_reads_the_file(self):
+        self.live(RECEIVER)
+        self.d.start()
+        self.send(RECEIVER, tok(1), inbox=False)
+        self.send(RECEIVER, tok(1), inbox=False)
+        self.d.step()
+        self.assertEqual(len(self.fired_to(RECEIVER)), 1, "the second row in the same pass is deduped")
+        with outbox_path(self.root).open("a", encoding="utf-8") as f:
+            f.write(json.dumps({"wake_id": "wk_" + "1" * 16, "dedupe_key": tok(2) + ":" + RECEIVER + ":send",
+                                "target": RECEIVER, "reason": "send", "token": tok(2), "from": None, "stamp": {},
+                                "route": "channel", "attempt": 1, "result": "fired", "why": "channel",
+                                "alerted": False, "ts": iso(self.now)}) + "\n")
+        self.send(RECEIVER, tok(2), inbox=False)
+        self.d.step()
+        self.assertEqual(len(self.fired_to(RECEIVER)), 1, "a row written between passes is read by the next")
+
+
+class TheReplayAndBadTimes(Case):
+    def test_fired_rows_whose_time_cannot_be_read_never_fill_a_budget(self):
+        self.live(RECEIVER)
+        outbox_path(self.root).parent.mkdir(parents=True, exist_ok=True)
+        with outbox_path(self.root).open("a", encoding="utf-8") as f:
+            for n in range(LIMITS["per_pair_per_hour"]):
+                f.write(json.dumps(settled_row(n + 100, result="fired", reason="reply", sender=SENDER,
+                                               ts="not a time")) + "\n")
+        self.d.start()
+        self.send(RECEIVER, tok(1), sender=SENDER, inbox=False)
+        self.d.step()
+        self.assertEqual([p["token"] for _, p in self.fired_to(RECEIVER)], [tok(1)],
+                         "an unreadable time is long past, so it is outside every hour")
+
+    def test_the_same_refusal_is_written_and_alerted_again_after_an_hour(self):
+        self.live(RECEIVER)
+        set_hold(self.root, RECEIVER, until=iso(self.now + timedelta(hours=3)), by="person")
+        self.send(RECEIVER, tok(1))
+        self.d.start()
+        self.d.step()
+        key = tok(1) + ":" + RECEIVER + ":send"
+        self.assertEqual(len([r for r in self.rows_for(key) if r["result"] == "refused"]), 1)
+        self.assertEqual(len(self.routes.alerts), 1)
+        self.advance(1800, pulse=[RECEIVER])
+        self.dispatcher().start()  # catch-up meets the pending send again, within the hour
+        self.assertEqual(len([r for r in self.rows_for(key) if r["result"] == "refused"]), 1)
+        self.assertEqual(len(self.routes.alerts), 1)
+        self.advance(1900, pulse=[RECEIVER])
+        self.dispatcher().start()  # and again, more than an hour after the refusal
+        refused = [r for r in self.rows_for(key) if r["result"] == "refused"]
+        self.assertEqual(len(refused), 2)
+        self.assertTrue(refused[-1]["alerted"])
+        self.assertEqual(len(self.routes.alerts), 2)
+        feed = [json.loads(line) for line in (self.root / ".convoy" / "feed.jsonl").read_text(encoding="utf-8").splitlines()]
+        self.assertEqual(len([r for r in feed if r.get("kind") == "refuse"]), 2)
+
+    def test_a_replayed_refusal_writes_no_second_row(self):
+        self.live(RECEIVER)
+        set_hold(self.root, RECEIVER, until=iso(self.now + timedelta(hours=1)), by="person")
+        self.send(RECEIVER, tok(1), inbox=False)
+        self.d.start()
+        self.d.step()
+        cursor_path(self.root).write_text("0", encoding="utf-8")
+        again = self.dispatcher()
+        again.start()
+        again.step()
+        refused = [r for r in self.rows_for(tok(1) + ":" + RECEIVER + ":send") if r["result"] == "refused"]
+        self.assertEqual(len(refused), 1)
+        feed = [json.loads(line) for line in (self.root / ".convoy" / "feed.jsonl").read_text(encoding="utf-8").splitlines()]
+        self.assertEqual(len([r for r in feed if r.get("kind") == "refuse"]), 1)
+
+    def test_a_changed_refusal_is_written_again(self):
+        self.live(RECEIVER)
+        set_hold(self.root, RECEIVER, until=iso(self.now + timedelta(hours=1)), by="person")
+        self.send(RECEIVER, tok(1), inbox=False)
+        self.d.start()
+        self.d.step()
+        set_hold(self.root, RECEIVER, until=iso(self.now + timedelta(hours=2)), by="person")
+        self.d.dispatch(self.d._sends[tok(1)], RECEIVER, "send", tok(1))
+        refused = [r for r in self.rows_for(tok(1) + ":" + RECEIVER + ":send") if r["result"] == "refused"]
+        self.assertEqual(len(refused), 2, "a new reason is a new row")
+
+    def test_a_fired_row_whose_time_cannot_be_read_ages_at_once(self):
+        self.live(RECEIVER)
+        outbox_path(self.root).parent.mkdir(parents=True, exist_ok=True)
+        with outbox_path(self.root).open("a", encoding="utf-8") as f:
+            f.write(json.dumps({"wake_id": "wk_" + "2" * 16, "dedupe_key": tok(1) + ":" + RECEIVER + ":send",
+                                "target": RECEIVER, "reason": "send", "token": tok(1), "from": None, "stamp": {},
+                                "route": "channel", "attempt": 1, "result": "fired", "why": "channel",
+                                "alerted": False, "ts": "not a time"}) + "\n")
+        self.d.start()
+        self.d.step()
+        self.assertEqual(len(self.fired_to(RECEIVER)), 1, "refired: an unreadable time is not a fresh fire")
+        self.assertEqual(self.rows_for(tok(1) + ":" + RECEIVER + ":send")[-1]["attempt"], 2)
 
 
 class DownAndCatchUp(Case):

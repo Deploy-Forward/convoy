@@ -110,7 +110,8 @@ class NeuronActivity(unittest.TestCase):
         blob = json.dumps(card)
         self.assertNotIn("super-secret-uuid", blob)
         for n in card["neurons"]:
-            self.assertIn("hook note", n["send_command"])
+            self.assertIn(" send --to ", n["send_command"])
+            self.assertNotIn("hook note", n["send_command"])
             self.assertIn(n["session_id"], n["send_command"])
             self.assertIn("--root", n["send_command"])
 

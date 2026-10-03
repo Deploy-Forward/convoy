@@ -4,9 +4,11 @@ from unittest import mock
 from contextlib import redirect_stdout, redirect_stderr
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 from convoy.cli import main
 from convoy.convoy import bind, ensure_id, seat
 from convoy.bringup import bring_up, ensure_first_run, ensure_interactive_path, isolated_wt_argv, resume_argv, _with_claude_live_flags, _pane_seats, CONVOY_PATH_BEGIN
+from minted_helper import mark_minted
 
 
 
@@ -237,7 +239,7 @@ class Phase7FirstRun(unittest.TestCase):
 
     def test_ensure_first_run_grok_codex_identity_not_claude_settings(self):
         for to in ("grok", "codex"):
-            wt = Path(tempfile.mkdtemp())
+            wt = mark_minted(tempfile.mkdtemp())
             card = ensure_first_run({"to": to, "worktree": str(wt)})
             self.assertTrue(card.get("ok"))
             self.assertTrue(card.get("prepared"))

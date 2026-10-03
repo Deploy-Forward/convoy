@@ -14,6 +14,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+from .filelock import append_line
 from .index import home_dir
 from .report import read_origin
 from .usage import normalize_usage_remaining
@@ -99,17 +100,11 @@ def hook(root: Path, kind: str, summary: str, instance_id: str | None = None, ex
         event["device"] = _paired_device() if local_writer else None
         event["verified_by"] = method
     path = feed_path(root)
-    # ONE os-level append per row. Four neurons and a lead write this file
-    # concurrently; buffered text-mode appends tore a row in two on Windows
-    # (live 2026-09-05, feed lines 37-39). O_APPEND + a single write() is the
-    # strongest atomicity the OS offers for a small record; the reader still
-    # tolerates a tear (feed_since) so the bus never goes down on one.
-    data = (json.dumps(event, separators=(",", ":")) + "\n").encode("utf-8")
-    fd = os.open(str(path), os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o644)
-    try:
-        os.write(fd, data)
-    finally:
-        os.close(fd)
+    # ONE locked append per row (filelock.append_line). Neurons, the origin and the
+    # CLI write this file concurrently; without the lock, Windows' seek-then-write
+    # append lets one row overwrite another. The reader still tolerates a tear
+    # (feed_since) so the bus never goes down on one.
+    append_line(path, (json.dumps(event, separators=(",", ":")) + "\n").encode("utf-8"))
     return event
 
 def _blank_to_none(val: Any) -> str | None:

@@ -75,6 +75,9 @@ Check what it picked:
 convoy --root <thread-root> skills --worktree <worktree>
 ```
 
+In a worktree Convoy did not mint, `skills` refreshes only the Convoy-named
+files; add `--write-repo-files` for `AGENTS.md` and `.codex/hooks.json`.
+
 The card's `hooks.resolved_via` is one of `console-script` (the installed
 `convoy` is on PATH — the best case), `interpreter` (this Python can
 `-m convoy`), `interpreter+src` (no install: the command carries the
@@ -92,6 +95,7 @@ One line per verb; flags shown are the ones you will reach for (see
 
 Read (no writes to thread state):
 
+- `list [--json] [--all] [--since <window>]` — deterministic numbered thread blocks and full neuron rows. Default: present threads updated/active within 14 days. Temp and absent roots are always named as skipped, never removed. `--all` includes hidden/older usable roots with reasons. Unknown fields stay unknown; detached is not dead. The read-only MCP `list` exposes the same card to authenticated callers, not the anonymous product edge.
 - `threads [--prune]` — every Convoy thread this machine knows. `--prune` drops rows whose root is under the OS temp dir or is absent and reports every dropped row (never silent).
 - `panes` — every body of every neuron on this thread, from the OS process table; never a token.
 - `whoami` — which chair is this process? Walks process ancestry to the harness.
@@ -112,8 +116,13 @@ Write (thread state):
 
 - `init` — create the thread layer at `--root`.
 - `bind --thread <name>` — bind this root to a named thread.
-- `start [<repo>] [--to <harness> ...] [--thread <name>] [--cancel]` — thin alias: git URL → clone once then `onboard --github yes`; local path → `onboard --github no`; no repo → picker from `recent()` (title + root + last activity, never auto-picks newest); empty index → ask to start a new thread; `--cancel` leaves unbound. Already-live harness on the root (whoami/roster) → `attach`, never a duplicate `bring_up`.
-- Outside-harness join: a session started in no worktree runs `whoami` (chair null, an ask), `threads`, `start` (picker, never auto-picks), then `attach` + `join --to <harness>` on the chosen root and receives queued sends without stealing a pane. `docs/OUTSIDE_HARNESS_JOIN.md`.
+- `start [<target>] [--to <harness> ...] [--thread <name>] [--cancel]` — resolve an existing local path without network access; a git URL or `owner/repo` reuses a checkout by normalized remote identity before cloning; a bare name searches indexed/local repos and the authenticated GitHub user's and organizations' repositories. Only exact case-insensitive repository names or folder basenames can resolve automatically; fuzzy suggestions return a numbered picker. Among complete same-remote matches, prefer an indexed thread root (latest indexed update), then a unique main checkout. Otherwise ask, with main checkouts first and linked worktrees collapsed to a count; `--all` expands them. No match asks local folder versus GitHub creation, unless discovery failed (unknown, never absence). Only explicit `--create` creates a private GitHub repo. Missing/logged-out `gh` stays local; an exact local match also works offline without refresh. `--search-root <dir>` repeats and scans one level deep, excluding Convoy state folders except the owned checkout store; `--scan-budget <seconds>` defaults to 5 and includes local candidate dates. Incomplete scans carry warnings and never auto-resolve. Ordinary remotes use config file reads, including shared worktree configs and once-per-resolution global insteadOf rules; conditional includes/overrides fall back to bounded Git reads. GitHub candidate date metadata comes from the single listing's `updatedAt` (marked as that source, not a commit timestamp). Cloud-backed checkouts fetch non-interactively and fast-forward only if clean, behind, and without local commits or ignored/untracked files that would be overwritten; dirty/ahead/diverged/detached work is kept, never stashed, reset, rebased or merged. Fetch and ls-remote alone disable interactive credentials; clone/worktree keep their existing policy. Helper timeouts terminate their process trees without waiting on inherited output pipes. No target returns the existing thread picker. No pane launches. Repo writes stay under `.convoy/` unless `--write-repo-files`; cards include the resolution and `pulled` outcome, with credentials redacted and non-secret Convoy receipt tokens retained.
+
+The ignored-file guard checks incoming paths immediately before fast-forward. An ignored file created concurrently after that check can still be overwritten by Git; this remaining race is not an atomic preservation guarantee. No stash/reset or implicit file deletion is used.
+
+An indexed thread root outranks the main checkout only when its known index update is within 14 days. Older, future or unknown dates do not prove freshness. When only linked worktrees match, the picker shows their actual numbered rows, newest first, rather than an empty collapsed list. Refresh performs one non-interactive fetch followed by local `git merge --ff-only @{upstream}`; it never creates a merge commit or performs a second network round trip through `pull`.
+- `attach [<cvy_id>|<exact thread name>] [--as-harness H]` — link the calling native session to the chosen thread using the same process/native identity proof as `whoami`. Pick numbers are display-only: pass the block's `cvy_` id. No choice prints the list and refuses to guess; unavailable/conflicting identity refuses without creating a chair. One native session belongs to one thread: detach before switching. Repeating returns `already: true` and per-chair catch-up; a bare local self-join reuses the chair. Explicit names, titles, other worktrees and `join --launch` still provision a new neuron. An unavailable non-temp indexed root makes ownership unknown and refuses; temp roots remain in the index but are excluded from attachment, with reasons in `ownership_skipped`. No pane or vendor usage probe is launched by attach. `--as-harness` asserts, never overrides, the proven harness. Legacy catch-up-only callers use `attach [<cvy_id>] --read-only` (still records an attach event, but never seats the caller).
+- `detach [--thread <cvy_id|name>]` — prove the calling chair, write its rolling handoff and append detached state. No history deletion, pane close or session kill. Pending rows remain on disk but cannot wake the detached chair; sends refuse `detached; attach again`. Attach reactivates the same proven chair.
 - `onboard --to <harness> [--to ...] [--thread <name>] [--checkout-root <path|git-url>] [--github yes|no]` — name installed harnesses and bind; a URL is cloned once under `$CONVOY_HOME/checkouts/<owner>/<repo>` (`.convoy/` and `thread.md` go into that clone's `.git/info/exclude`). Whoever launched first conducts: the first harness named on the first onboard becomes `lead`; a later onboard reports it and never steals it.
 - `seat --to <harness> --session-id <chair> [--worktree <path>] [--model M] [--resume <vendor-id>] [--title T] [--effort E]` — register a seated neuron.
 - `join --to <harness> [--worktree <path>] [--title T] [--as <chair>] [--launch] [--consent <id>]` — register one fresh chair.
@@ -172,6 +181,25 @@ verbs a live `tools/list` is missing and why.
 Your Convoy server is bound to the root you start it with; a different thread
 means a call that names it, or a server with its own `--root`.
 
+## Wake service
+
+Wake dispatch is off for a root until `convoy --root <root> wake enable`.
+Read `convoy --root <root> wake status` for enabled state, routes, faults and
+held alerts; `convoy --root <root> wake disable` opts that root out without
+restarting the origin. The supervised MCP origin runs one dispatcher per enabled
+root under an OS lock.
+
+The waiter route is dispatcher-managed. A session starts its own background
+waiter using the command printed by its Stop hook; it receives a token pointer,
+drains only its proven inbox, answers with a token-citing receipt and re-arms.
+A detached waiter started by a hook is not a session wake. Do not run legacy
+inbox polling alongside the enabled waiter protocol or infer delivery from a
+queued/fired card.
+
+A detached chair retains history, handoff and pending rows but cannot drain,
+pulse or wake; new sends refuse until the same proven session attaches again.
+Detach does not close its pane or terminate its harness.
+
 ## Names you will see
 
 - **Grok Bot** — the xAI desktop conductor chat that attaches the MCP; not a neuron.
@@ -218,15 +246,37 @@ for it to drift from the code: none.
 (`convoy install --to`); `hermes` and `pi` are BYO-only (`install` refuses them)
 and their direct-id resume is unverified.
 
+Where a first run writes: in a worktree Convoy minted (`.convoy/minted.json`,
+written by `crew` / `mint` when they create it, naming that worktree and its
+checkout) every file in the table goes in. Anywhere else, often your own repo, a
+launch and `skills` write only the Convoy-named files git excludes
+(`.claude/settings.local.json`, the `convoy-root` pointers,
+`.grok/hooks/convoy-inbox.json`, the convoy-end copies, and for a launch of a
+grok seat the grok agent). `AGENTS.md` and `.codex/hooks.json` are written there
+only after an opt-in: `--write-repo-files` on the CLI, `write_repo_files: true`
+on MCP `bring_up` / `open` / `launch` / `crew` behind the write gate (never on a
+dry run: a dry `bring-up` / `open` / `relaunch` on the CLI, or a dry MCP
+`bring_up` / `open`, refuses it and writes nothing). The opt-in is kept, bound to that folder and kept out
+of git, in `.convoy/repo-files.json`, so later launches there refresh them.
+Withdraw it with `convoy --root <root> skills --worktree <worktree>
+--no-write-repo-files`; the files already written stay, and are yours to keep or
+delete. Until
+then the card lists what is missing on disk as `would_write`, and a Codex seat
+without Convoy's hook cannot receive; the note names the route that works where
+it is read. A `.claude/settings.local.json` that git tracks is never written.
+The card names each home trust store a launch wrote (`trust_stores_written`).
+`start` and `onboard` write nothing outside `.convoy/` without the flag;
+`terminals` writes nothing.
+
 | Harness | `onboard` / `roster` id | `resume_argv` shape | `ensure_first_run` behavior | `send --live` behavior |
 | --- | --- | --- | --- | --- |
-| `grok` | `grok` | `grok -m <model?> --agent <path?> --resume <vendor-id?>` | Writes PATH ungate block; writes the `AGENTS.md` plugin-skills pointer; writes Convoy-owned `--agent` file; writes project PreToolUse hook (`convoy inbox --hook-pretooluse`). | Native CLI on PATH. Named live seats queue (`delivery: queued`); never steals `--resume`. |
-| `claude` | `claude` | `claude --resume <vendor-id?>` | Writes PATH ungate block; writes the `AGENTS.md` plugin-skills pointer; writes `.claude/settings.local.json` (inbox hooks + Stop heartbeat + auto-compact; no permission keys), merges user `~/.claude/settings.json` skip key, and writes `~/.claude.json` trust project keys. | Native CLI on PATH. Named live seats queue (`delivery: queued`); never steals `--resume`. |
-| `codex` | `codex` | `codex resume <vendor-id?>` (**not** `--resume`) | Writes PATH ungate block; writes the `AGENTS.md` plugin-skills pointer, `.agents/skills/convoy-end`, and project `.codex/hooks.json` Stop heartbeat. No Claude permission-ungate writes. | Native CLI on PATH. Named live seats queue; may `codex queue` (`delivery: native-queued`). |
-| `cursor-agent` | `cursor-agent` | `cursor-agent --resume <vendor-id?>` | Writes PATH ungate block; writes the `AGENTS.md` plugin-skills pointer; writes Grok/Claude inbox hook files (swap-safe). Drain via `convoy inbox --drain` (no vendor hook proven). | Native CLI on PATH. Named live seats queue (`delivery: queued`); never steals `--resume`. |
-| `agy` | `agy` | `agy --conversation <vendor-id?>` (live `--help` 2026-09-01: no `--resume`) | Writes PATH ungate block; writes the `AGENTS.md` plugin-skills pointer; inbox hook files as above. | Native CLI on PATH. Named live seats queue (`delivery: queued`); never steals `--resume`. |
-| `hermes` | `hermes` | `hermes --resume <vendor-id?>` (live `--help` 2026-09-01) | Writes PATH ungate block; writes the `AGENTS.md` plugin-skills pointer; inbox hook files as above. | Native CLI on PATH. Named live seats queue (`delivery: queued`); never steals `--resume`. |
-| `pi` | `pi` | `pi --resume <vendor-id?>` (flag verified live; `--resume` opens a session picker — direct-id resume unverified) | Writes PATH ungate block; writes the `AGENTS.md` plugin-skills pointer; inbox hook files as above. | Native CLI on PATH. Named live seats queue (`delivery: queued`); never steals `--resume`. |
+| `grok` | `grok` | `grok -m <model?> --agent <path?> --resume <vendor-id?>` | Writes PATH ungate block; writes the `AGENTS.md` plugin-skills pointer (minted worktree, or `--write-repo-files`); writes Convoy-owned `--agent` file; writes project PreToolUse hook (`convoy inbox --hook-pretooluse`). | Native CLI on PATH. Named live seats queue (`delivery: queued`); never steals `--resume`. |
+| `claude` | `claude` | `claude --resume <vendor-id?>` | Writes PATH ungate block; writes the `AGENTS.md` plugin-skills pointer (minted worktree, or `--write-repo-files`); writes `.claude/settings.local.json` (inbox hooks + Stop heartbeat + auto-compact; no permission keys), merges user `~/.claude/settings.json` skip key, and writes `~/.claude.json` trust project keys. | Native CLI on PATH. Named live seats queue (`delivery: queued`); never steals `--resume`. |
+| `codex` | `codex` | `codex resume <vendor-id?>` (**not** `--resume`) | Writes PATH ungate block; writes `.agents/skills/convoy-end`; writes the `AGENTS.md` plugin-skills pointer and project `.codex/hooks.json` Stop heartbeat (minted worktree, or `--write-repo-files`; in a real repo without them a Codex seat cannot receive). No Claude permission-ungate writes. | Native CLI on PATH. Named live seats queue; may `codex queue` (`delivery: native-queued`). |
+| `cursor-agent` | `cursor-agent` | `cursor-agent --resume <vendor-id?>` | Writes PATH ungate block; writes the `AGENTS.md` plugin-skills pointer (minted worktree, or `--write-repo-files`); writes Grok/Claude inbox hook files (swap-safe). Drain via `convoy inbox --drain` (no vendor hook proven). | Native CLI on PATH. Named live seats queue (`delivery: queued`); never steals `--resume`. |
+| `agy` | `agy` | `agy --conversation <vendor-id?>` (live `--help` 2026-09-01: no `--resume`) | Writes PATH ungate block; writes the `AGENTS.md` plugin-skills pointer (minted worktree, or `--write-repo-files`); inbox hook files as above. | Native CLI on PATH. Named live seats queue (`delivery: queued`); never steals `--resume`. |
+| `hermes` | `hermes` | `hermes --resume <vendor-id?>` (live `--help` 2026-09-01) | Writes PATH ungate block; writes the `AGENTS.md` plugin-skills pointer (minted worktree, or `--write-repo-files`); inbox hook files as above. | Native CLI on PATH. Named live seats queue (`delivery: queued`); never steals `--resume`. |
+| `pi` | `pi` | `pi --resume <vendor-id?>` (flag verified live; `--resume` opens a session picker — direct-id resume unverified) | Writes PATH ungate block; writes the `AGENTS.md` plugin-skills pointer (minted worktree, or `--write-repo-files`); inbox hook files as above. | Native CLI on PATH. Named live seats queue (`delivery: queued`); never steals `--resume`. |
 
 Notes tied to code/tests:
 

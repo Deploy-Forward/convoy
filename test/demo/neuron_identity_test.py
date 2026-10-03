@@ -7,11 +7,13 @@ from pathlib import Path
 from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from convoy.bringup import ensure_first_run
 from convoy.context import pack, stdin_for
 from convoy.identity import GROK_AGENT_RELATIVE, SKILL_BEGIN, ensure_grok_agent, install_neuron_identity
 from convoy.onboard import onboard
+from minted_helper import mark_minted
 
 RETIRED = ("neuron-identity", "neuron-receive")
 HARNESSES = ("grok", "claude", "codex", "cursor-agent", "agy", "hermes", "pi")
@@ -99,6 +101,7 @@ class NeuronIdentity(unittest.TestCase):
         self.assertIn("cloud-prove", msg)
 
     def test_first_run_claude_still_writes_settings_and_identity(self):
+        mark_minted(self.wt)
         card = ensure_first_run({"to": "claude", "worktree": str(self.wt)})
         self.assertTrue(card.get("ok"))
         self.assertTrue(card.get("wrote"))
@@ -117,6 +120,7 @@ class NeuronIdentity(unittest.TestCase):
                 self.assertEqual(card.get("identity_removed"), [])
 
     def test_first_run_removes_only_convoys_own_retired_copies(self):
+        mark_minted(self.wt)
         ours = []
         for d in (".claude", ".grok"):
             for name in RETIRED:

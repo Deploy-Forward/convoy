@@ -133,7 +133,7 @@ class Phase7Attach(unittest.TestCase):
     def test_attach_unknown_id_mismatch_no_seats(self):
         _run(self.root, "init")
         seat(self.root, "grok", "sess-grok", worktree=str(self.wt_g))
-        rc, d = _run(self.root, "attach", "cvy_not_this_convoy")
+        rc, d = _run(self.root, "attach", "cvy_not_this_convoy", "--read-only")
         self.assertNotEqual(rc, 0)
         self.assertFalse(d["ok"])
         self.assertEqual(d["error"], "convoy_id mismatch")
@@ -152,7 +152,7 @@ class Phase7Attach(unittest.TestCase):
         seat(self.root, "claude", "sess-claude", worktree=str(self.wt_c))
         # The CLI takes no probe_fn, and the real probe runs `claude -p /usage` on the operator's account.
         with mock.patch("convoy.convoy.probe", side_effect=lambda _to: {"usage_remaining": None, "limited": False, "raw": None}):
-            rc, d = _run(self.root, "attach")
+            rc, d = _run(self.root, "attach", "--read-only")
         self.assertEqual(rc, 0)
         self.assertTrue(d["ok"])
         self.assertEqual(d["convoy_id"], cid)
@@ -252,7 +252,7 @@ class Phase7Attach(unittest.TestCase):
         self.assertEqual(packed["thread"], str(md.resolve()))
         self.assertNotEqual(packed["thread"], md_text)
         self.assertNotIn(key, packed["thread"])
-        rc, att = _run(self.root, "attach")
+        rc, att = _run(self.root, "attach", "--read-only")
         self.assertEqual(rc, 0)
         self.assertEqual(att["thread"], key)
         self.assertEqual(att["pointers"]["thread"], str(md.resolve()))
@@ -273,7 +273,7 @@ class Phase7Attach(unittest.TestCase):
 
     def test_first_attach_hooks_since_null_feed_empty(self):
         _run(self.root, "init")
-        rc, d = _run(self.root, "attach")
+        rc, d = _run(self.root, "attach", "--read-only")
         self.assertEqual(rc, 0)
         self.assertTrue(d["ok"])
         self.assertIsNone(d["since"])
@@ -288,11 +288,11 @@ class Phase7Attach(unittest.TestCase):
 
     def test_second_attach_since_and_feed(self):
         _run(self.root, "init")
-        rc1, a1 = _run(self.root, "attach")
+        rc1, a1 = _run(self.root, "attach", "--read-only")
         self.assertEqual(rc1, 0)
         first_ts = a1["ts"]
         time.sleep(0.002)
-        rc2, a2 = _run(self.root, "attach")
+        rc2, a2 = _run(self.root, "attach", "--read-only")
         self.assertEqual(rc2, 0)
         self.assertEqual(a2["since"], first_ts)
         self.assertGreater(a2["ts"], first_ts)
@@ -303,11 +303,11 @@ class Phase7Attach(unittest.TestCase):
 
     def test_mismatch_attach_does_not_stamp(self):
         _run(self.root, "init")
-        rc, first = _run(self.root, "attach")
+        rc, first = _run(self.root, "attach", "--read-only")
         self.assertEqual(rc, 0)
         before = [r for r in feed_since(self.root, "1970-01-01T00:00:00.000000Z") if r.get("kind") == "attach"]
         n = len(before)
-        rc2, d = _run(self.root, "attach", "cvy_not_this_convoy")
+        rc2, d = _run(self.root, "attach", "cvy_not_this_convoy", "--read-only")
         self.assertNotEqual(rc2, 0)
         self.assertFalse(d["ok"])
         after = [r for r in feed_since(self.root, "1970-01-01T00:00:00.000000Z") if r.get("kind") == "attach"]

@@ -8,7 +8,10 @@ chair's pulses each time it is asked, so a row can never claim a liveness it no 
 Reachability reads the pulses by source (pulse.py). A channel route needs the channel's own pulse:
 a session that is alive but whose channel is not loaded, or whose channel stopped, is degraded, not
 live. Every other local route needs any fresh pulse. A board webhook is woken by the board, so it is
-live until a fault says otherwise.
+live until a fault says otherwise. On a root with wakes enabled, a waiter route is live only while
+the session's own waiter is armed (wait.py): the Stop hook's waiter also pulses, but its exit wakes
+nobody. Without one the route is degraded, not down, because the pointer waits in the chair's
+folder and the next waiter the session arms exits on it at once.
 
 A fault is recorded, never inferred: `record_fault` names it (a queue too old or not running, a
 harness out of credits, a parked board subscription, a wake dropped unread), with its reason, when it
@@ -25,7 +28,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from .filelock import append_line
 from .pulse import PULSE_SOURCES, pulse_age_seconds, read_pulse_by_source
+from .wait import session_waiter_armed
+from .wake_local import is_enabled
 
 ROUTES = ("channel", "codex-queue", "board-webhook", "waiter", "none")
 # The references each route may carry. Anything else is refused, so a secret cannot ride in.
@@ -74,8 +80,7 @@ def wake_routes_path(root: Path | str) -> Path:
 def _append(root: Path | str, row: dict[str, Any]) -> dict[str, Any]:
     path = wake_routes_path(root)
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("a", encoding="utf-8") as f:
-        f.write(json.dumps(row, separators=(",", ":")) + "\n")
+    append_line(path, (json.dumps(row, separators=(",", ":")) + "\n").encode("utf-8"))
     return row
 
 
@@ -179,8 +184,19 @@ def mark_verified(root: Path | str, chair: str, *, ts: str | None = None) -> dic
     return _append(root, row)
 
 
+def chair_detached(root: Path | str, chair: str) -> bool:
+    """True when the chair's seat is detached (`convoy detach`): the session works elsewhere, and its
+    rows wait for it to attach again. Nothing wakes a detached chair, by any route."""
+    from .convoy import list_seats  # at call time: convoy is heavier than this module's readers need
+    try:
+        return any(s.get("session_id") == chair and s.get("detached") for s in list_seats(root))
+    except (OSError, ValueError):
+        return False
+
+
 def reachability_detail(root: Path | str, chair: str, *, now: str | None = None) -> dict[str, Any]:
-    """{reachable: live | degraded | down | None, reason, route}. None is unknown: no route."""
+    """{reachable: live | degraded | down | detached | None, reason, route}. None is unknown: no
+    route. detached: the session detached from this chair, so no route wakes it until it attaches."""
     route = read_route(root, chair)
     if route is None:
         return {"reachable": None, "reason": "no wake route registered", "route": None}
@@ -188,6 +204,9 @@ def reachability_detail(root: Path | str, chair: str, *, now: str | None = None)
 
     def answer(state: str, reason: str) -> dict[str, Any]:
         return {"reachable": state, "reason": reason, "route": kind}
+
+    if chair_detached(root, chair):
+        return answer("detached", "the chair is detached; attach again to be woken")
 
     if kind == "none":
         return answer("down", "the route is none")
@@ -220,6 +239,11 @@ def _from_pulses(root: Path | str, chair: str, kind: str, now: str | None) -> tu
                           + " but the channel never has")
         return ("degraded", "channel stopped: its pulse is stale beside a live session ("
                       + ", ".join(fresh) + ")")
+    if kind == "waiter" and is_enabled(root):
+        if session_waiter_armed(root, chair, now=now):
+            return ("live", "the session's own waiter is armed")
+        return ("degraded", "waiter not armed: the session pulses from " + ", ".join(fresh)
+                + " but runs no waiter of its own; a wake waits in its folder until it arms one")
     return ("live", "a pulse from " + ", ".join(fresh) + " within " + str(REACH_FRESH_SEC) + " s")
 
 

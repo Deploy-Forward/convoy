@@ -159,8 +159,16 @@ def list_threads() -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     for r in _load():
         root = Path(str(r.get("root") or ""))
-        present = bool(r.get("root")) and _disk_id(root) == r.get("convoy_id")
-        skip_reason = ("root gone" if not present else
+        read_error = None
+        exists = False
+        try:
+            exists = bool(r.get("root")) and root.exists()
+            present = exists and _disk_id(root) == r.get("convoy_id")
+        except OSError as exc:
+            present, read_error = None, type(exc).__name__
+        skip_reason = ("unreadable: " + read_error if read_error else
+                       "id changed" if exists and not present else
+                       "root gone" if not present else
                        "temp" if is_temp_root(root) else
                        "hidden" if r.get("hidden") else None)
         out.append({**{k: r.get(k) for k in FIELDS}, "present": present,
@@ -199,7 +207,7 @@ def recent(limit: int) -> list[dict[str, Any]]:
     return discoverable_threads()[:n]
 
 
-def _prune_reason(raw: object) -> str | None:
+def _prune_reason(raw: object, convoy_id: str | None = None) -> str | None:
     text = str(raw or "").strip()
     if not text:
         return "absent"
@@ -207,23 +215,28 @@ def _prune_reason(raw: object) -> str | None:
     try:
         exists = root.exists()
     except OSError:
-        return "absent"
+        return None  # Unknown is not evidence that the root is gone.
     if not exists:
         return "absent"
     if is_temp_root(root):
         return "temp"
+    try:
+        if convoy_id is not None and _disk_id(root) != convoy_id:
+            return "id changed"
+    except OSError:
+        return None
     return None
 
 
 def prune_threads() -> dict[str, Any]:
-    """Drop rows whose root is under the OS temp dir or is absent. Always
+    """Explicitly drop absent, Temp or changed-id rows. Always
     reports what was dropped (empty list if nothing matched). list_threads
     itself stays honest: present=false is only removed here, never silently."""
     rows = _load()
     kept: list[dict[str, Any]] = []
     dropped: list[dict[str, Any]] = []
     for r in rows:
-        reason = _prune_reason(r.get("root"))
+        reason = _prune_reason(r.get("root"), r.get("convoy_id"))
         if reason:
             dropped.append({**{k: r.get(k) for k in FIELDS}, "reason": reason})
         else:

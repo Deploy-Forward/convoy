@@ -158,10 +158,14 @@ class ThreadIndex(unittest.TestCase):
         self.assertIsNone(find_root(Path(tempfile.mkdtemp())))
 
     def test_cli_threads_keeps_temp_history_but_graph_needs_an_explicit_temp_root(self):
-        ensure_id(self.root)
+        # Deliberately collide with the excluded thread's short name in a
+        # path: membership must not be inferred from arbitrary HTML bytes.
+        self.root = self.root / "synthetic-t2-root"
+        self.root.mkdir()
+        cid = ensure_id(self.root)
         bind(self.root, "t1")
         other = Path(tempfile.mkdtemp())
-        ensure_id(other)
+        other_cid = ensure_id(other)
         bind(other, "t2")
         rc, card = _run_cli(self.root, "threads")
         self.assertEqual(rc, 0)
@@ -169,16 +173,23 @@ class ThreadIndex(unittest.TestCase):
         self.assertEqual({r["thread"]: r.get("skip_reason") for r in card["threads"]},
                          {"t1": "temp", "t2": "temp"})
         out = self.root / "g.html"
+
+        def rendered_threads():
+            html = out.read_text(encoding="utf-8")
+            self.assertIn("var DATA=", html)
+            data, _ = json.JSONDecoder().raw_decode(html.split("var DATA=", 1)[1])
+            return {(row["graph"]["convoy_id"], row["graph"]["thread"], row["root"]) for row in data}
+
         rc, card = _run_cli(self.root, "graph", "--html", "--out", str(out))
         self.assertEqual(rc, 0)
         self.assertEqual(card["threads"], 1)
         self.assertTrue(any(r["root"] == str(other) and r["reason"] == "temp"
                             for r in card["skipped"]))
-        self.assertNotIn("t2", out.read_text(encoding="utf-8"))
+        self.assertEqual(rendered_threads(), {(cid, "t1", str(self.root))})
         rc, card = _run_cli(self.root, "graph", "--html", "--also-root", str(other), "--out", str(out))
         self.assertEqual(rc, 0)
         self.assertEqual(card["threads"], 2, "explicit --also-root must keep working under Temp")
-        self.assertIn("t2", out.read_text(encoding="utf-8"))
+        self.assertEqual(rendered_threads(), {(cid, "t1", str(self.root)), (other_cid, "t2", str(other))})
 
     def _durable_root(self):
         """A present root that is NOT under the OS temp dir, so prune keeps it."""

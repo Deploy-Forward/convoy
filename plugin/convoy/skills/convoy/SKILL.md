@@ -34,11 +34,25 @@ thread orchestration through Convoy MCP.
 
 ## `/convoy --start` (CLI, not MCP)
 
-`convoy start [<repo>]` is a thin CLI alias: git URL → clone once + onboard
-`--github yes`; local path → onboard `--github no`; no repo → picker from
-`recent()` (never auto-pick newest); empty → new-thread ask; cancel → unbound.
-Already-live harness on the root → `attach`, never a duplicate `bring_up`.
-It is not an MCP tool; a marketplace install uses the wizard sequence above.
+CLI resolution accepts a path, URL, owner/repo or name, reusing a matching checkout before cloning. `convoy start` with no target returns a picker; never auto-pick newest. Use `--search-root`, `--all` and `--create` only for their documented discovery/creation modes. Clean behind-only refresh is one fetch plus a local fast-forward-only merge; inspect `pulled`. Offline/incomplete discovery remains unknown. Read the returned start card's pointers. Start opens no pane and does not seat this session.
+
+## Delivery and home writes
+
+Use `send`, never a plain addressed `hook note`, to queue work to a neuron. Cards report `recorded`, `queued`, `native-queued`, `executed`, `refused` or `error`; none is proof of delivery. Only the target's proven token-citing receipt counts. `hook note ... --as-me --to <sender>` is for receipts and reports.
+
+First run can prepare the thread index, `~/.bashrc`, `~/.claude/settings.json`, `~/.claude.json` and the Codex prompt at `~/.codex/prompts/convoy.md` (or `CODEX_HOME/prompts/convoy.md`). A live launch can also prepare harness-specific hook trust stores named by its card. Dry-run refuses the repo-file opt-in but is not universally read-only.
+
+## List, attach and detach
+
+Run `convoy list` and show its output verbatim, including skipped roots and unknown values. Default lists usable recent threads; `--all` includes hidden/older usable threads. Never delete skipped roots automatically.
+
+For the person's chosen block, run `convoy attach <cvy_id|exact thread name>`. Map display pick numbers to the block's exact `cvy_` id; never pass a number. Attach proves this running native session, launches nothing, refuses unavailable/conflicting identity and reuses its chair on repeat. Detach before switching threads. Legacy pointer-only catch-up uses `attach --read-only`.
+
+Run `convoy detach [--thread <cvy_id|name>]` to detach the proven calling session. Its rolling handoff, chair, history and pending rows remain. It closes no pane and kills no session. Detached chairs cannot drain/pulse or wake; sends refuse until attach reactivates them.
+
+## Wake service
+
+Wake dispatch is off on a root until `convoy --root <root> wake enable`. Inspect it with `wake status` and opt out with `wake disable`. The supervised MCP origin runs the dispatcher for enabled roots. Its waiter route is dispatcher-managed: the session arms its own background waiter using the command the Stop hook prints, drains its own inbox on wake, acts, writes a proven token-citing receipt and re-arms before stopping. A hook-owned detached waiter cannot wake the session. Unknown routes, faults and held alerts are not delivery proof.
 
 ## Preferred operator flow
 

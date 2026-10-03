@@ -16,7 +16,9 @@ older `neuron-identity` and `neuron-receive` skills are retired (2026-09-28).
 
 At first run (`ensure_first_run`), `identity.install_neuron_identity` writes
 an `AGENTS.md` pointer block naming the three plugin skills and removes any
-retired `neuron-identity` / `neuron-receive` copy Convoy wrote before. It still
+retired `neuron-identity` / `neuron-receive` copy Convoy wrote before. It does
+both only in a worktree Convoy minted, or with `--write-repo-files`; in the
+person's own repo it leaves them alone. It always
 copies `convoy-end` to the places each harness reads:
 
 | Harness | Where it lands | Auto-load verified? |
@@ -24,7 +26,7 @@ copies `convoy-end` to the places each harness reads:
 | `claude` | `<worktree>/.claude/skills/convoy-end/SKILL.md` | n/a (native skills dir, not AGENTS.md) |
 | `grok` | `<worktree>/.grok/skills/convoy-end/SKILL.md` | n/a (native skills dir, not AGENTS.md) |
 | `codex` | `<worktree>/.agents/skills/convoy-end/SKILL.md` | n/a (native skills dir, not AGENTS.md) |
-| all | `<worktree>/AGENTS.md` pointer to the plugin skills | `codex`: yes. `cursor-agent`: unverified. `agy`, `hermes`, `pi`: unverified. |
+| all | `<worktree>/AGENTS.md` pointer to the plugin skills (minted worktree, or `--write-repo-files`) | `codex`: yes. `cursor-agent`: unverified. `agy`, `hermes`, `pi`: unverified. |
 
 ## Canonical vs packaged copies
 

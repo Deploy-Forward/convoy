@@ -179,7 +179,7 @@ class OutsideHarnessJoin(unittest.TestCase):
             self.assertIsNone(self.run_cli("id", root=self.foreign).get("convoy_id"), "picking wrote nothing to the foreign cwd")
 
             # 3 ATTACH the chosen root, then join a codex chair: prompt + token, no spawn.
-            at = self.run_cli("attach", root=self.root)
+            at = self.run_cli("attach", "--read-only", root=self.root)
             self.assertTrue(at["ok"]); self.assertEqual(at["convoy_id"], ob["convoy_id"]); self.assertEqual(at["thread"], "demo")
             jn = self.run_cli("join", "--to", "codex", root=self.root)
             self.assertTrue(jn["ok"], jn)

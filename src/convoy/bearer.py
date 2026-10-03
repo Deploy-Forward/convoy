@@ -28,6 +28,7 @@ from pathlib import Path
 from typing import Any
 
 from .convoy import CONDUCTOR
+from .filelock import append_line
 
 PREFIX = "cvb_"
 FILE = "conductors.jsonl"
@@ -65,10 +66,7 @@ def _rows() -> list[dict[str, Any]]:
 
 
 def _append(row: dict[str, Any]) -> None:
-    p = conductors_path()
-    p.parent.mkdir(parents=True, exist_ok=True)
-    with p.open("a", encoding="utf-8") as f:
-        f.write(json.dumps(row, separators=(",", ":")) + "\n")
+    append_line(conductors_path(), (json.dumps(row, separators=(",", ":")) + "\n").encode("utf-8"))
 
 
 def _state() -> dict[str, dict[str, Any]]:

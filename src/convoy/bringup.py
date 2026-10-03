@@ -25,7 +25,11 @@ never the tracked settings file. ~/.claude.json gets
 projects[worktree].hasTrustDialogAccepted=true for both slash spellings. Never
 write ~/.claude if worktree IS the home dir. Grok/codex: no Claude settings write.
 write_repo_files=False (start on a repo root) writes nothing into the worktree
-and lists what it would write as would_write. Not a user paste.
+and lists what it would write as would_write. A launch (write_repo_files=None)
+writes every file only into a worktree Convoy minted (repo.is_minted_worktree);
+in the person's repo it writes only the Convoy-named files git excludes, and
+lists AGENTS.md and .codex/hooks.json as would_write until --write-repo-files.
+Not a user paste.
 Not a TUI guide. Persona is role.md.
 
 Hypothesis: Claude Code accepts the same `--resume` flag as grok (native resume).
@@ -442,6 +446,36 @@ def _convoy_named(rel: str) -> bool:
     return "convoy" in rel.lower() or rel == ".claude/settings.local.json"
 
 
+# The one card line for a Codex neuron in the person's repo: its hooks file is the person's to allow.
+# The route is the one that works where the card is read: the CLI flag, the MCP field behind the
+# write gate, or, on a surface with neither (the widget, the ungated wire), a command to ask for.
+CODEX_OPT_IN_NOTE = "codex: cannot receive here yet; inbox hook not written: "
+OPT_IN_ROUTES = {
+    "cli": "opt in with --write-repo-files",
+    "mcp": "opt in with write_repo_files=true",
+    "ask": "ask the person to run convoy --root {root} skills --worktree {worktree} --write-repo-files",
+}
+TRACKED_SETTINGS_NOTE = (".claude/settings.local.json is tracked in git; Convoy did not write its hooks "
+                         "or auto-compact there")
+
+
+def dry_opt_in_refusal(verb: str, *, cli: bool = False) -> str:
+    """Refuse the person-ownable repo-file opt-in on a dry launch, before those writes.
+
+    A dry launch without that opt-in still prepares first-run home and Convoy files:
+    ~/.bashrc, convoy-end copies, the AGENTS.md pointer in a minted worktree,
+    the Grok agent and .git/info/exclude entries; Claude also prepares
+    ~/.claude/settings.json and ~/.claude.json trust. Hook files and hook
+    trust stores are skipped. This refusal does not mean every dry run is read-only.
+    """
+    ask = "--write-repo-files needs a live run, not --dry-run" if cli else "write_repo_files=true needs dry_run=false"
+    return ask + ": a dry " + verb + " writes no person file"
+
+
+def codex_opt_in_note(route: str, root: Any, worktree: Any) -> str:
+    return CODEX_OPT_IN_NOTE + OPT_IN_ROUTES.get(route, OPT_IN_ROUTES["cli"]).format(root=root, worktree=worktree)
+
+
 # The home key Convoy may add to ~/.claude/settings.json, when it is missing.
 HOME_SETTINGS_KEY = "skipDangerousModePermissionPrompt"
 
@@ -773,7 +807,7 @@ def ensure_interactive_path(home: Path | None = None) -> dict[str, Any]:
 
 
 def ensure_first_run(seat: dict[str, Any], root: Path | str | None = None, live: bool = True, *,
-                     write_repo_files: bool = True) -> dict[str, Any]:
+                     write_repo_files: bool | None = None, opt_in_route: str = "cli") -> dict[str, Any]:
     """Ungate first-run Claude bypass warning for the thread worktree.
 
     Project {worktree}/.claude/settings.local.json: autoCompactEnabled true (a
@@ -783,7 +817,12 @@ def ensure_first_run(seat: dict[str, Any], root: Path | str | None = None, live:
     User ~/.claude/settings.json: add ONLY skipDangerousModePermissionPrompt true,
     and only when the key is missing; home_written and home_key say so.
     write_repo_files False: nothing is written into the worktree (no pointer, hooks,
-    agent, settings or trust); would_write lists what would be.
+    agent, settings or trust); would_write lists what would be. True: every file.
+    None (a launch): every file in a minted worktree, or where the person opted in before
+    (repo.repo_files_opted_in; True records it); in the person's repo only the Convoy-named
+    ones. would_write and the Codex note (naming opt_in_route) are read from disk. A
+    .claude/settings.local.json git tracks is never written. trust_stores_written names each
+    home trust store this call wrote.
     User ~/.claude.json: set projects[worktree].hasTrustDialogAccepted=true
     for both slash spellings of the worktree key.
     Never write ~/.claude if worktree IS the home dir.
@@ -823,8 +862,11 @@ def ensure_first_run(seat: dict[str, Any], root: Path | str | None = None, live:
         "write_repo_files": bool(write_repo_files),
         "would_write": [],
         "left_visible": [],
+        "notes": [],
+        "trust_stores_written": [],
         "home_key": None,
     }
+    settings_tracked = False
     path_card = ensure_interactive_path()
     out["path_written"] = bool(path_card.get("path_written"))
     out["path_bashrc"] = path_card.get("path_bashrc")
@@ -838,10 +880,30 @@ def ensure_first_run(seat: dict[str, Any], root: Path | str | None = None, live:
             home_worktree = wt_path.resolve() == Path.home().resolve()
         except Exception:
             home_worktree = False
-        if not home_worktree and not write_repo_files:
+        from . import repo as _repo
+        from .identity import CLAUDE_SETTINGS_RELATIVE, CODEX_HOOKS_RELATIVE, person_files_missing
+        person_files = write_repo_files is True or (write_repo_files is None and (
+            _repo.repo_files_opted_in(wt_path) or _repo.is_minted_worktree(wt_path)))
+        out["write_repo_files"] = person_files
+        if not home_worktree and write_repo_files is False:
             out["would_write"] = repo_files_for(to)
         elif not home_worktree:
-            ident = install_neuron_identity(wt_path)
+            if write_repo_files is True:
+                _repo.record_repo_files_opt_in(wt_path)
+            # info/exclude never hides a tracked file: a settings.local.json the person commits is theirs.
+            local_rel = CLAUDE_SETTINGS_RELATIVE.as_posix()
+            settings_tracked = _repo.is_tracked(wt_path, local_rel)
+            skip = set() if person_files else {CODEX_HOOKS_RELATIVE.as_posix()}
+            if settings_tracked:
+                skip.add(local_rel)
+                out["would_write"].append(local_rel)
+                out["notes"].append(TRACKED_SETTINGS_NOTE)
+            if not person_files:
+                missing = person_files_missing(wt_path)
+                out["would_write"] = sorted(set(out["would_write"]) | set(missing))
+                if _harness_bin(to) == "codex" and CODEX_HOOKS_RELATIVE.as_posix() in missing:
+                    out["notes"].append(codex_opt_in_note(opt_in_route, root, wt_path))
+            ident = install_neuron_identity(wt_path, person_files=person_files)
             out["identity_written"] = bool(ident.get("written"))
             out["identity_removed"] = list(ident.get("removed") or [])
             out["identity_agents"] = ident.get("agents")
@@ -856,7 +918,7 @@ def ensure_first_run(seat: dict[str, Any], root: Path | str | None = None, live:
             # Hook files only matter to a launched pane, and resolving the hook
             # command probes a shell; a dry bring-up (no runner) skips it.
             if live:
-                hook_card = ensure_inbox_hooks(wt_path, root=root, harness=to)
+                hook_card = ensure_inbox_hooks(wt_path, root=root, harness=to, skip=skip)
                 # Launch heartbeat: the chair's vendor reading
                 # lands as its own kind=usage row at launch, so the thread tab
                 # is explicit before the first tool call. Only a reading the
@@ -882,6 +944,7 @@ def ensure_first_run(seat: dict[str, Any], root: Path | str | None = None, live:
             # bring-up, never on --dry-run / crew without --launch.
             if live:
                 out["hook_trust"] = ensure_hook_trust(seat).get("trust") or []
+                out["trust_stores_written"] = [r["store"] for r in out["hook_trust"] if r.get("written") and r.get("store")]
             else:
                 out["hook_trust"] = []
                 out["hook_trust_skipped"] = "dry-run"
@@ -889,11 +952,11 @@ def ensure_first_run(seat: dict[str, Any], root: Path | str | None = None, live:
             # exclude is shared by every worktree of the clone, so only Convoy-named paths go in,
             # anchored; a file the person could own (AGENTS.md, a hooks.json, an end command) stays
             # visible and is named in left_visible instead.
-            from . import repo as _repo
-            written = repo_files_for(to)
+            written = [f for f in repo_files_for(to) if (person_files or _convoy_named(f)) and f not in skip]
             out["left_visible"] = [f for f in written if not _convoy_named(f)]
             try:
-                out["excluded"] = _repo.exclude_paths(wt_path, ["/" + f for f in written if _convoy_named(f)])
+                record = ["/" + _repo.REPO_FILES_RECORD.as_posix()] if write_repo_files is True else []
+                out["excluded"] = _repo.exclude_paths(wt_path, ["/" + f for f in written if _convoy_named(f)] + record)
             except OSError as e:
                 out["excluded"] = False
                 out["exclude_error"] = type(e).__name__ + ": " + str(e)
@@ -930,10 +993,12 @@ def ensure_first_run(seat: dict[str, Any], root: Path | str | None = None, live:
             home_data[HOME_SETTINGS_KEY] = True
             _write_json_dict(home_path, home_data)
             out["home_written"] = True
-        if not write_repo_files:
+        if write_repo_files is False:
             return out
-        data = _read_json_object(settings_path)
-        if data is None:
+        data = None if settings_tracked else _read_json_object(settings_path)
+        if settings_tracked:
+            pass
+        elif data is None:
             out["settings_error"] = "unparseable"
         # A neuron runs unattended: it must compact on its own even when the
         # person turned auto-compact off in their own user settings.
@@ -952,6 +1017,8 @@ def ensure_first_run(seat: dict[str, Any], root: Path | str | None = None, live:
         out["trust_written"] = True
         out["trust_rewritten"] = trust_rewritten
         out["trust_settings_home"] = str(trust_path)
+        if trust_rewritten and str(trust_path) not in out["trust_stores_written"]:
+            out["trust_stores_written"].append(str(trust_path))
         return out
     except Exception as e:
         out["ok"] = False
@@ -1432,9 +1499,11 @@ def _window_for(root: Path, seat: dict[str, Any], rect: dict[str, int] | None, c
     return win
 
 
-def bring_up(root: Path, convoy_id: str | None = None, thread: str | None = None, runner: Runner | None = None, tiler: Tiler | None = None, session_ids: list[str] | None = None, *, allow_unverified_launch: bool = False) -> dict[str, Any]:
+def bring_up(root: Path, convoy_id: str | None = None, thread: str | None = None, runner: Runner | None = None, tiler: Tiler | None = None, session_ids: list[str] | None = None, *, allow_unverified_launch: bool = False, write_repo_files: bool | None = None, opt_in_route: str = "cli") -> dict[str, Any]:
     """Resume seated neurons in ONE isolated wt.exe window. Conductor grok-bot is not a window.
 
+    write_repo_files None writes every repo file only into a minted worktree (ensure_first_run);
+    True is the person's --write-repo-files; opt_in_route names it on the card.
     Default runner is None (dry / no-op). Dry-run still calls ensure_first_run and
     must not Popen wt. Pass live_runner only for a real TUI pop (one isolated_wt_argv).
     Unit tests must not pass live_runner without mocking Popen.
@@ -1466,7 +1535,8 @@ def bring_up(root: Path, convoy_id: str | None = None, thread: str | None = None
     for i, s in enumerate(hops):
         rect = rects[i] if i < len(rects) else None
         try:
-            fr = ensure_first_run(s, root=root, live=runner is not None)
+            fr = ensure_first_run(s, root=root, live=runner is not None, write_repo_files=write_repo_files,
+                                  opt_in_route=opt_in_route)
         except Exception as e:
             fr = {"ok": False, "prepared": False, "wrote": False, "settings": None, "error": str(e), "home_written": False, "settings_home": None}
         s = _seat_with_agent(root, s, fr)
@@ -1480,6 +1550,9 @@ def bring_up(root: Path, convoy_id: str | None = None, thread: str | None = None
             "settings_home": fr.get("settings_home"),
             "trust_written": bool(fr.get("trust_written")),
             "trust_settings_home": fr.get("trust_settings_home"),
+            "would_write": list(fr.get("would_write") or []),
+            "notes": list(fr.get("notes") or []),
+            "trust_stores_written": list(fr.get("trust_stores_written") or []),
         }
         if fr.get("error"):
             win["first_run"]["error"] = fr["error"]
@@ -1533,8 +1606,16 @@ def bring_up(root: Path, convoy_id: str | None = None, thread: str | None = None
 
 
 def terminals(root: Path, convoy_id: str | None = None, thread: str | None = None) -> dict[str, Any]:
-    """Metadata of windows for that thread. No PTY dump. Desktop access is this + bring_up."""
-    card = bring_up(root, convoy_id=convoy_id, thread=thread, runner=None)
+    """Metadata of windows for that thread. No PTY dump. Desktop access is this + bring_up.
+    A listing: no first run, so it writes no file anywhere."""
+    card = _resolve(root, convoy_id, thread)
+    if card.get("ok"):
+        hops = _pane_seats(_hop_seats(root, card["convoy_id"]))
+        rects = tile_rects(len(hops))
+        card["windows"] = [_window_for(root, s, rects[i] if i < len(rects) else None, card["convoy_id"], card["thread"])
+                           for i, s in enumerate(hops)]
+        card["ok"] = all(w.get("ok") for w in card["windows"])
+    card["lead"] = read_lead(root)
     windows = []
     for w in card.get("windows") or []:
         resume = w.get("resume")

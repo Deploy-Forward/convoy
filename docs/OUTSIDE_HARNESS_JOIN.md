@@ -11,10 +11,9 @@ injected pieces are the process table, the usage probe and the window spawn.
 
 ```
 convoy whoami                         # ok:false, chair:null, ask: "join (...)"; never an invented chair
-convoy threads                        # the machine index: every root, present true|false
-convoy start                          # picker from recent(): present, non-temp roots; ok:false, ask:pick
-convoy --root <root> attach           # the chosen root; convoy_id + thread on the card
-convoy --root <root> join --to codex  # one chair, a boot prompt carrying its token; nothing spawned
+convoy list                           # choose a block; numbers are display-only
+convoy attach <cvy_id>                # the block's exact id; proves and seats the current session
+convoy --root <returned root> whoami  # use the returned chair for the receive loop
 ```
 
 `whoami` walks your own process ancestry to a harness and matches it to a
@@ -22,22 +21,29 @@ chair by token, worktree or cwd. Outside every worktree that match is empty,
 so the answer is `chair: null` with an ask. A `--root` that carries no
 `.convoy/id` answers the same way. `start` with no repo never picks for you:
 temp roots (mkdtemp residue) are excluded from the list, and the card is
-`ok:false` until you name a root. `attach` and `join` write to the chosen
-root only; the folder you started in stays empty.
+`ok:false` until you name a root. Attach takes a `cvy_` id or an exact thread
+name, not a number. It refuses unknown/conflicting native identity and a
+session already attached elsewhere (detach first). Repeating it, or calling
+bare local self-join afterward, returns `already:true`, never a second chair. Explicit
+chair names, titles, other worktrees and `join --launch` retain the provisioning flow.
+An unavailable non-temp indexed root refuses with ownership unknown; temp roots
+are outside attachable scope and the card names the skipped roots. Nothing is
+launched. Legacy metadata-only catch-up is `attach <cvy_id> --read-only`.
 
 Then the lead delegates, and you receive:
 
 ```
 convoy --root <root> send --to <chair> "draft tests"      # delivery: queued, delivered: false
 convoy --root <root> inbox --seat <chair> --drain          # the row, with its token
-convoy --root <root> hook note "received token=<t>" --instance-id <chair>
-convoy --root <root> seated --seat <chair> --token <join token>
-convoy --root <root> await-seated --seat <chair> --timeout 0   # connected
+convoy --root <root> hook note "received token=<t>" --as-me --to <sender chair>
 ```
 
-`delivered` flips only on a row the target chair authors. `connected` is
-the chair's own `seated` row citing the token its `join` minted; before that
-ack the chair is `pending`, whatever a terminal shows.
+Delivery is proven only by the target's own verified receipt citing the
+token, never a claimed author. Attach records seated from native identity;
+the separate launch flow still uses join tokens and seated acknowledgements.
+Outside-worktree inbox and Stop hooks resolve the chair by proven native
+identity. Detached chairs retain their real inbox count but do not wake or
+pulse until reattached.
 
 ## The MCP variant
 

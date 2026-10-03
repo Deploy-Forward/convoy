@@ -13,7 +13,8 @@ attested by the chair itself, which is the same standard the delivery ladder
 uses for receipts. So activity leads with the bus, carries process evidence
 beside it as a second opinion, and never downgrades one to the other.
 
-Never prints a token. `send_command` is the exact line that messages a chair.
+Never prints a token. `send_command` is the exact line that messages a chair: a `send`, which queues
+to its inbox and wakes it. A `hook note` is only a receipt.
 """
 from __future__ import annotations
 
@@ -23,7 +24,7 @@ from typing import Any
 
 from .cmd import convoy_root_command
 from .convoy import list_seats, read_thread, read_id
-from .inbox import pending
+from .inbox import pending, reply_index
 from .layer import STAMPED_KINDS, feed_path, feed_since
 from .panes import match_processes
 from .wake_routes import reachability_detail
@@ -65,6 +66,7 @@ def neuron_activity(
         since = (now - timedelta(minutes=DEFAULT_WINDOW_MIN)).isoformat(timespec="microseconds").replace("+00:00", "Z")
 
     rows = feed_since(root, EPOCH) if feed_path(root).exists() else []
+    replies = reply_index(rows)
     seats = list_seats(root, require_session=True)
     view = match_processes(root, procs) if procs is not None else None
     proc_by_chair: dict[str, Any] = {}
@@ -97,15 +99,15 @@ def neuron_activity(
         # Rows addressed to it after its own last word: what it has not answered.
         waiting = [r for r in addressed.get(sid, []) if not last_ts or str(r.get("ts") or "") > last_ts]
         try:
-            inbox_n = len(pending(root, sid))
+            inbox_n = len(pending(root, sid, replies=replies))
         except (OSError, ValueError):
-            inbox_n = 0
+            inbox_n = None
         proc = proc_by_chair.get(sid) if view is not None else None
         # The wake directory: the recorded route and whether it can wake the chair now. Null only
         # when no route is registered, which is unknown, never down.
         reach = reachability_detail(root, sid)
         spoke_in_window = bool(last_ts and last_ts >= since)
-        active = bool(spoke_in_window or proc is True)
+        active = bool(spoke_in_window or proc is True) and not s.get("detached", False)
         if spoke_in_window and proc is True:
             evidence = "authored+process"
         elif spoke_in_window:
@@ -123,6 +125,7 @@ def neuron_activity(
             "where": s.get("where"),
             "worktree": s.get("worktree"),
             "active": active,
+            "detached": bool(s.get("detached")),
             "evidence": evidence,
             "process": proc,
             "last_authored": last_ts,
@@ -137,7 +140,7 @@ def neuron_activity(
             "unread": len(waiting),
             "last_addressed_by": (waiting[-1].get("from") if waiting else None),
             "inbox_pending": inbox_n,
-            "send_command": convoy_root_command(root) + ' hook note "<text>" --as-me --to ' + sid,
+            "send_command": convoy_root_command(root) + ' send --to ' + sid + ' "<text>"',
         })
 
     out.sort(key=lambda n: (n["last_authored"] or ""), reverse=True)

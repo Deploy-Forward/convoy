@@ -17,6 +17,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Any, Callable
 
@@ -36,6 +37,12 @@ QUOTA_THRESHOLD_PCT = 95
 # coffee: bounded, derivable, rewritten whole.
 ROLLING_HANDOFF_MAX_BYTES = 4096
 WAIT_TIMEOUT_S = 600.0
+# The Stop hook's ask to arm a waiter, on a root with wakes enabled: at most this many unarmed turns
+# in a row are blocked; after that each unarmed turn gets a note instead, until one ends armed.
+ARM_ASKS_MAX = 3
+# A waiter the session started in this turn may still be importing when the turn ends: look again
+# for this long before calling the chair unarmed.
+ARM_GRACE_S = 2.0
 
 
 def _one_line(value: Any, default: str) -> tuple[str, bool]:
@@ -254,7 +261,7 @@ def _spawn_waiter(root: Path, chair: str, incarnation: Any) -> dict[str, Any]:
     """Start the slim waiter, detached. Never through the CLI: that import
     graph is what the OS killed under memory pressure (see wait.py)."""
     argv = [sys.executable, "-m", "convoy.wait", "--root", str(root), "--seat", str(chair),
-            "--timeout", str(WAIT_TIMEOUT_S)]
+            "--timeout", str(WAIT_TIMEOUT_S), "--owner", "hook"]
     if incarnation is not None:
         argv.extend(["--incarnation", str(int(incarnation))])
     try:
@@ -270,18 +277,28 @@ def _resolve_identity(
     *, root: Path | str | None, cwd: Path, allow_missing_root: bool,
 ) -> tuple[Path | None, dict[str, Any] | None, str | None]:
     resolved: Path | None
+    from .sessions import proven_session_chair
     if root is not None:
         resolved = Path(root).resolve()
         if not read_id(resolved):
             return None, None, "explicit --root is not a Convoy thread"
     else:
         resolved = resolve_root(cwd)
+    try:
+        proven_root, proven_seat = proven_session_chair(cwd, resolved if root is not None else None)
+    except ValueError as exc:
+        return resolved, None, str(exc)
+    if proven_root is not None:
+        return proven_root, proven_seat, None
     if resolved is None:
         if allow_missing_root:
             return None, None, None
         return None, None, "no Convoy thread root resolves from cwd"
     matches = seats_for_worktree(resolved, cwd)
     if len(matches) != 1:
+        # A calling session can be proven without a worktree (for example an
+        # orchestrator running from a drive root). Reuse whoami's process and
+        # native-session proof; never guess by the latest seat or pulse.
         chairs = [str(row.get("session_id") or "") for row in matches]
         detail = ", ".join(chairs) if chairs else "none"
         return resolved, None, "end refuses ambiguous/unseated cwd; matching chairs: " + detail
@@ -322,6 +339,8 @@ def end_task(
         return {"ok": True, "skipped": True, "reason": "not in a Convoy worktree"}
 
     chair = str(seat.get("session_id") or "").strip()
+    if seat.get("detached"):
+        return {"ok": True, "skipped": True, "reason": "detached; attach again"}
     harness = str(seat.get("to") or "").strip() or None
     if automatic:
         # This payload is where Convoy has held the vendor session id
@@ -444,11 +463,78 @@ def end_task(
         card["warning"] = ("these commits carry files Convoy writes into a worktree (" + ", ".join(convoy_files)
                            + "); check they were meant to be committed")
     if automatic:
-        card.update(_stop_work(thread_root, chair, seat, git or {}))
+        card.update(_stop_work(thread_root, chair, seat, git or {}, payload))
     return card
 
 
-def _stop_work(root: Path, chair: str, seat: dict[str, Any], git: dict[str, Any]) -> dict[str, Any]:
+def arm_reason(root: Path, chair: str) -> str:
+    """What a Claude chair on a root with wakes enabled is told when it ends a turn unarmed. The
+    root and the chair are quoted; a chair that cannot be quoted safely gets no command at all."""
+    from .wait import wait_command
+    command = wait_command(root, chair)
+    if command is None:
+        return ("Convoy wake: this thread wakes you only through a waiter you run yourself, and none is "
+                "armed for this chair, whose name cannot be put on a command line safely. Ask the person "
+                "to arm your waiter; do not build the command yourself.")
+    return ("Convoy wake: this thread wakes you only through a waiter you run yourself, and none is "
+            "armed for this chair. Run this as a background command (run_in_background), then end "
+            "your turn: " + command + " . When it exits it names the wake: drain your inbox, act, "
+            "answer with a note citing the token, and arm it again before you stop.")
+
+
+def _arm_state(root: Path, chair: str, seat: dict[str, Any], payload: dict[str, Any] | None) -> str:
+    """skip (not a Claude chair, wakes off, or already told this turn), armed, or unarmed."""
+    if not str(seat.get("to") or "").strip().lower().startswith("claude"):
+        return "skip"
+    if (payload or {}).get("stop_hook_active"):
+        return "skip"
+    from .wait import session_waiter_armed
+    from .wake_local import is_enabled
+    if not is_enabled(root):
+        return "skip"
+    deadline = time.monotonic() + ARM_GRACE_S
+    while not session_waiter_armed(root, chair):
+        if time.monotonic() >= deadline:
+            return "unarmed"
+        time.sleep(0.1)
+    return "armed"
+
+
+def _arm_asks_path(root: Path, chair: str) -> Path:
+    from .pulse import chair_digest
+    return Path(root) / ".convoy" / "wake" / "arm-asks" / (chair_digest(chair) + ".json")
+
+
+def _arm_asks(root: Path, chair: str, count: int | None = None) -> int:
+    """The chair's unarmed turns in a row; with `count`, write it first."""
+    path = _arm_asks_path(root, chair)
+    if count is not None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({"count": count, "ts": utc_now()}) + "\n", encoding="utf-8")
+        return count
+    try:
+        value = json.loads(path.read_text(encoding="utf-8-sig")).get("count")
+    except (OSError, ValueError, AttributeError):
+        return 0
+    return value if isinstance(value, int) and value > 0 else 0
+
+
+def _stop_work(root: Path, chair: str, seat: dict[str, Any], git: dict[str, Any],
+               payload: dict[str, Any] | None = None) -> dict[str, Any]:
+    """The Stop's work, and a note in the hook naming any receipt it could not write: a row the
+    feed lock kept out is said, never lost in silence."""
+    problems: list[str] = []
+    out = _stop_body(root, chair, seat, git, payload, problems)
+    if problems:
+        hook = dict(out.get("hook") or {})
+        said = "Convoy: " + "; ".join(problems)
+        hook["systemMessage"] = (hook["systemMessage"] + " " + said) if hook.get("systemMessage") else said
+        out["hook"] = hook
+    return out
+
+
+def _stop_body(root: Path, chair: str, seat: dict[str, Any], git: dict[str, Any],
+               payload: dict[str, Any] | None, problems: list[str]) -> dict[str, Any]:
     """Everything a Stop is good for, in the order it matters.
 
     A Stop is the one moment Convoy is certain a neuron is listening, and the
@@ -499,6 +585,9 @@ def _stop_work(root: Path, chair: str, seat: dict[str, Any], git: dict[str, Any]
                      instance_id=chair, author=chair,
                      extra={"chair": chair, "harness": seat.get("to"), "window": window,
                             "used_percent": used, "resets_at": resets_at, "incarnation": incarnation})
+            except TimeoutError:
+                problems.append("the quota threshold row for " + chair + " was not written: the feed lock "
+                                "was busy; it is written at the next Stop")
             except (OSError, ValueError):
                 pass
 
@@ -522,6 +611,21 @@ def _stop_work(root: Path, chair: str, seat: dict[str, Any], git: dict[str, Any]
             "(branch, HEAD, dirty, queue, incarnation) are already written to " +
             str(rolling_handoff_path(root, chair)) + "; do not repeat them.")}
         return out
+
+    try:
+        arm = _arm_state(root, chair, seat, payload)
+        if arm == "armed":
+            _arm_asks(root, chair, 0)
+        elif arm == "unarmed":
+            asks = _arm_asks(root, chair, _arm_asks(root, chair) + 1)
+            if asks <= ARM_ASKS_MAX:
+                out["hook"] = {"decision": "block", "reason": arm_reason(root, chair)}
+                return out
+            # Asked ARM_ASKS_MAX turns in a row already: a note, never another forced turn.
+            out["hook"] = {"systemMessage": "Convoy wake: " + str(asks) + " turns in a row ended without a "
+                           "waiter, so wakes wait in this chair's folder until it arms one. " + arm_reason(root, chair)}
+    except (OSError, ValueError):
+        pass  # a Stop hook must never trap the agent
 
     out["waiter"] = _spawn_waiter(root, chair, incarnation)
     return out

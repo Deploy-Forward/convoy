@@ -9,8 +9,9 @@ from .index import recent
 from .install import _which
 from .onboard import SUPPORTED_HARNESSES, onboard
 from .panes import bodies, identify
-from .repo import checkout_path_for, is_repo_url
+from .repo import checkout_path_for, is_repo_url, redact_credentials
 from .start_card import TRUST_NOTE, build_start_card
+from .project_resolve import _resolve_target as resolve_target, update_checkout
 
 IdentifyFn = Callable[[Path], dict[str, Any]]
 BodiesFn = Callable[[Path], dict[str, Any]]
@@ -41,7 +42,12 @@ def _live_on_root(root: Path, identify_fn: IdentifyFn, bodies_fn: BodiesFn) -> b
     return any(bool(c.get("live")) for c in (roster.get("chairs") or []))
 
 
-def start(
+def start(root: Path, repo: str | None = None, **kwargs) -> dict[str, Any]:
+    """Sanitize every public field, including nested onboarding error cards."""
+    return redact_credentials(_start(root, repo, **kwargs))
+
+
+def _start(
     root: Path,
     repo: str | None = None,
     *,
@@ -52,6 +58,12 @@ def start(
     identify_fn: IdentifyFn | None = None,
     bodies_fn: BodiesFn | None = None,
     write_repo_files: bool = False,
+    search_roots=None,
+    git_runner=None,
+    gh_runner=None,
+    scan_budget: float = 5.0,
+    create: bool = False,
+    all_worktrees: bool = False,
 ) -> dict[str, Any]:
     """Compose existing verbs. Never auto-picks newest. Never bring_up. Writes nothing into the
     repo outside .convoy/ unless write_repo_files (see onboard)."""
@@ -87,20 +99,35 @@ def start(
                 "bound": False, "brought_up": False}
 
     named = list(harnesses) if harnesses is not None else _default_harnesses()
-    github = bool(is_repo_url(want))
+    resolution = resolve_target(want, search_roots=search_roots, git_runner=git_runner,
+                                gh_runner=gh_runner, scan_budget=scan_budget, create=create, all_worktrees=all_worktrees)
+    if not resolution.get("ok"):
+        return {**resolution, "bound": False, "brought_up": False}
+    want = resolution["checkout"]
+    github = bool(resolution["github"])
 
     try:
-        existing = checkout_path_for(want) if github else Path(want).expanduser().resolve()
+        existing = checkout_path_for(want) if is_repo_url(want) else Path(want).expanduser().resolve()
     except ValueError as e:
         return {"ok": False, "error": str(e), "bound": False, "brought_up": False}
 
     notes = [] if write_repo_files else [TRUST_NOTE]
+    if resolution.get("note"):
+        notes.append(resolution["note"])
+    pulled = update_checkout(existing, runner=git_runner) if resolution["refresh"] and (existing / ".git").exists() else {"pulled": "kept: no network for explicit/local-only path"}
+    notes.append("pulled: " + pulled["pulled"])
+    def annotate(card):
+        card["resolution"] = resolution
+        card.update(pulled)
+        if resolution.get("note"):
+            card["local_note"] = resolution["note"]
+        return card
     if existing.exists() and read_id(existing) is not None and _live_on_root(existing, who, roster):
         card = attach(existing)
         card["attached"] = True
         card["brought_up"] = False
         card["start_card"] = build_start_card(existing, notes=notes)
-        return card
+        return annotate(card)
 
     card = onboard(
         Path(root),
@@ -114,6 +141,9 @@ def start(
     card["brought_up"] = False
     if card.get("ok") and read_id(Path(str(card.get("root") or root))) is not None:
         dest = Path(str(card["root"]))
+        if card.get("repo", {}) and card["repo"].get("cloned") and resolution["refresh"]:
+            pulled = update_checkout(dest, runner=git_runner)
+            notes[-1] = "pulled: " + pulled["pulled"]
         notes = notes + _first_run_notes(card)
         if _live_on_root(dest, who, roster):
             attached = attach(dest)
@@ -121,9 +151,9 @@ def start(
             attached["brought_up"] = False
             attached["onboard"] = card
             attached["start_card"] = build_start_card(dest, notes=notes)
-            return attached
+            return annotate(attached)
         card["start_card"] = build_start_card(dest, notes=notes)
-    return card
+    return annotate(card)
 
 
 def _first_run_notes(card: dict[str, Any]) -> list[str]:

@@ -38,10 +38,11 @@ from pathlib import Path
 from typing import Any, Callable
 
 from .convoy import list_seats, read_id, read_thread
+from .filelock import append_line
 from .index import routable_threads, home_dir
 from .pulse import chair_reachable, pulse_is_fresh, read_pulse
 from .report import ReportClient, Revoked, Transient
-from .wait import read_wait_file
+from .wait import listening_wait_file
 
 # Fast while there is work, then a walk into a long idle. The last value is
 # the floor a quiet machine settles on.
@@ -182,11 +183,7 @@ class Outbox:
 
     def append(self, kind: str, args: dict[str, Any]) -> dict[str, Any]:
         entry = {"id": uuid.uuid4().hex, "kind": str(kind), "args": args}
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        with self.path.open("a", encoding="utf-8") as handle:
-            handle.write(json.dumps(entry, separators=(",", ":")) + "\n")
-            handle.flush()
-            os.fsync(handle.fileno())
+        append_line(self.path, (json.dumps(entry, separators=(",", ":")) + "\n").encode("utf-8"), fsync=True)
         return entry
 
     def done(self, entry_id: str) -> None:
@@ -402,7 +399,7 @@ class OriginLoop:
             if not sid:
                 continue
             pulse = read_pulse(root, sid)
-            wait_row = read_wait_file(root, sid)
+            wait_row = listening_wait_file(root, sid)
             rate = (pulse or {}).get("rate_pct")
             out.append({
                 "sessionId": sid,

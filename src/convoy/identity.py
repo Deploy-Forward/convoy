@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 
 from . import cmd as _cmd
 from .cmd import (
@@ -57,9 +57,11 @@ You are a Convoy neuron: one grok session on a Convoy thread, not Grok Bot.
   convoy-operate skill from the Convoy plugin (convoy@deploy-forward). Missing
   files mean unknown — JSON null. Never invent a `cvy_` or session id.
 - Detect, identify, then send: `convoy panes` shows every body on the
-  thread; `convoy whoami` names YOUR chair; write as yourself with
-  `convoy hook note "..." --as-me --to <chair>` and read your place with
-  `convoy graph --neuron <chair>`. (`convoy` is the console script; after a
+  thread; `convoy whoami` names YOUR chair; message a chair with `convoy send`
+  (below); acknowledge a message with `convoy hook note "re token <token>: ..."
+  --as-me --to <chair>`, which is the receipt (on a wake-enabled root it wakes
+  that token's sender once, so don't also send a second message); read your place
+  with `convoy graph --neuron <chair>`. (`convoy` is the console script; after a
   plain `pip install .` without PATH, `python -m convoy` is the same thing.)
 - Synapse: `convoy send --to <harness> "..."`, or `convoy send --id <id> "..."` with the short id from `convoy neurons --all`. Do not type into another
   neuron's TUI. Do not steal a live `--resume`.
@@ -179,9 +181,11 @@ def _merge_agents_block(existing: str) -> str:
 
 # Name kept for callers: it now writes the AGENTS.md pointer (and convoy-end)
 # and removes retired skill copies; it no longer installs an identity skill.
-def install_neuron_identity(worktree: Path | str) -> dict[str, Any]:
+def install_neuron_identity(worktree: Path | str, *, person_files: bool = True) -> dict[str, Any]:
     """Write the AGENTS.md pointer and Convoy-owned copies into worktree;
-    remove the retired skill copies Convoy wrote before. Idempotent."""
+    remove the retired skill copies Convoy wrote before. Idempotent.
+    person_files False (the person's repo): only the convoy-end copies; AGENTS.md, the retired
+    copies and the end command are left as they are."""
     out: dict[str, Any] = {
         "ok": True,
         "written": False,
@@ -190,7 +194,7 @@ def install_neuron_identity(worktree: Path | str) -> dict[str, Any]:
     }
     wt = Path(worktree)
     try:
-        out["removed"] = remove_retired_skills(wt)
+        out["removed"] = remove_retired_skills(wt) if person_files else []
         if out["removed"]:
             out["written"] = True
         end_text = end_skill_text()
@@ -203,6 +207,9 @@ def install_neuron_identity(worktree: Path | str) -> dict[str, Any]:
                 dest.write_text(end_text, encoding="utf-8")
                 out["written"] = True
             end_paths.append(str(dest))
+        out["end_paths"] = end_paths
+        if not person_files:
+            return out
         agents = wt / "AGENTS.md"
         before = agents.read_text(encoding="utf-8") if agents.is_file() else ""
         merged = _merge_agents_block(before)
@@ -223,12 +230,33 @@ def install_neuron_identity(worktree: Path | str) -> dict[str, Any]:
         if claude_command.is_file() and claude_command.read_text(encoding="utf-8") == command_text:
             claude_command.unlink()
             out["removed"] = list(out.get("removed") or []) + [str(claude_command)]
-        out["end_paths"] = end_paths
         return out
     except OSError as e:
         out["ok"] = False
         out["error"] = type(e).__name__ + ": " + str(e)
         return out
+
+
+def person_files_missing(worktree: Path | str) -> list[str]:
+    """The files a person could own that do not yet carry Convoy's part, read from disk:
+    AGENTS.md without the pointer block, .codex/hooks.json without the end hook."""
+    wt = Path(worktree)
+    out: list[str] = []
+    agents = wt / "AGENTS.md"
+    try:
+        has_block = agents.is_file() and SKILL_BEGIN in agents.read_text(encoding="utf-8-sig", errors="replace")
+    except OSError:
+        has_block = False
+    if not has_block:
+        out.append("AGENTS.md")
+    hooks = wt / CODEX_HOOKS_RELATIVE
+    try:
+        text = hooks.read_text(encoding="utf-8-sig") if hooks.is_file() else None
+    except OSError:
+        text = None
+    if not _existing_hook_commands(text, END_HOOK_ARGS):
+        out.append(CODEX_HOOKS_RELATIVE.as_posix())
+    return sorted(out)
 
 
 def ensure_grok_agent(worktree: Path | str) -> dict[str, Any]:
@@ -537,9 +565,17 @@ def ensure_claude_end_hook(worktree: Path | str, root: Path | str | None = None)
     return _ensure_end_hook_file(worktree, CLAUDE_SETTINGS_RELATIVE, root)
 
 
-def ensure_end_hooks(worktree: Path | str, root: Path | str | None = None) -> dict[str, Any]:
-    codex = ensure_codex_end_hook(worktree, root=root)
-    claude = ensure_claude_end_hook(worktree, root=root)
+def _skipped(rel: Path) -> dict[str, Any]:
+    return {"ok": True, "written": False, "skipped": rel.as_posix()}
+
+
+def ensure_end_hooks(worktree: Path | str, root: Path | str | None = None, *, skip: Iterable[str] = ()) -> dict[str, Any]:
+    """skip: worktree paths not to write (a file the person could own, or one git tracks)."""
+    skip = set(skip)
+    codex = (_skipped(CODEX_HOOKS_RELATIVE) if CODEX_HOOKS_RELATIVE.as_posix() in skip
+             else ensure_codex_end_hook(worktree, root=root))
+    claude = (_skipped(CLAUDE_SETTINGS_RELATIVE) if CLAUDE_SETTINGS_RELATIVE.as_posix() in skip
+              else ensure_claude_end_hook(worktree, root=root))
     out = {
         "ok": bool(codex.get("ok") and claude.get("ok")),
         "written": bool(codex.get("written") or claude.get("written")),
@@ -647,8 +683,12 @@ def ensure_inbox_hooks(
     worktree: Path | str,
     root: Path | str | None = None,
     harness: str | None = None,
+    *,
+    skip: Iterable[str] = (),
 ) -> dict[str, Any]:
     """Swap-safe: write Grok + Claude hook docs for every non-home worktree.
+    skip: worktree paths not to write (.codex/hooks.json in the person's repo, a tracked
+    .claude/settings.local.json).
 
     cursor-agent / agy / hermes / pi have no proven vendor hook file — they
     drain via `convoy inbox --drain`. Codex may native-queue on send.
@@ -656,9 +696,11 @@ def ensure_inbox_hooks(
     """
     from .inbox import HARNESS_INBOX
 
+    skip = set(skip)
     grok = ensure_grok_inbox_hook(worktree, root=root)
-    claude = ensure_claude_inbox_hook(worktree, root=root)
-    ending = ensure_end_hooks(worktree, root=root)
+    claude = (_skipped(CLAUDE_SETTINGS_RELATIVE) if CLAUDE_SETTINGS_RELATIVE.as_posix() in skip
+              else ensure_claude_inbox_hook(worktree, root=root))
+    ending = ensure_end_hooks(worktree, root=root, skip=skip)
     hid = str(harness or "").strip().lower() or None
     kinds = dict(HARNESS_INBOX)
     out: dict[str, Any] = {

@@ -10,6 +10,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+from .filelock import append_line
+
 _ACTIONS = frozenset({"trust-worktree", "close-chair", "nudge-pane"})
 
 
@@ -49,10 +51,7 @@ def _scope(
 
 
 def _append(root: Path, row: dict[str, Any]) -> None:
-    path = _path(root)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("a", encoding="utf-8") as handle:
-        handle.write(json.dumps(row, separators=(",", ":")) + "\n")
+    append_line(_path(root), (json.dumps(row, separators=(",", ":")) + "\n").encode("utf-8"))
 
 
 def _latest(root: Path) -> dict[str, dict[str, Any]]:

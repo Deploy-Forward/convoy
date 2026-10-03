@@ -279,6 +279,12 @@ def deliver_to_live_seat(
     if extra_state:
         extra.update(extra_state)
     author, verified_by = proven_sender(sender)
+    # Store only referenced receipt tokens, not a second copy of the body.
+    # Keep the released caller/bearer proof; recipients never become authors.
+    import re
+    replies = sorted(set(re.findall(r"\btoken=([a-fA-F0-9]{32})\b", str(body))))
+    if replies and author:
+        extra["reply_tokens"] = replies
     hook(root, kind="synapse", summary="send " + to, instance_id=sid, author=author,
          to=to, extra=extra, local_writer=local_writer, verified_by=verified_by)
     return {
@@ -342,6 +348,18 @@ def _send_one(
     # the "seat exists; attach and resume session_id" refusal below, because
     # naming a vendor is not naming a neuron.
     to, instance_id, worktree = _resolve_chair_address(root, to, instance_id, worktree)
+    # Check the authoritative seat before probes, packing, dry plans or any
+    # native queue. The registry is a resume map, not detach authority.
+    from .registry import lookup_any as _lookup_target
+    address = instance_id or resume
+    target = _lookup_target(root, address, to=to) if address else None
+    sid = (target or {}).get("session_id") or instance_id
+    seats = list_seats(root)
+    harness_seats = [s for s in seats if s.get("to") == to]
+    if (any(s.get("session_id") == sid and s.get("detached") for s in seats) or
+        (not address and harness_seats and all(s.get("detached") for s in harness_seats))):
+        return {"ok": False, "refused": True, "to": to, "session_id": sid,
+                "error": "detached; attach again", "delivery": "refused", "delivered": False}
     cwd_root = Path(worktree).resolve() if worktree else Path(root).resolve()
     cid = read_id(root)
     target_name = str(to or "").strip()

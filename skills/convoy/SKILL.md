@@ -50,25 +50,27 @@ that `panes` shows live.
 
 ## What a `send` card means
 
-`delivery` on the card is `recorded` (feed row only, nothing reached a
-neuron), `executed` (a fresh headless session ran it, not the open pane), or
-`refused`. `delivered` is always false on a card: only an ack row authored by
-the target proves delivery. To reach an OPEN neuron, write an addressed row
-(`hook note "<text>" --to <chair>`) and wait for its ack; never type into its TUI, never
-resume its session.
+`delivery` is `recorded` (feed only), `queued` (inbox), `native-queued` (native queue), `executed` (a fresh headless run), `refused` or `error`. `delivered` stays false on the card: only the target's own proven token-citing receipt establishes delivery.
+
+To reach an open neuron, use `convoy send --id <neuron-id> "<text>"` (or MCP `send` with the named chair), then wait for that neuron's receipt. A plain addressed `hook note` queues nothing and does not wake the target. Use `hook note "re token <token>: ..." --as-me --to <sender>` to acknowledge or report; never type into its TUI or resume its live session.
 
 ## `/convoy --start [<repo>]` (CLI: `convoy start [<repo>]`)
 
-Thin alias over existing verbs. Not an MCP tool.
+CLI project resolution, not an MCP tool: `convoy start [<path|URL|owner/repo|name>]`. An existing local path needs no cloud read. For a remote target, reuse a matching checkout before cloning; a reused clean, behind-only checkout can be refreshed by one fetch plus a local fast-forward-only merge. Dirty/diverged/unknown state stays with a reason; inspect `pulled` rather than assuming an update.
 
-- git URL → `clone` once → `onboard --github yes`
-- local path → `onboard --github no`
-- no repo → picker from `recent()` (title + root + last activity). NEVER auto-pick newest.
-- empty index → ask to start a new thread
-- cancel (`--cancel`) → unbound
-- already-live harness on the root (`whoami` / roster) → `attach`, never a duplicate `bring_up`
+No argument returns a picker; never auto-pick newest. `--search-root` bounds discovery, `--all` expands worktree choices, `--create` creates a private GitHub repo for an unmatched name; never pass it unless the person asked for a new GitHub repo. Incomplete/offline discovery is unknown, not proof of absence. Read the returned pointer-only start card first. Start opens no pane and does not seat this session; use attach to link it.
 
-Unknown stays JSON `null`. Do not invent a catalog or a newest-thread bind.
+## List, attach and detach
+
+Run `convoy list` and show its output verbatim, including skipped roots and unknown values. Default lists usable recent threads; `--all` includes hidden/older usable threads. Never delete skipped roots automatically.
+
+For the person's chosen block, run `convoy attach <cvy_id|exact thread name>`. Map display pick numbers to the block's exact `cvy_` id; never pass a number. Attach proves this running native session, launches nothing, refuses unavailable/conflicting identity and reuses its chair on repeat. Detach before switching threads. Legacy pointer-only catch-up uses `attach --read-only`.
+
+Run `convoy detach [--thread <cvy_id|name>]` to detach the proven calling session. Its rolling handoff, chair, history and pending rows remain. It closes no pane and kills no session. Detached chairs cannot drain/pulse or wake; sends refuse until attach reactivates them.
+
+## Wake service
+
+Wake dispatch is off on a root until `convoy --root <root> wake enable`. Inspect it with `wake status` and opt out with `wake disable`. The supervised MCP origin runs the dispatcher for enabled roots. Its waiter route is dispatcher-managed: the session arms its own background waiter using the command the Stop hook prints, drains its own inbox on wake, acts, writes a proven token-citing receipt and re-arms before stopping. A hook-owned detached waiter cannot wake the session. Unknown routes, faults and held alerts are not delivery proof.
 
 ## Finding threads from anywhere: `threads`
 
@@ -79,8 +81,11 @@ thread — `convoy_id`, `thread`, `root`, `updated_at` — upserted by every
 changed; never treat that row as a thread. Read verbs (`graph`, `threads`,
 `resume`, `seats`, `feed`, `context`, `glance`) walk up from a subfolder to
 the nearest `.convoy/id`. `graph --html` shows every present thread in its
-side panel. The index is the one user-global file Convoy writes; it carries
-no tokens.
+side panel. The index carries no tokens, but it is not Convoy's only home write.
+First run can also prepare `~/.bashrc`, `~/.claude/settings.json`, `~/.claude.json`
+and the Codex prompt `~/.codex/prompts/convoy.md` (or `CODEX_HOME/prompts/convoy.md`).
+Live hook trust preparation can also write the harness-specific home trust stores,
+as named by the first-run card. Do not describe these operations as read-only.
 
 ## Rejoining the fray: `graph --neuron <chair>`
 

@@ -143,7 +143,8 @@ def relaunch(root: Path | str, *, thread: str | None = None, runner: Runner | No
              alive: Callable[[Any], bool] = pid_alive,
              sleep: Callable[[float], None] = time.sleep,
              evict_timeout: float = EVICT_TIMEOUT_SEC,
-             allow_unverified_launch: bool = False) -> dict[str, Any]:
+             allow_unverified_launch: bool = False, write_repo_files: bool | None = None,
+             opt_in_route: str = "cli") -> dict[str, Any]:
     """seats: relaunch only these chairs (their panes died; the others are
     alive and must not be duplicated). Default: every chair.
 
@@ -278,7 +279,8 @@ def relaunch(root: Path | str, *, thread: str | None = None, runner: Runner | No
             update_seat(root, sid, boot_prompt=prompt)
             c["boot_prompt_rearmed"] = True
             c["token_found"] = tok is not None
-    up = bring_up(root, thread=bound, runner=runner, session_ids=sids, allow_unverified_launch=allow_unverified_launch)
+    up = bring_up(root, thread=bound, runner=runner, session_ids=sids, allow_unverified_launch=allow_unverified_launch,
+                  write_repo_files=write_repo_files, opt_in_route=opt_in_route)
     card["windows"] = up.get("windows") or []
     if up.get("error"):
         card["error"] = str(up["error"])

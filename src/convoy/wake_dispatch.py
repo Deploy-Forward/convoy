@@ -12,13 +12,20 @@ The loop tails `.convoy/feed.jsonl` from a byte cursor (`.convoy/wake/cursor`) a
 cursor only after it has dispatched, so a crash replays rows and the dedupe key
 `token:target:reason` absorbs the replay. It stops before a torn last line and skips a line that
 is not JSON. Every attempt is a row in `.convoy/wake/outbox.jsonl`; that log is also the
-dispatcher's state, so a restart reads where it was. An error on one row is recorded as a held row
-for that wake, and the loop and the cursor move on, so one bad row can never stop the loop.
+dispatcher's state, so a restart reads where it was. Only the dispatcher writes it, so it is read
+incrementally: each read takes the bytes appended since the last, and a file shorter than what was
+read is read again from the start. An error on one row is recorded as a held row for that wake, and
+the loop and the cursor move on, so one bad row can never stop the loop. A time that cannot be read
+is long past everywhere: it ends a timer and sits outside every hour.
 
 A wake carries a pointer (the token, who sent it, where to read it), never the body: the receiver
 pulls the message itself. A budget per pair and per target per hour, a cap per token, and a hold a
 person sets refuse a wake, before its first fire and before every refire or ladder step, with a
-feed row and at most one alert per target per hour. A cap per reply-chain conversation waits for a
+feed row and at most one alert per target per hour; the same refusal of the same wake is written
+once an hour. A hold ends the wake; it does not pause it. The message stays in the receiver's inbox
+for its next drain, and the person who set the hold chose that silence. A refire or ladder step the budget refuses also tells the person, once an hour, that
+the wake went unread, so a budget never ends a ladder in silence; a hold is the person's own word
+and adds nothing. A cap per reply-chain conversation waits for a
 conversation id, which no send records yet.
 
 A send wake is read when the receiver drains its inbox row (acked) or cites the token (answered),
@@ -31,7 +38,9 @@ reply wake has no read receipt, so it is fired once and not timed. A citation wh
 only claimed (a hosted neuron's honest answer is claimed too) never pre-empts or suppresses a first
 fire and never verifies a route; after the first fire, one from the target stops the refire and
 the ladder as answered-claimed, which is not delivery and raises no fault. A receiver that is down holds
-the wake; `catch_up` re-fires held wakes and pending inbox rows on start.
+the wake; `catch_up` re-fires held wakes and pending inbox rows on start. A detached chair (`convoy
+detach`) is never woken: a wake to it is held with why "detached", its timers stop, catch-up skips
+it, and nobody is alerted, because the session chose to work elsewhere.
 
 The routes are an adapter (`fire`, `alert`): this module never spawns, queues or posts anything
 itself, and an adapter that raises never escapes the loop.
@@ -50,9 +59,10 @@ from typing import Any, Callable, Protocol
 from .activity import neuron_id
 from .convoy import read_id
 from .inbox import _consumed_tokens, inbox_dir, inbox_path, pending
+from .filelock import append_line
 from .layer import _VERIFIED_METHODS, _is_conductor_alias, hook
 from .pulse import read_pulse_by_source
-from .wake_routes import mark_verified, reachability_detail, read_route, record_fault
+from .wake_routes import chair_detached, mark_verified, reachability_detail, read_route, record_fault
 
 # per_token caps the fires for one token across its send and reply wakes. It is not a conversation
 # cap: a reply chain mints fresh tokens, and no send records the token it answers yet.
@@ -67,6 +77,8 @@ ALERT_EVERY_SEC = 3600
 # Results that mean a wake already went out for its key: never fire it twice.
 _DONE = frozenset(("fired", "acked", "answered", "answered-claimed"))
 _CITED = re.compile(r"\b[Tt]oken\s*[=:]?\s*([0-9a-f]{32})\b")
+# Where a time that cannot be read is put: long past, so it ends a timer and is outside every hour.
+_LONG_AGO = datetime.min.replace(tzinfo=timezone.utc)
 
 
 class RouteError(Exception):
@@ -91,6 +103,10 @@ def _parse(ts: Any) -> datetime | None:
     except ValueError:
         return None
     return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+
+
+def _when(row: dict[str, Any]) -> datetime:
+    return _parse(row.get("ts")) or _LONG_AGO
 
 
 def wake_dir(root: Path | str) -> Path:
@@ -127,10 +143,29 @@ def _read_jsonl(path: Path) -> list[dict[str, Any]]:
     return rows
 
 
+def _rows_after(path: Path, offset: int) -> tuple[list[dict[str, Any]], int]:
+    """The whole JSON rows after byte `offset`, and the offset just past the last newline. It stops
+    before a torn last line and skips a line that is not JSON."""
+    with path.open("rb") as f:
+        f.seek(offset)
+        data = f.read()
+    end = data.rfind(b"\n")
+    if end < 0:
+        return [], offset
+    rows = []
+    for line in data[:end + 1].splitlines():
+        try:
+            row = json.loads(line.decode("utf-8-sig"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            continue
+        if isinstance(row, dict):
+            rows.append(row)
+    return rows, offset + end + 1
+
+
 def _append(path: Path, row: dict[str, Any]) -> dict[str, Any]:
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("a", encoding="utf-8") as f:
-        f.write(json.dumps(row, separators=(",", ":")) + "\n")
+    append_line(path, (json.dumps(row, separators=(",", ":")) + "\n").encode("utf-8"))
     return row
 
 
@@ -194,6 +229,8 @@ class Dispatcher:
         self._sends: dict[str, dict[str, Any]] = {}       # token -> its synapse row
         self._citations: set[tuple[str, str]] = set()     # (author, token) for every proven citing row
         self._claimed: set[tuple[str, str]] = set()       # the same, where the author is only claimed
+        self._outbox_rows: list[dict[str, Any]] = []      # the outbox, as far as it has been read
+        self._outbox_offset = 0                           # the byte just past the last row read
 
     # The feed
 
@@ -220,21 +257,7 @@ class Dispatcher:
             return [], offset
         if offset > path.stat().st_size:
             offset = 0  # the feed was replaced; read it again and let dedupe absorb what repeats
-        with path.open("rb") as f:
-            f.seek(offset)
-            data = f.read()
-        end = data.rfind(b"\n")
-        if end < 0:
-            return [], offset
-        rows = []
-        for line in data[:end + 1].splitlines():
-            try:
-                row = json.loads(line.decode("utf-8-sig"))
-            except (UnicodeDecodeError, json.JSONDecodeError):
-                continue
-            if isinstance(row, dict):
-                rows.append(row)
-        return rows, offset + end + 1
+        return _rows_after(path, offset)
 
     def _learn(self, row: dict[str, Any]) -> None:
         token = row.get("token")
@@ -291,6 +314,8 @@ class Dispatcher:
             rows = _read_jsonl(path)
             seats = {r.get("session_id") for r in rows if isinstance(r.get("session_id"), str)}
             for seat in sorted(s for s in seats if s):
+                if chair_detached(self.root, seat):
+                    continue  # its rows wait for it to attach again
                 for item in pending(self.root, seat):
                     token = item["token"]
                     row = self._sends.get(token) or {"token": token, "instance_id": seat}
@@ -300,6 +325,8 @@ class Dispatcher:
                         self._record_error(row, seat, "send", token, e)
         for w in self._latest().values():
             if w.get("result") != "held" or w.get("route") == "alert":
+                continue
+            if chair_detached(self.root, str(w.get("target") or "")):
                 continue
             row = {"token": w.get("token"), "from": w.get("from"), **(w.get("stamp") or {})}
             try:
@@ -320,11 +347,31 @@ class Dispatcher:
 
     def _latest(self) -> dict[str, dict[str, Any]]:
         latest: dict[str, dict[str, Any]] = {}
-        for row in read_outbox(self.root):
+        for row in self._outbox():
             # An error row is on the record but is not a state: the wake stays as it was.
             if isinstance(row.get("dedupe_key"), str) and row.get("result") != "error":
                 latest[row["dedupe_key"]] = row
         return latest
+
+    def _outbox(self) -> list[dict[str, Any]]:
+        """The outbox rows, reading only the bytes appended since the last read. The rows come from
+        the file alone, own writes included, so they never run ahead of it.
+
+        This holds only because the outbox is ever appended, and only by this process: a rewrite to
+        an equal or greater length cannot be seen from the size. Any compaction must run in this
+        process and reset `_outbox_rows` and `_outbox_offset` with it. A half-written row at the
+        offset is held back and read once it ends in a newline."""
+        path = outbox_path(self.root)
+        try:
+            size = path.stat().st_size
+        except FileNotFoundError:
+            size = 0
+        if size < self._outbox_offset:
+            self._outbox_rows, self._outbox_offset = [], 0  # the file was replaced: read it again
+        if size > self._outbox_offset:
+            rows, self._outbox_offset = _rows_after(path, self._outbox_offset)
+            self._outbox_rows.extend(rows)
+        return self._outbox_rows
 
     def _log(self, base: dict[str, Any], *, route: str | None, attempt: int, result: str, why: str,
              alerted: bool = False) -> dict[str, Any]:
@@ -349,12 +396,12 @@ class Dispatcher:
             return False
         return True
 
-    def _alert_once(self, target: str, text: str) -> bool:
-        """Alert unless this target was alerted within the hour."""
+    def _alert_once(self, target: str, text: str, *,
+                    counts: Callable[[dict[str, Any]], bool] = lambda row: True) -> bool:
+        """Alert unless this target was alerted within the hour by a row `counts` accepts."""
         since = self.clock() - timedelta(seconds=ALERT_EVERY_SEC)
-        for row in read_outbox(self.root):
-            when = _parse(row.get("ts"))
-            if row.get("target") == target and row.get("alerted") and when and when > since:
+        for row in self._outbox():
+            if row.get("target") == target and row.get("alerted") and _when(row) > since and counts(row):
                 return False
         return self._alert(target, text)
 
@@ -377,9 +424,9 @@ class Dispatcher:
             until = _parse(holds[-1].get("until"))
             if until and until > now:
                 return "hold", "hold until " + str(holds[-1]["until"]) + " by " + str(holds[-1].get("by"))
-        fired = [r for r in read_outbox(self.root) if r.get("result") == "fired"]
+        fired = [r for r in self._outbox() if r.get("result") == "fired"]
         hour_ago = now - timedelta(hours=1)
-        recent = [r for r in fired if (_parse(r.get("ts")) or now) > hour_ago]
+        recent = [r for r in fired if _when(r) > hour_ago]
         pair = {sender, target}
         if sum(1 for r in recent if {r.get("from"), r.get("target")} == pair) >= LIMITS["per_pair_per_hour"]:
             return "budget", "budget: per_pair_per_hour " + str(LIMITS["per_pair_per_hour"])
@@ -391,7 +438,7 @@ class Dispatcher:
 
     def dispatch(self, row: dict[str, Any], target: str, reason: str, token: str) -> None:
         key = token + ":" + target + ":" + reason
-        if any(r.get("result") in _DONE for r in read_outbox(self.root) if r.get("dedupe_key") == key):
+        if any(r.get("result") in _DONE for r in self._outbox() if r.get("dedupe_key") == key):
             return  # never twice
         sender = proven_author(row) if reason == "send" else row.get("from")  # a reply's author
         base = {
@@ -399,6 +446,10 @@ class Dispatcher:
             "reason": reason, "token": token, "from": sender if isinstance(sender, str) and sender else None,
             "stamp": {"device": row.get("device"), "verified_by": row.get("verified_by")},
         }
+        if chair_detached(self.root, target):
+            # The session detached to work elsewhere: its rows wait for it, and nobody is alerted.
+            self._log(base, route=None, attempt=0, result="held", why="detached")
+            return
         if reason == "send" and self._read_receipt(token, target):
             self._log(base, route=None, attempt=0, result="answered", why="handled before the wake")
             return
@@ -416,20 +467,27 @@ class Dispatcher:
             return
         self._fire(base, route["route"], route, attempt=1)
 
-    def _refused(self, base: dict[str, Any], *, route: str | None, attempt: int) -> bool:
-        """Refuse the wake when a hold or the budget says so: an outbox row, a feed row and at most
-        one alert an hour. Checked before the first fire and before every refire or ladder step."""
+    def _refused(self, base: dict[str, Any], *, route: str | None, attempt: int) -> tuple[str, str] | None:
+        """(kind, why) when a hold or the budget refuses the wake, with an outbox row, a feed row and
+        at most one alert an hour; None when it may go out. Checked before the first fire and before
+        every refire or ladder step."""
         refusal = self._budget_refusal(base["from"], base["target"], base["token"])
         if not refusal:
-            return False
+            return None
         kind, why = refusal
         target = base["target"]
+        last = [r for r in self._outbox() if r.get("dedupe_key") == base["dedupe_key"] and r.get("result") != "error"]
+        if (last and last[-1].get("result") == "refused" and last[-1].get("why") == why
+                and _when(last[-1]) > self.clock() - timedelta(seconds=ALERT_EVERY_SEC)):
+            return refusal  # the same refusal within the hour (a replay, a catch-up): already on the record
         alerted = self._alert_once(target, "a wake to " + target + " was refused: " + why)
+        # The outbox row goes first and is the record. A crash before the feed row leaves the refusal
+        # in the outbox only, and the replay above writes no feed row for it within the hour.
         self._log(base, route=route, attempt=attempt, result="refused", why=why, alerted=alerted)
         hook(self.root, kind="refuse", summary="wake to " + target + " refused: " + why, instance_id=target,
              author=None, extra={"reason": kind, "pair": [base["from"], target], "token": base["token"],
                                  "dedupe_key": base["dedupe_key"]})
-        return True
+        return refusal
 
     def _record_error(self, row: dict[str, Any], target: str | None, reason: str | None, token: str | None,
                       error: Exception, *, result: str = "held") -> None:
@@ -448,8 +506,23 @@ class Dispatcher:
             pass  # the outbox itself cannot be written; nothing else can record it
 
     def _guarded_fire(self, base: dict[str, Any], route: str, route_row: dict[str, Any], *, attempt: int) -> None:
-        if not self._refused(base, route=route, attempt=attempt):
+        """A refire or a ladder step: the wake already went out and was not read."""
+        refusal = self._refused(base, route=route, attempt=attempt)
+        if refusal is None:
             self._fire(base, route, route_row, attempt=attempt)
+            return
+        kind, why = refusal
+        if kind != "budget":
+            return  # a hold is the person's own word
+        # The budget stops the next wake, not the news: the person hears, once an hour per target,
+        # that this wake went unread, beside the refusal alert. The row ends the ladder.
+        target = base["target"]
+        alerted = self._alert_once(target, target + " did not read wake " + base["dedupe_key"]
+                                   + "; the next wake was refused: " + why,
+                                   counts=lambda row: row.get("route") == "alert")
+        self._log(base, route="alert", attempt=attempt, result="held", alerted=alerted,
+                  why=("alerted the person: " if alerted else "not alerted (an unread alert within the hour, or the alert failed): ")
+                  + "unread; " + why)
 
     def _fire(self, base: dict[str, Any], route: str, route_row: dict[str, Any], *, attempt: int) -> None:
         try:
@@ -488,9 +561,8 @@ class Dispatcher:
 
     def _errored_within(self, key: str, seconds: float, now: datetime) -> bool:
         since = now - timedelta(seconds=seconds)
-        for row in read_outbox(self.root):
-            when = _parse(row.get("ts"))
-            if row.get("dedupe_key") == key and row.get("result") == "error" and when and when > since:
+        for row in self._outbox():
+            if row.get("dedupe_key") == key and row.get("result") == "error" and _when(row) > since:
                 return True
         return False
 
@@ -511,10 +583,14 @@ class Dispatcher:
             if route_row:
                 mark_verified(self.root, w["target"], ts=self._now())
             return
+        if chair_detached(self.root, w["target"]):
+            # Detached since the fire: no refire, no ladder, no alert. The row waits for the attach.
+            self._log(base, route=w["route"], attempt=w.get("attempt") or 1, result="held", why="detached")
+            return
         if w.get("result") == "dropped":
             self._fallback(base, w["route"], route_row, attempt=w.get("attempt") or 2, why="dropped")
             return
-        fired_at = _parse(w.get("ts")) or now
+        fired_at = _when(w)  # a time that cannot be read is long past: its timer has run out
         if (now - fired_at).total_seconds() < self._ack_window(w["target"], w["route"], fired_at):
             return
         if w.get("attempt") == 1:

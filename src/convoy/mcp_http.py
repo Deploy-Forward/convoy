@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
-from .bringup import bring_up, ensure_interactive_path, hide_windows, live_applier, live_runner, terminals
+from .bringup import bring_up, dry_opt_in_refusal, ensure_interactive_path, hide_windows, live_applier, live_runner, terminals
 from .rail import build_rail
 from .provenance import build_provenance
 from .card import CARD_OUTPUT_SCHEMA, build_card
@@ -76,7 +76,7 @@ probe: Any = CachedProbe(_live_probe, ttl_s=60.0)
 PROTOCOL_LATEST = "2025-03-26"
 PROTOCOL_SUPPORTED = frozenset({PROTOCOL_LATEST, "2024-11-05"})
 SERVER_NAME = "convoy"
-_BASE_VERSION = "0.1.0"
+_BASE_VERSION = "1.0.0"
 
 
 def _server_version(repo_dir: Path | None = None) -> str:
@@ -305,6 +305,11 @@ def _schema(properties: dict[str, Any], required: list[str] | None = None) -> di
 
 
 TOOLS: list[dict[str, Any]] = [
+    {
+        "name": "list",
+        "description": "Read-only local machine thread picker, numbered threads and full neuron rows. Temp and absent roots remain named as skipped. Authenticated surface only, never anonymous product reads.",
+        "inputSchema": _schema({"all": {"type": "boolean"}, "since": {"type": "string"}}),
+    },
     {
         "name": "roster",
         "description": "Live harness roster. present/wired is shutil.which on the MCP process PATH, not an already-open desktop terminal. Interactive bash skips .profile so ~/.local/bin (claude, codex) can be installed and still command-not-found; roster/bring_up ungate ~/.bashrc. usage_remaining is JSON null when the harness does not expose a remaining count.",
@@ -663,6 +668,9 @@ for _t in TOOLS:
     if _t.get("name") in {"bring_up", "open", "launch", "crew", "resume", "send"}:
         _props["allow_unverified_launch"] = {"type": "boolean", "default": False,
                                           "description": "Explicitly accept unverified harness launch eligibility for this launch; does not bypass authorization or consent"}
+    if _t.get("name") in {"bring_up", "open", "launch", "crew"}:
+        _props["write_repo_files"] = {"type": "boolean", "default": False,
+                                      "description": "Also write the repo files a person could own (AGENTS.md, .codex/hooks.json) outside a worktree Convoy minted; write gate only"}
     for _k, _v in _THREAD_PROPS.items():
         _props.setdefault(_k, _v)
 del _t, _props, _k, _v
@@ -868,6 +876,12 @@ def _public_shape(name: str, card: Any) -> Any:
 
 def _call_tool(bound: Path | None, name: str, arguments: dict[str, Any] | None) -> dict[str, Any]:
     args = arguments if isinstance(arguments, dict) else {}
+    if name == "list":
+        from .thread_list import thread_list
+        try:
+            return thread_list(all_threads=bool(args.get("all")), since=_opt_str(args, "since"))
+        except (ValueError, OSError) as exc:
+            return {"ok": False, "error": str(exc)}
     if name == "threads":
         card = _call_tool_at(bound if bound is not None else Path.cwd(), name, args)
         if isinstance(card, dict):
@@ -1118,8 +1132,22 @@ def _call_tool_at(root: Path, name: str, args: dict[str, Any]) -> dict[str, Any]
         except ValueError as e:
             return {"ok": False, "error": str(e)}
         return {"ok": True, "schema_version": SCHEMA_VERSION, **row}
+    if name in ("bring_up", "open", "launch", "crew"):
+        # write_repo_files writes files a person could own into their repo: a strict boolean, and
+        # only behind the write gate. Without it the card names the route that works here.
+        wrf = args.get("write_repo_files", False)
+        if not isinstance(wrf, bool):
+            return {"ok": False, "error": "write_repo_files must be a boolean"}
+        if wrf and not _write_tools_enabled():
+            return {"ok": False, "error": _gate_text(name + " write_repo_files=true")}
+        repo_files = {"write_repo_files": True if wrf else None,
+                      "opt_in_route": "mcp" if _write_tools_enabled() else "ask"}
     if name in ("bring_up", "open"):
         dry = _opt_bool(args, "dry_run", True)
+        if dry and repo_files["write_repo_files"]:
+            # A dry call is a read: it never writes a person file or records an opt-in.
+            return {"ok": False, "dry_run": True, "windows": [],
+                    "error": dry_opt_in_refusal(name)}
         # dry_run=false SPAWNS: a live wt.exe on the server host. Same class
         # as the PR 50 launch hole; the read stays public, the spawn is gated
         # (found by a verifier, pre-existing on main).
@@ -1132,6 +1160,7 @@ def _call_tool_at(root: Path, name: str, args: dict[str, Any]) -> dict[str, Any]
             thread=_opt_str(args, "thread"),
             runner=runner,
             allow_unverified_launch=args.get("allow_unverified_launch", False),
+            **repo_files,
         )
         card["dry_run"] = dry
         return card
@@ -1219,7 +1248,7 @@ def _call_tool_at(root: Path, name: str, args: dict[str, Any]) -> dict[str, Any]
             return join_chair(root, to, session_id=_opt_str(args, "session_id"), worktree=_opt_str(args, "worktree"),
                               model=_opt_str(args, "model"), title=_opt_str(args, "title"),
                               effort=_opt_str(args, "effort"), author=_opt_str(args, "author"),
-                              where=_opt_str(args, "where"))
+                              where=_opt_str(args, "where"), calling_session=False)
         except ValueError as e:
             return {"ok": False, "error": str(e)}
     if name == "launch":
@@ -1230,7 +1259,8 @@ def _call_tool_at(root: Path, name: str, args: dict[str, Any]) -> dict[str, Any]
             # Refused BEFORE launch_seat is reached: nothing is spawned.
             return {"ok": False, "seat": sid, "spawned": False, "error": _gate_text("launch")}
         try:
-            return launch_seat(root, sid, runner=active_pane_runner, consent=_opt_str(args, "consent"), allow_unverified_launch=args.get("allow_unverified_launch", False))
+            return launch_seat(root, sid, runner=active_pane_runner, consent=_opt_str(args, "consent"),
+                               allow_unverified_launch=args.get("allow_unverified_launch", False), **repo_files)
         except ValueError as e:
             return {"ok": False, "seat": sid, "spawned": False, "error": str(e)}
     if name == "focus":
@@ -1249,7 +1279,8 @@ def _call_tool_at(root: Path, name: str, args: dict[str, Any]) -> dict[str, Any]
             return {"ok": False, "seats": [], "launched": False, "error": _gate_text("crew")}
         launch = _opt_bool(args, "launch", False)
         return crew_chairs(root, seats, thread=_opt_str(args, "thread"), checkout=_opt_str(args, "checkout"),
-                           runner=live_runner if launch else None, allow_unverified_launch=args.get("allow_unverified_launch", False))
+                           runner=live_runner if launch else None, allow_unverified_launch=args.get("allow_unverified_launch", False),
+                           **repo_files)
     if name == "seated":
         sid = (_opt_str(args, "seat") or "").strip()
         token = _opt_str(args, "token") or ""
@@ -1663,11 +1694,24 @@ def serve(root: Path | str | None, host: str = "127.0.0.1", port: int = 8788) ->
             _log_line("convoy origin loop started (paired)")
     except Exception as exc:        # noqa: BLE001 - the MCP serves with or without it
         _log_line("convoy origin loop did not start: " + type(exc).__name__)
+    # The wake dispatcher rides here too, after the bind: one thread per root
+    # that opted in (convoy wake enable); a root that never did is never read.
+    wake = None
+    try:
+        from .wake_service import start_daemon as start_wake
+        wake = start_wake(srv.convoy_root)
+    except Exception as exc:        # noqa: BLE001 - the MCP serves with or without it
+        _log_line("convoy wake service did not start: " + type(exc).__name__)
     try:
         srv.serve_forever()
     except KeyboardInterrupt:
         pass
     finally:
+        if wake is not None:
+            try:
+                wake.stop()
+            except Exception as exc:  # noqa: BLE001 - closing the listener comes first
+                _log_line("convoy wake service did not stop cleanly: " + type(exc).__name__)
         srv.server_close()
     return 0
 

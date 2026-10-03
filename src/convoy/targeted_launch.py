@@ -358,8 +358,13 @@ def launch_seat(
     consent: str | None = None,
     trust_probe: Callable[[dict[str, Any]], bool] = grok_project_trusted,
     allow_unverified_launch: bool = False,
+    write_repo_files: bool | None = None,
+    opt_in_route: str = "cli",
 ) -> dict[str, Any]:
     """Plan or launch one fresh join/swap chair.
+
+    write_repo_files None writes every repo file only into a minted worktree (ensure_first_run);
+    True is the person's --write-repo-files.
 
     ``runner=None`` is a read-only dry run. A live call creates an atomic,
     persistent claim before spawning, so two callers cannot split two panes for
@@ -410,7 +415,7 @@ def launch_seat(
         effective = row
         first_run: dict[str, Any] | None = None
         if runner is not None:
-            first_run = ensure_first_run(row, root=root)
+            first_run = ensure_first_run(row, root=root, write_repo_files=write_repo_files, opt_in_route=opt_in_route)
             if first_run.get("ok") is False:
                 raise ValueError(str(first_run.get("error") or "first-run preparation failed"))
             effective = _seat_with_agent(root, row, first_run)
@@ -430,6 +435,10 @@ def launch_seat(
             "harness_argv": harness_argv,
             "dry_run": runner is None,
         }
+        if first_run is not None:
+            card["first_run"] = {"would_write": list(first_run.get("would_write") or []),
+                                 "notes": list(first_run.get("notes") or []),
+                                 "trust_stores_written": list(first_run.get("trust_stores_written") or [])}
         if runner is None:
             return card
 

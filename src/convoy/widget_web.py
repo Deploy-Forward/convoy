@@ -334,7 +334,9 @@ class WidgetApi:
         if not un.get("ok"):
             return un
         try:
-            card = relaunch(r, runner=live_runner, timeout=0.0, seats=[seat], allow_unverified_launch=allow_unverified_launch)
+            # The widget has no opt-in of its own: a card note asks the person to run `convoy skills`.
+            card = relaunch(r, runner=live_runner, timeout=0.0, seats=[seat], allow_unverified_launch=allow_unverified_launch,
+                            opt_in_route="ask")
         except (ValueError, OSError) as e:
             return {"ok": False, "error": str(e)}
         return {"ok": bool(card.get("ok")), "launched": bool(card.get("launched")), "error": card.get("error"),
@@ -377,7 +379,8 @@ class WidgetApi:
         root = Path(str(ob.get("root") or base))
         specs = [{k: v for k, v in s.items() if k in ("harness", "model", "effort", "where", "title") and v not in (None, "")} for s in seats if s.get("harness")]
         if specs:
-            cw = crew(root, specs, thread=ob.get("thread"), runner=live_runner if launch else None, allow_unverified_launch=allow_unverified_launch)
+            cw = crew(root, specs, thread=ob.get("thread"), runner=live_runner if launch else None,
+                      allow_unverified_launch=allow_unverified_launch, opt_in_route="ask")
             out["crew"] = cw
             out["ok"] = bool(cw.get("ok"))
         out["root"] = str(root)

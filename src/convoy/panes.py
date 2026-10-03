@@ -48,7 +48,7 @@ from .harness_contract import canonical_harness_id
 from .pane_host import read_host_records
 from .layer import utc_now
 from .pulse import chair_reachable, pulse_is_fresh, read_pulse
-from .wait import read_wait_file
+from .wait import listening_wait_file
 
 HARNESS_EXES = {
     "codex": ("codex", "codex.js", "codex.cmd", "codex.exe"),
@@ -418,7 +418,7 @@ def match_processes(root: Path, procs: list[dict[str, Any]], *, now: str | None 
             # kills leaves every surface showing the chair as normal, because
             # nothing asks. 'waiter-dead' is a word
             # a human can read; silence is something they have to interpret.
-            "reachable": chair_reachable(pulse, read_wait_file(root, sid), now or utc_now()),
+            "reachable": chair_reachable(pulse, listening_wait_file(root, sid), now or utc_now()),
         })
     # a helper whose ancestor is claimed belongs to that body; everything else
     # that runs a harness exe and is nobody's is unassigned.
@@ -504,7 +504,8 @@ _TEST_PID: int | None = None
 
 
 def identify(root: Path, pid: int | None = None, procs: list[dict[str, Any]] | None = None,
-             cwd: str | None = None, env: Mapping[str, str] | None = None) -> dict[str, Any]:
+             cwd: str | None = None, env: Mapping[str, str] | None = None,
+             *, allow_unseated: bool = False) -> dict[str, Any]:
     """Which chair is the CALLER? Detect -> identify -> only then send.
 
     Walks the caller's ancestry (shell -> harness) in the process table.
@@ -602,6 +603,13 @@ def identify(root: Path, pid: int | None = None, procs: list[dict[str, Any]] | N
         body_nodes.append(node)
     outer_nodes = harness_nodes[len(body_nodes):]
     body_pids = {node[1]["pid"] for node in body_nodes}
+    if allow_unseated and outer_nodes:
+        return _refuse("nested harness cannot prove an independent native session; refuse attach")
+    if allow_unseated and body_nodes and body_nodes[0][2] == "pi":
+        # The current harness contract says --resume opens a picker. Its
+        # next argv word is not an evidenced native id. The shared reader
+        # must establish direct-session proof before Pi can attach by id.
+        return _refuse("Pi native session identity unavailable: --resume is a picker, not session-id proof")
     if outer_nodes:
         # Attribute the caller to its nearest harness body only. A parent
         # harness may still have a recorded native id in argv or a pane-host
@@ -645,6 +653,8 @@ def identify(root: Path, pid: int | None = None, procs: list[dict[str, Any]] | N
         arg_ids = _native_resume_ids(cmd, harness)
         if len(arg_ids) > 1:
             return _refuse("multiple native resume ids in one harness command; refuse identity")
+        if allow_unseated and native_id and arg_ids and native_id not in arg_ids:
+            return _refuse("native environment and resume arguments disagree; refuse attach")
         for via, claim_id in (("environment", native_id), ("token", next(iter(arg_ids), None))):
             if not claim_id:
                 continue
@@ -702,6 +712,16 @@ def identify(root: Path, pid: int | None = None, procs: list[dict[str, Any]] | N
             h, native_id, via = next(iter(candidates))
             result["native_session"] = {"id": native_id, "harness": h,
                                         "via": via, "recorded": False}
+        elif allow_unseated and native_claims:
+            via, native_pid = native_claims[0][1:]
+            if via == "environment":
+                native_id = env.get("CODEX_THREAD_ID") if harness == "codex" else env.get("CLAUDE_CODE_SESSION_ID")
+            else:
+                arg_ids = _native_resume_ids(str(by_pid[native_pid].get("cmdline") or ""), harness)
+                native_id = next(iter(arg_ids), None)
+            if native_id:
+                result["native_session"] = {"id": native_id.strip(), "harness": harness,
+                                            "via": via, "recorded": True}
         return result
     by_recorded_pid: dict[int, str] = {}
     for record in read_host_records(root):
@@ -781,6 +801,16 @@ def identify(root: Path, pid: int | None = None, procs: list[dict[str, Any]] | N
         return _with_unrecorded({"ok": True, "chair": path_hit[0], "via": path_hit[1],
                                  "harness": seat_row.get("to"), "harness_pid": path_hit[2],
                                  "on_thread": True, **ctx}, path_hit[0])
+    if allow_unseated and body_nodes and not enum_error:
+        h = body_nodes[0][2]
+        candidates = {(native_id, via) for harness, native_id, via in unrecorded_native if harness == h}
+        ids = {native_id for native_id, _ in candidates}
+        if len(ids) == 1:
+            native_id = next(iter(ids))
+            via = "environment" if (native_id, "environment") in candidates else "token"
+            return {"ok": True, "chair": None, "via": via, "harness": h,
+                    "harness_pid": body_nodes[0][1]["pid"], "on_thread": False,
+                    "native_session": {"id": native_id, "harness": h, "via": via, "recorded": False}, **ctx}
     out = {"ok": False, "chair": None, "via": None, "harness": None, "harness_pid": None, "on_thread": False,
            "ask": "no chair on this thread matches your body: join (" + convoy_root_command(root) +
                   " join --to <harness> --worktree " + str(here) + ") or seat this worktree, then retry"}

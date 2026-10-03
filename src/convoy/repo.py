@@ -11,6 +11,8 @@ import json
 import os
 import re
 import subprocess
+import signal
+import tempfile
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
@@ -30,10 +32,72 @@ GH_INSTALL_HINT = "install GitHub CLI from https://cli.github.com, then `gh auth
 # file of the user's repo. info/exclude is git's per-clone ignore, not content.
 # Anchored to the work tree's root: a docs/thread.md of the person's is never hidden.
 EXCLUDE_LINES = ("/.convoy/", "/thread.md")
+# Written by mint_worktrees into a worktree it creates, and only then: the one record that Convoy
+# made the folder, so a launch may write every repo file there. Under .convoy/, so excluded.
+MINTED_MARKER = Path(".convoy") / "minted.json"
 
 
 def run_argv(argv: list[str], cwd: str | None = None, timeout: float = 600) -> subprocess.CompletedProcess:
-    return subprocess.run(argv, cwd=cwd, check=False, capture_output=True, text=True, timeout=timeout)
+    """Bound helper lifetime, including Windows remote/auth descendants.
+
+    Files, not pipes: a grandchild inheriting stdout cannot keep communicate()
+    blocked after the parent dies. Helpers never open visible console windows.
+    """
+    from .cmd import quiet_spawn_kwargs
+    env = dict(os.environ)
+    if Path(argv[0]).stem.lower() == "git" and len(argv) > 1 and argv[1] in ("fetch", "ls-remote"):
+        env.update(GIT_TERMINAL_PROMPT="0", GCM_INTERACTIVE="never", GIT_ASKPASS="")
+    spawn = quiet_spawn_kwargs()
+    if os.name == "nt":
+        spawn["creationflags"] |= subprocess.CREATE_NEW_PROCESS_GROUP
+    else:
+        spawn["start_new_session"] = True
+    with tempfile.TemporaryFile() as stdout, tempfile.TemporaryFile() as stderr:
+        # Clone/worktree retain normal credential/input policy; refresh cannot prompt.
+        proc = subprocess.Popen(argv, cwd=cwd, stdin=subprocess.DEVNULL if argv[1:2] in (["fetch"], ["ls-remote"]) else None, stdout=stdout,
+                                stderr=stderr, env=env, **spawn)
+        try:
+            proc.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            if os.name == "nt":
+                try:
+                    subprocess.run(["taskkill", "/PID", str(proc.pid), "/T", "/F"],
+                                   stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                   timeout=.5, **quiet_spawn_kwargs())
+                except (OSError, subprocess.SubprocessError):
+                    proc.kill()
+            else:
+                try:
+                    os.killpg(proc.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+            try:
+                proc.wait(timeout=.2)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+            raise subprocess.TimeoutExpired(argv, timeout) from None
+        stdout.seek(0)
+        stderr.seek(0)
+        return subprocess.CompletedProcess(argv, proc.returncode,
+            stdout.read().decode(errors="replace").replace("\r\n", "\n"),
+            stderr.read().decode(errors="replace").replace("\r\n", "\n"))
+
+
+def redact_credentials(value):
+    """Public start cards/CLI output never echo URL credentials or token values."""
+    if isinstance(value, dict):
+        receipt = {"from", "to", "age_s", "claimed_answer"}.issubset(value) or value.get("kind") == "synapse"
+        return {key: ("[redacted]" if re.fullmatch(r"(?i)(?:.*_)?(?:token|password|secret|authorization|api_key)", str(key))
+                      and not (key == "token" and receipt and re.fullmatch(r"[0-9a-f]{32}", str(item)))
+                      else redact_credentials(item)) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [redact_credentials(item) for item in value]
+    if not isinstance(value, str):
+        return value
+    value = re.sub(r"(?i)([a-z][a-z0-9+.-]*://)[^/\s@]+@", r"\1[redacted]@", value)
+    value = re.sub(r"(?i)((?:access_token|token|password|secret|api_key)=)[^&\s\"']+", r"\1[redacted]", value)
+    value = re.sub(r"\b(?:gh[pousr]_[A-Za-z0-9_]+|github_pat_[A-Za-z0-9_]+|sk-[A-Za-z0-9_-]+)\b", "[redacted]", value)
+    return re.sub(r"(?i)(Bearer\s+)[A-Za-z0-9._~+/-]+", r"\1[redacted]", value)
 
 
 def checkouts_root() -> Path:
@@ -165,6 +229,127 @@ def exclude_paths(root: Path | str, lines: Iterable[str]) -> bool:
     return True
 
 
+def _same_path(a: Path | str, b: Path | str) -> bool:
+    try:
+        return os.path.normcase(str(Path(a).resolve())) == os.path.normcase(str(Path(b).resolve()))
+    except OSError:
+        return False
+
+
+def is_minted_worktree(path: Path | str, runner: Runner | None = None) -> bool:
+    """True only for a marker Convoy wrote for THIS folder: parseable, minted_by convoy, its
+    recorded worktree is this folder, git resolves this folder's common dir to the recorded one, and
+    the recorded checkout still lists this worktree. A primary checkout, a plain folder, a reused
+    or re-added worktree, a submodule or a copied marker is the person's repo."""
+    run = runner or run_argv
+    wt = Path(path)
+    if not (wt / ".git").is_file():
+        return False
+    try:
+        data = json.loads((wt / MINTED_MARKER).read_text(encoding="utf-8-sig"))
+    except (OSError, ValueError):
+        return False
+    if not (isinstance(data, dict) and data.get("minted_by") == "convoy"):
+        return False
+    if not all(isinstance(data.get(k), str) and data[k] for k in ("worktree", "checkout", "common_dir")):
+        return False
+    if not _same_path(data["worktree"], wt):
+        return False
+    try:
+        common = run(["git", "-C", str(wt), "rev-parse", "--path-format=absolute", "--git-common-dir"], None, timeout=30)
+        listed = run(["git", "-C", data["checkout"], "worktree", "list", "--porcelain"], None, timeout=30)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    if common.returncode != 0 or not _same_path((common.stdout or "").strip(), data["common_dir"]):
+        return False
+    if listed.returncode != 0:
+        return False
+    return any(line.startswith("worktree ") and _same_path(line[len("worktree "):], wt)
+               for line in (listed.stdout or "").splitlines())
+
+
+def _write_minted_marker(path: Path, checkout: Path, branch: str) -> bool:
+    from .layer import utc_now
+    common = git_common_dir(path)
+    if common is None:
+        return False
+    try:
+        dest = path / MINTED_MARKER
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_text(json.dumps({"minted_by": "convoy", "worktree": str(path.resolve()), "checkout": str(checkout),
+                                    "common_dir": str(Path(common).resolve()), "branch": branch,
+                                    "minted_at": utc_now()}) + "\n", encoding="utf-8")
+        return True
+    except OSError:
+        return False
+
+
+# The person's --write-repo-files, remembered for one folder so a later launch there refreshes what
+# they opted into. Bound like the marker (this folder, its git common dir), so a copied or committed
+# record opts nothing else in; every writer adds it to info/exclude. --no-write-repo-files removes it.
+REPO_FILES_RECORD = Path(".convoy") / "repo-files.json"
+
+
+def _git_common(path: Path | str, runner: Runner | None = None) -> str | None:
+    """git's own answer for the folder's common dir, resolved; None outside a checkout."""
+    try:
+        r = (runner or run_argv)(["git", "-C", str(path), "rev-parse", "--path-format=absolute", "--git-common-dir"],
+                                 None, timeout=30)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    out = (r.stdout or "").strip()
+    return str(Path(out).resolve()) if r.returncode == 0 and out else None
+
+
+def record_repo_files_opt_in(path: Path | str, runner: Runner | None = None) -> bool:
+    from .layer import utc_now
+    try:
+        dest = Path(path) / REPO_FILES_RECORD
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_text(json.dumps({"write_repo_files": True, "worktree": str(Path(path).resolve()),
+                                    "common_dir": _git_common(path, runner), "at": utc_now()}) + "\n",
+                        encoding="utf-8")
+        return True
+    except OSError:
+        return False
+
+
+def withdraw_repo_files_opt_in(path: Path | str) -> bool:
+    """Remove the opt-in record; True when one was there."""
+    dest = Path(path) / REPO_FILES_RECORD
+    try:
+        dest.unlink()
+        return True
+    except FileNotFoundError:
+        return False
+
+
+def repo_files_opted_in(path: Path | str, runner: Runner | None = None) -> bool:
+    """True only for a record written for THIS folder: its worktree and git common dir both match."""
+    try:
+        data = json.loads((Path(path) / REPO_FILES_RECORD).read_text(encoding="utf-8-sig"))
+    except (OSError, ValueError):
+        return False
+    if not (isinstance(data, dict) and data.get("write_repo_files") is True):
+        return False
+    if not (isinstance(data.get("worktree"), str) and _same_path(data["worktree"], path)):
+        return False
+    common = data.get("common_dir")
+    here = _git_common(path, runner)
+    return common == here if common is None or here is None else _same_path(common, here)
+
+
+def is_tracked(path: Path | str, rel: str, runner: Runner | None = None) -> bool:
+    """True when git tracks `rel` in the worktree at `path`; False for a plain folder or on any error."""
+    if git_common_dir(path) is None:
+        return False
+    try:
+        r = (runner or run_argv)(["git", "-C", str(path), "ls-files", "--error-unmatch", "--", rel], None, timeout=30)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return r.returncode == 0
+
+
 def clone(url: str, dest: Path | str, runner: Runner | None = None) -> dict[str, Any]:
     run = runner or run_argv
     target = Path(dest)
@@ -196,7 +381,8 @@ def mint_worktrees(checkout: Path | str, n: int, names: list[str] | None = None,
     """One worktree per seat, DERIVED from the checkout: a sibling directory
     <checkout>-wt-<name> on branch convoy/<name>, the way this repo's own
     worktrees are laid out. Stops at the first git failure
-    and reports what was minted; an existing sibling is reused, not re-added."""
+    and reports what was minted; an existing sibling is reused, not re-added. Only a worktree
+    created here gets the minted marker (is_minted_worktree); a reused one does not."""
     run = runner or run_argv
     base = Path(checkout)
     count = int(n)
@@ -234,6 +420,8 @@ def mint_worktrees(checkout: Path | str, n: int, names: list[str] | None = None,
             card["error"] = "git worktree add exited " + str(r.returncode) + ": " + (r.stderr or "").strip()
             return card
         row["created"] = True
+        # A fake runner creates no folder; the marker never makes one.
+        row["marker"] = path.is_dir() and _write_minted_marker(path, base, branch)
         # A worktree shares the checkout's info/exclude through its common
         # dir; writing it per seat keeps crew honest when the checkout was
         # bound before this rule existed.

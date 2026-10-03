@@ -8,7 +8,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from .bringup import bring_up, hide_windows, live_applier, live_runner, terminals
+from .bringup import TRACKED_SETTINGS_NOTE, _convoy_named, dry_opt_in_refusal, bring_up, hide_windows, live_applier, live_runner, repo_files_for, terminals
 from .consent import grant_consent
 from .install import install as install_harness
 from .onboard import onboard as run_onboard
@@ -19,7 +19,8 @@ from .crew import await_seated, crew
 from .glance import build_glance, run_tray
 from .graph import build_graph, neighborhood
 from .graph_html import render_html, resume_neuron
-from .identity import ensure_inbox_hooks, install_neuron_identity
+from .identity import (CLAUDE_SETTINGS_RELATIVE, CODEX_HOOKS_RELATIVE, ensure_inbox_hooks, install_neuron_identity,
+                       person_files_missing)
 from .index import find_root, index_path, list_threads, prune_threads, routable_threads
 from .activity import neuron_activity
 from .panes import bodies, enumerate_processes, identify
@@ -27,6 +28,8 @@ from .provenance import build_provenance, rebase_check, record_commit
 from .layer import SCHEMA_VERSION, STAMPED_KINDS, conductor_stamp, feed_since, hook, parse_since
 from .rail import build_rail, root_for
 from .relaunch import relaunch
+from .repo import (REPO_FILES_RECORD, exclude_paths, is_minted_worktree, is_tracked, record_repo_files_opt_in,
+                   repo_files_opted_in, withdraw_repo_files_opt_in)
 from .lifecycle import join, pass_lead, seated_ack, swap
 from .focus import focus_seat
 from .widget import run_widget
@@ -39,6 +42,13 @@ from .targeted_launch import active_pane_runner, launch_choices, launch_seat
 from .usage import probe
 
 _SEAT_KEYS = ("model", "effort", "where", "title")
+_WRITE_REPO_FILES_HELP = ("also write the repo files a person could own (AGENTS.md, .codex/hooks.json) "
+                          "outside a worktree Convoy minted")
+
+
+def _opt_in(args: argparse.Namespace) -> bool | None:
+    """--write-repo-files is the person's opt-in; without it a worktree's marker decides."""
+    return True if getattr(args, "write_repo_files", False) else None
 
 
 def _seat_spec(text: str) -> dict:
@@ -100,6 +110,7 @@ def main(argv: list[str] | None = None) -> int:
     rlx.add_argument("--seat", action="append", help="relaunch only this chair (repeat); default every chair. Use it when some panes are still alive")
     rlx.add_argument("--take-over", action="store_true", help="evict a chair whose body of the current incarnation is still alive: writes kind=evicted, asks the pane host to close THAT life, and launches only once it is recorded as exited. Without it a live body refuses the relaunch")
     rlx.add_argument("--no-widget", action="store_true", help="do not start the widget service after bring-up")
+    rlx.add_argument("--write-repo-files", action="store_true", help=_WRITE_REPO_FILES_HELP)
 
     rl = sub.add_parser("rail", help="the strip under the panes: feed events since, seats connected, usage per harness (null is unknown, never 0), last stamp; reads only the thread, so any neuron sees the same rail")
     rl.add_argument("--since", default="10m", help="feed window (default 10m)")
@@ -186,6 +197,7 @@ def main(argv: list[str] | None = None) -> int:
     jn.add_argument("--as", dest="author", help="authoring seat (neuron-authored)")
     jn.add_argument("--launch", action="store_true", help="split exactly one fresh chair into the active supported pane host")
     jn.add_argument("--consent", help="one-time scoped consent returned by `convoy consent --grant`")
+    jn.add_argument("--write-repo-files", action="store_true", help=_WRITE_REPO_FILES_HELP)
 
     cw = sub.add_parser("crew", help="N neurons at once: mint one worktree per seat, join every chair with a boot prompt, bring them up in ONE window")
     cw.add_argument("--allow-unverified-launch", action="store_true", help="explicitly accept unverified harness launch eligibility for --launch")
@@ -195,6 +207,7 @@ def main(argv: list[str] | None = None) -> int:
     cw.add_argument("--thread", help="must match the bound thread")
     cw.add_argument("--launch", action="store_true", help="spawn the window once; default writes chairs and shows the argv")
     cw.add_argument("--no-widget", action="store_true", help="do not start the widget service after --launch")
+    cw.add_argument("--write-repo-files", action="store_true", help=_WRITE_REPO_FILES_HELP)
 
     aw = sub.add_parser("await-seated", help="observe the chairs' seated acks (connected | pending | stale) with the seconds waited")
     aw.add_argument("--seat", action="append", required=True, help="chair session_id (repeat)")
@@ -207,6 +220,7 @@ def main(argv: list[str] | None = None) -> int:
     ln.add_argument("--seat", required=True, help="fresh join/swap chair session_id")
     ln.add_argument("--dry-run", action="store_true")
     ln.add_argument("--consent", help="one-time scoped consent returned by `convoy consent --grant`")
+    ln.add_argument("--write-repo-files", action="store_true", help=_WRITE_REPO_FILES_HELP)
 
     cs = sub.add_parser("consent", help="grant a prior consent request after the user explicitly approves it")
     cs.add_argument("--grant", required=True, metavar="REQUEST_ID")
@@ -264,6 +278,10 @@ def main(argv: list[str] | None = None) -> int:
 
     sk = sub.add_parser("skills", help="(re)install the Convoy-owned AGENTS.md pointer and convoy-end copies into a worktree; refreshes stale copies after an upgrade")
     sk.add_argument("--worktree", required=True)
+    sk_opt = sk.add_mutually_exclusive_group()
+    sk_opt.add_argument("--write-repo-files", action="store_true", help=_WRITE_REPO_FILES_HELP)
+    sk_opt.add_argument("--no-write-repo-files", action="store_true",
+                        help="withdraw an earlier --write-repo-files for this worktree; files already written stay")
 
     sc = sub.add_parser("start-card", help="read-only: the start card for this thread (where, who, commitments, board, next); one line per item")
     sc.add_argument("--json", action="store_true", help="print the whole card as JSON")
@@ -288,6 +306,14 @@ def main(argv: list[str] | None = None) -> int:
 
     at = sub.add_parser("attach")
     at.add_argument("convoy_id", nargs="?")
+    at.add_argument("--read-only", action="store_true", help="legacy catch-up only; does not seat this session")
+    at.add_argument("--as-harness", help="assert the calling harness; never substitutes for native proof")
+    ls = sub.add_parser("list", help="deterministic machine-wide thread picker")
+    ls.add_argument("--json", action="store_true")
+    ls.add_argument("--all", action="store_true")
+    ls.add_argument("--since")
+    dt = sub.add_parser("detach", help="detach this session without closing it")
+    dt.add_argument("--thread")
 
     bn = sub.add_parser("bind")
     bn.add_argument("--thread", required=True)
@@ -302,6 +328,7 @@ def main(argv: list[str] | None = None) -> int:
         bu.add_argument("convoy_id", nargs="?")
         bu.add_argument("--thread")
         bu.add_argument("--dry-run", action="store_true")
+        bu.add_argument("--write-repo-files", action="store_true", help=_WRITE_REPO_FILES_HELP)
 
     tm = sub.add_parser("terminals")
     tm.add_argument("convoy_id", nargs="?")
@@ -341,6 +368,10 @@ def main(argv: list[str] | None = None) -> int:
     cd.add_argument("--label", default=None, help="with mint: what holds this bearer (a connector name); never the bearer itself")
     cd.add_argument("--conductor", default=None, help="with mint: the conductor id this bearer speaks as (default grok-bot)")
 
+    wk = sub.add_parser("wake", help="wakes on this root: enable (a person opts in), disable, status (read-only)")
+    wk.add_argument("action", choices=["enable", "disable", "status"])
+    wk.add_argument("--by", default="person", help="with enable: who turns wakes on; recorded as a claim")
+
     gl = sub.add_parser("glance")
     gl.add_argument("--thread")
     gl.add_argument("--convoy-id")
@@ -348,13 +379,17 @@ def main(argv: list[str] | None = None) -> int:
     gl.add_argument("--tray", action="store_true", help="render glance in tray/app-indicator")
     gl.add_argument("--refresh-seconds", type=int, default=60)
 
-    go = sub.add_parser("start", help="thin alias: git URL -> clone once + onboard --github yes; local path -> onboard --github no; no repo -> picker from recent(); already-live -> attach, never bring_up")
-    go.add_argument("repo", nargs="?", help="git URL or local checkout path")
+    go = sub.add_parser("start", help="resolve a path, URL, owner/repo or project name; safely refresh and onboard; never launch")
+    go.add_argument("repo", nargs="?", help="local path, git URL, owner/repo or semantic project name; omitted: thread picker")
     go.add_argument("--to", action="append", help="harness you already have (repeat); default: those on PATH")
     go.add_argument("--thread")
     go.add_argument("--cancel", action="store_true", help="do not bind; leave unbound")
     go.add_argument("--write-repo-files", action="store_true",
                     help="also write the hooks, AGENTS.md pointer and skill copies listed as would_write into the repo")
+    go.add_argument("--search-root", action="append", help="project search directory, one level deep (repeat)")
+    go.add_argument("--scan-budget", type=float, default=5.0, help="local discovery time budget in seconds")
+    go.add_argument("--create", action="store_true", help="explicitly create an unmatched bare-name private GitHub repo")
+    go.add_argument("--all", action="store_true", help="expand linked worktrees in an ambiguous checkout picker")
 
     ob = sub.add_parser("onboard")
     ob.add_argument("--to", action="append", required=True, help="named harness id(s) you already have")
@@ -461,7 +496,11 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps({"schema_version": SCHEMA_VERSION, "since": args.since, "since_iso": since_iso, "events": rows}))
         return 0
     if args.cmd == "relaunch":
-        card = relaunch(root, thread=args.thread, runner=None if args.dry_run else live_runner, timeout=args.timeout, seats=args.seat, take_over=args.take_over, allow_unverified_launch=args.allow_unverified_launch)
+        if args.dry_run and args.write_repo_files:
+            print(json.dumps({"ok": False, "dry_run": True, "chairs": [], "error": dry_opt_in_refusal(args.cmd, cli=True)}))
+            return 1
+        card = relaunch(root, thread=args.thread, runner=None if args.dry_run else live_runner, timeout=args.timeout, seats=args.seat, take_over=args.take_over, allow_unverified_launch=args.allow_unverified_launch,
+                       write_repo_files=_opt_in(args))
         if card.get("ok") and not args.dry_run:
             card["widget_service"] = auto_widget_service(disabled=bool(args.no_widget))
         print(json.dumps(card))
@@ -591,14 +630,15 @@ def main(argv: list[str] | None = None) -> int:
             if args.cmd == "join":
                 card = join(root, args.to, session_id=args.session_id, worktree=args.worktree,
                             model=args.model, title=args.title, effort=args.effort, author=args.author,
-                            where=args.where)
-                if args.launch:
+                            where=args.where, calling_session=not args.launch)
+                if args.launch and not card.get("already"):
                     launched = launch_seat(
                         root,
                         card["seat"]["session_id"],
                         runner=active_pane_runner,
                         consent=args.consent,
                         allow_unverified_launch=args.allow_unverified_launch,
+                        write_repo_files=_opt_in(args),
                     )
                     card["launch"] = launched
                     card["ok"] = bool(card.get("ok")) and bool(launched.get("ok"))
@@ -647,7 +687,8 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps({"ok": False, "error": str(e)}))
             return 1
         card = crew(root, seats, thread=args.thread, checkout=args.checkout,
-                    runner=live_runner if args.launch else None, allow_unverified_launch=args.allow_unverified_launch)
+                    runner=live_runner if args.launch else None, allow_unverified_launch=args.allow_unverified_launch,
+                    write_repo_files=_opt_in(args))
         if card.get("ok") and args.launch:
             card["widget_service"] = auto_widget_service(disabled=bool(args.no_widget))
         print(json.dumps(card))
@@ -671,6 +712,7 @@ def main(argv: list[str] | None = None) -> int:
             runner=None if args.dry_run else active_pane_runner,
             consent=args.consent,
             allow_unverified_launch=args.allow_unverified_launch,
+            write_repo_files=_opt_in(args),
         )
         print(json.dumps(card))
         return 0 if card.get("ok") else 1
@@ -752,10 +794,29 @@ def main(argv: list[str] | None = None) -> int:
         # Refresh BOTH halves of a neuron's install: the skill text and the
         # inbox hooks (probed command + root pointer). A long-lived pane that
         # got only the text stayed deaf (audit 2026-09-03).
-        skills = install_neuron_identity(args.worktree)
-        hooks = ensure_inbox_hooks(args.worktree, root=root if read_id(root) else None)
+        # The same rule as a launch: every file in a worktree Convoy minted or one the person opted
+        # into before, else only the Convoy-named ones (kept out of git) until --write-repo-files.
+        withdrawn = withdraw_repo_files_opt_in(args.worktree) if args.no_write_repo_files else None
+        if args.write_repo_files:
+            record_repo_files_opt_in(args.worktree)
+        person = repo_files_opted_in(args.worktree) or is_minted_worktree(args.worktree)
+        local = CLAUDE_SETTINGS_RELATIVE.as_posix()
+        skip = ({local} if is_tracked(args.worktree, local) else set()) | (
+            set() if person else {CODEX_HOOKS_RELATIVE.as_posix()})
+        skills = install_neuron_identity(args.worktree, person_files=person)
+        hooks = ensure_inbox_hooks(args.worktree, root=root if read_id(root) else None, skip=skip)
+        missing = [] if person else person_files_missing(args.worktree)
         card = {**skills, "skills_ok": bool(skills.get("ok")), "hooks": hooks,
+                "would_write": sorted(set(missing) | (skip & {local})),
+                "notes": [TRACKED_SETTINGS_NOTE] if local in skip else [],
+                **({"withdrawn": withdrawn} if withdrawn is not None else {}),
                 "ok": bool(skills.get("ok")) and bool(hooks.get("ok"))}
+        try:
+            record = ["/" + REPO_FILES_RECORD.as_posix()] if args.write_repo_files else []
+            card["excluded"] = exclude_paths(args.worktree, ["/" + f for f in repo_files_for(None)
+                                                             if _convoy_named(f) and f not in skip] + record)
+        except OSError as e:
+            card["exclude_error"] = type(e).__name__ + ": " + str(e)
         print(json.dumps(card))
         return 0 if card["ok"] else 1
     if args.cmd == "resume":
@@ -767,7 +828,26 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(card))
         return 0 if card.get("ok") else 1
     if args.cmd == "attach":
-        card = attach(root, convoy_id=args.convoy_id)
+        from .sessions import attach_session
+        from .thread_list import format_list
+        card = attach(root, convoy_id=args.convoy_id) if args.read_only else attach_session(args.convoy_id, as_harness=args.as_harness)
+        if "list" in card:
+            print(format_list(card["list"]))
+        print(json.dumps(card))
+        return 0 if card.get("ok") else 1
+    if args.cmd == "list":
+        from .thread_list import thread_list, format_list
+        try:
+            card = thread_list(all_threads=args.all, since=args.since)
+        except ValueError as exc:
+            print(json.dumps({"ok": False, "error": str(exc)}))
+            return 1
+        print(json.dumps(card) if args.json else format_list(card))
+        return 0
+    if args.cmd == "detach":
+        from .sessions import detach_session
+        from .inbox import resolve_root
+        card = detach_session(root=root if root_explicit else (resolve_root(Path.cwd()) or root), thread=args.thread)
         print(json.dumps(card))
         return 0 if card.get("ok") else 1
     if args.cmd == "lead":
@@ -795,8 +875,12 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps({"ok": False, "error": str(e)}))
             return 1
     if args.cmd in ("bring-up", "open"):
+        if args.dry_run and args.write_repo_files:
+            print(json.dumps({"ok": False, "dry_run": True, "windows": [], "error": dry_opt_in_refusal(args.cmd, cli=True)}))
+            return 1
         runner = None if args.dry_run else live_runner
-        card = bring_up(root, convoy_id=args.convoy_id, thread=args.thread, runner=runner, allow_unverified_launch=args.allow_unverified_launch)
+        card = bring_up(root, convoy_id=args.convoy_id, thread=args.thread, runner=runner,
+                        allow_unverified_launch=args.allow_unverified_launch, write_repo_files=_opt_in(args))
         print(json.dumps(card))
         if args.dry_run:
             existing = {s.get("session_id") for s in list_seats(root, convoy_id=card.get("convoy_id"))}
@@ -828,6 +912,24 @@ def main(argv: list[str] | None = None) -> int:
             card = bearer.revoke(args.id or "") if args.id else {"ok": False, "error": "revoke needs the bearer id (see `convoy conductor list`)"}
         else:
             card = {"ok": True, "path": str(bearer.conductors_path()), "conductors": bearer.list_conductors()}
+        print(json.dumps(card))
+        return 0 if card.get("ok") else 1
+    if args.cmd == "wake":
+        from .wake_local import disable, enable
+        from .wake_service import wake_status
+        if not (root / ".convoy" / "id").is_file():
+            card = {"ok": False, "error": "not a Convoy thread root: " + str(root)}
+        elif args.action == "enable":
+            try:
+                enable(root, by=args.by)
+                card = wake_status(root)
+            except ValueError as e:
+                card = {"ok": False, "error": str(e)}
+        elif args.action == "disable":
+            was = disable(root)
+            card = {**wake_status(root), "was_enabled": was}
+        else:
+            card = wake_status(root)
         print(json.dumps(card))
         return 0 if card.get("ok") else 1
     if args.cmd == "install":
@@ -888,6 +990,10 @@ def main(argv: list[str] | None = None) -> int:
             thread=args.thread,
             cancel=bool(args.cancel),
             write_repo_files=bool(args.write_repo_files),
+            search_roots=args.search_root,
+            scan_budget=args.scan_budget,
+            create=args.create,
+            all_worktrees=args.all,
         )
         print(json.dumps(card))
         return 0 if card.get("ok") else 1

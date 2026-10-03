@@ -179,7 +179,9 @@ class WhatAFirstRunWrites(RepoRoot):
             written = Path(tempfile.mkdtemp(prefix="convoy-safety-wt-"))
             said = ensure_first_run({"to": to, "worktree": str(listed)}, root=listed, write_repo_files=False)
             ensure_first_run({"to": to, "worktree": str(written)}, root=written, write_repo_files=True)
-            real = {p.relative_to(written).as_posix() for p in written.rglob("*") if p.is_file()}
+            # .convoy/ is Convoy's own record (the opt-in lands there), not a repo file.
+            real = {p.relative_to(written).as_posix() for p in written.rglob("*")
+                    if p.is_file() and p.relative_to(written).parts[0] != ".convoy"}
             self.assertEqual(set(said["would_write"]), real, to)
             self.assertEqual(list(listed.iterdir()), [], to + ": listing writes nothing")
 

@@ -365,7 +365,9 @@ class ServerBuildId(unittest.TestCase):
             self.skipTest("no git checkout: build stamp legitimately absent")
         resp = handle_rpc(Path(tempfile.mkdtemp()), {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}})
         version = resp["result"]["serverInfo"]["version"]
-        self.assertEqual(version, "0.1.0+" + build)
+        from convoy import mcp_http
+
+        self.assertEqual(version, mcp_http._BASE_VERSION + "+" + build)
 
     def test_server_version_survives_git_timeout(self):
         from unittest import mock
@@ -376,9 +378,10 @@ class ServerBuildId(unittest.TestCase):
             raise subprocess.TimeoutExpired(cmd="git", timeout=10)
 
         with mock.patch.object(mcp_http.subprocess, "run", boom):
-            self.assertEqual(mcp_http._server_version(), "0.1.0")
+            self.assertEqual(mcp_http._server_version(), mcp_http._BASE_VERSION)
 
     def test_server_version_marks_dirty_checkout(self):
+        from convoy import mcp_http
         from convoy.mcp_http import _server_version
 
         repo = Path(tempfile.mkdtemp())
@@ -390,7 +393,7 @@ class ServerBuildId(unittest.TestCase):
         ):
             self.assertEqual(subprocess.run(argv, capture_output=True).returncode, 0)
         clean = _server_version(repo_dir=repo)
-        self.assertTrue(clean.startswith("0.1.0+"))
+        self.assertTrue(clean.startswith(mcp_http._BASE_VERSION + "+"))
         self.assertFalse(clean.endswith("-dirty"))
         (repo / "f.txt").write_text("x", encoding="utf-8")
         subprocess.run(["git", "-C", str(repo), "add", "f.txt"], capture_output=True)

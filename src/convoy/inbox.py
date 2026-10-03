@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any, Iterator
 
 from .convoy import list_seats, observe_resume
+from .filelock import append_line, exclusive
 from .index import find_root
 from .layer import utc_now
 
@@ -104,9 +105,10 @@ def enqueue(
         "status": "pending",
     }
     dest = inbox_path(root, sid)
-    with dest.open("a", encoding="utf-8") as handle:
-        handle.write(json.dumps(row, separators=(",", ":")) + "\n")
-    return {**row, "file": str(dest)}
+    # Synced: a sent message is the thing that must survive a power loss. `durable` false means the
+    # row is written but the disk did not confirm it.
+    durable = append_line(dest, (json.dumps(row, separators=(",", ":")) + "\n").encode("utf-8"), fsync=True)
+    return {**row, "file": str(dest), "durable": durable}
 
 
 def _load(root: Path, session_id: str) -> list[dict[str, Any]]:
@@ -139,67 +141,50 @@ def _consumed_tokens(rows: list[dict[str, Any]]) -> set[str]:
     return found
 
 
-def pending(root: Path, session_id: str) -> list[dict[str, Any]]:
+def reply_index(feed_rows) -> dict[str, dict[str, str]]:
+    """One pass, proven authors only. Keep the latest receipt per chair/token."""
+    from .layer import _VERIFIED_METHODS
+    import re
+    answers = {}
+    for reply in feed_rows:
+        author = reply.get("from")
+        if (not isinstance(author, str) or not author or reply.get("author_claimed") or
+            reply.get("verified_by") not in _VERIFIED_METHODS or
+            reply.get("kind") not in ("note", "synapse", "send")):
+            continue
+        tokens = set(re.findall(r"\btoken=([a-fA-F0-9]{32})\b", str(reply.get("summary") or "")))
+        extra = reply.get("reply_tokens")
+        if isinstance(extra, list):
+            tokens.update(t for t in extra if isinstance(t, str))
+        dest = answers.setdefault(author, {})
+        for token in tokens:
+            dest[token] = max(dest.get(token, ""), str(reply.get("ts") or ""))
+    return answers
+
+
+def pending(root: Path, session_id: str, *, replies=None) -> list[dict[str, Any]]:
     rows = _load(root, session_id)
     taken = _consumed_tokens(rows)
+    from .layer import feed_since
+    if replies is None:
+        replies = reply_index(feed_since(root, "1970-01-01T00:00:00.000000Z"))
+    receipts = replies.get(session_id, {})
     out: list[dict[str, Any]] = []
     for row in rows:
         tok = row.get("token")
         if row.get("status") == "pending" and isinstance(tok, str) and tok and tok not in taken:
-            out.append(row)
+            if receipts.get(tok, "") <= str(row.get("ts") or ""):
+                out.append(row)
     return out
 
 
 @contextmanager
 def _exclusive(path: Path) -> Iterator[None]:
-    """Inter-process lock around one inbox file. First-marker-wins is the
-    correctness rule; the lock only shrinks the race window."""
-    lock_path = path.with_name(path.name + ".lock")
-    lock_path.parent.mkdir(parents=True, exist_ok=True)
-    fh = open(lock_path, "a+b")
-    locked = False
-    try:
-        deadline = time.time() + 5
-        if os.name == "nt":
-            import msvcrt
-            if fh.seek(0, os.SEEK_END) == 0:
-                fh.write(b"0")
-                fh.flush()
-            while True:
-                fh.seek(0)
-                try:
-                    msvcrt.locking(fh.fileno(), msvcrt.LK_NBLCK, 1)
-                    locked = True
-                    break
-                except OSError:
-                    if time.time() > deadline:
-                        raise TimeoutError("inbox lock")
-                    time.sleep(0.01)
-        else:
-            import fcntl
-            while True:
-                try:
-                    fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-                    locked = True
-                    break
-                except OSError:
-                    if time.time() > deadline:
-                        raise TimeoutError("inbox lock")
-                    time.sleep(0.01)
+    """Inter-process lock around one inbox file (filelock.exclusive, the one lock
+    every append also takes). First-marker-wins is the correctness rule; the lock
+    only shrinks the race window."""
+    with exclusive(path, timeout=5):
         yield
-    finally:
-        if locked:
-            try:
-                if os.name == "nt":
-                    import msvcrt
-                    fh.seek(0)
-                    msvcrt.locking(fh.fileno(), msvcrt.LK_UNLCK, 1)
-                else:
-                    import fcntl
-                    fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
-            except OSError:
-                pass
-        fh.close()
 
 
 def drain(root: Path, session_id: str) -> list[dict[str, Any]]:
@@ -219,23 +204,18 @@ def drain(root: Path, session_id: str) -> list[dict[str, Any]]:
             return []
         drain_id = uuid.uuid4().hex
         now = utc_now()
-        with dest.open("a", encoding="utf-8") as handle:
-            for row in waiting:
-                marker = {
-                    "ts": now,
-                    "kind": "consumed-marker",
-                    "token": row.get("token"),
-                    "session_id": sid,
-                    "status": "consumed",
-                    "consumed_at": now,
-                    "drain_id": drain_id,
-                }
-                handle.write(json.dumps(marker, separators=(",", ":")) + "\n")
-            handle.flush()
-            try:
-                os.fsync(handle.fileno())
-            except OSError:
-                pass
+        markers = "".join(json.dumps({
+            "ts": now,
+            "kind": "consumed-marker",
+            "token": row.get("token"),
+            "session_id": sid,
+            "status": "consumed",
+            "consumed_at": now,
+            "drain_id": drain_id,
+        }, separators=(",", ":")) + "\n" for row in waiting)
+        # A failed write raises and marks nothing, so the drain is retried. A failed sync after the
+        # write still hands the rows over below: they are marked consumed, so this drain owns them.
+        append_line(dest, markers.encode("utf-8"), fsync=True)
         first: dict[str, str] = {}
         for row in _load(root, sid):
             tok = row.get("token")
@@ -462,7 +442,15 @@ def hook_pretooluse(cwd: str | Path | None = None) -> dict[str, Any]:
     root = resolve_root(start) or start
     # Read the payload once: stdin is a stream and the second read is empty.
     payload = _hook_payload_from_stdin()
-    matches = seats_for_worktree(root, start)
+    from .sessions import proven_session_chair
+    try:
+        proven_root, proven_seat = proven_session_chair(start)
+    except ValueError as exc:
+        return {"hookSpecificOutput": {"hookEventName": _hook_event_name(payload), "additionalContext": "Convoy inbox refuses: " + str(exc)}}
+    if proven_root is not None:
+        root, matches = proven_root, [proven_seat]
+    else:
+        matches = seats_for_worktree(root, start)
     if len(matches) > 1:
         chairs = [str(r.get("session_id") or "") for r in matches]
         event = _hook_event_name(payload)
@@ -478,6 +466,8 @@ def hook_pretooluse(cwd: str | Path | None = None) -> dict[str, Any]:
             }
         }
     seat = matches[0] if matches else None
+    if seat and seat.get("detached"):
+        return {}
     sid = str((seat or {}).get("session_id") or "").strip()
     event = _hook_event_name(payload)
     if sid:
@@ -540,6 +530,9 @@ def wait_for_pending(root: Path, session_id: str, *, timeout: float = 3600.0, in
     step = max(0.05, float(interval))
     start = clk()
     while True:
+        detached = any(s.get("session_id") == sid and s.get("detached") for s in list_seats(root))
+        if detached:
+            return {"ok": False, "session_id": sid, "error": "detached; attach again", "pending": [], "n": 0}
         waiting = pending(root, sid)
         waited = max(0.0, clk() - start)
         if waiting or waited >= budget:

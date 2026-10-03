@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from .context import pack
+from .filelock import append_line
 from .harness_contract import effort_applied, validate_effort, validate_model, validate_where
 from .index import record as index_record
 from .layer import SCHEMA_VERSION, feed_since, hook
@@ -203,8 +204,7 @@ def seat(
     }
     path = _seats_path(root)
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("a", encoding="utf-8") as f:
-        f.write(json.dumps(row, separators=(",", ":")) + "\n")
+    append_line(path, (json.dumps(row, separators=(",", ":")) + "\n").encode("utf-8"))
     index_record(root, cid, thread or None)
     register(
         root,
@@ -307,8 +307,7 @@ def set_seat_agent(root: Path, session_id: str, agent: str) -> dict[str, Any] | 
         return None
     updated = {**row, "agent": val}
     path = _seats_path(root)
-    with path.open("a", encoding="utf-8") as f:
-        f.write(json.dumps(updated, separators=(",", ":")) + "\n")
+    append_line(path, (json.dumps(updated, separators=(",", ":")) + "\n").encode("utf-8"))
     return updated
 
 
@@ -380,8 +379,7 @@ def update_seat(root: Path, session_id: str, **changes: Any) -> dict[str, Any]:
     thread = read_thread(root) or ""
     updated["resume_key"] = make_resume_key(cid, thread, str(updated.get("to") or ""), updated.get("worktree"))
     path = _seats_path(root)
-    with path.open("a", encoding="utf-8") as f:
-        f.write(json.dumps(updated, separators=(",", ":")) + "\n")
+    append_line(path, (json.dumps(updated, separators=(",", ":")) + "\n").encode("utf-8"))
     register(
         root,
         sid,
@@ -479,7 +477,7 @@ def _seats_with_usage(seats: list[dict[str, Any]], probe_fn=None) -> list[dict[s
         out.append(row)
     return out
 
-def _last_attach_ts(root: Path) -> str | None:
+def _last_attach_ts(root: Path, session_id: str | None = None) -> str | None:
     path = Path(root) / ".convoy" / "feed.jsonl"
     if not path.is_file():
         return None
@@ -493,11 +491,11 @@ def _last_attach_ts(root: Path) -> str | None:
                 row = json.loads(line)
             except json.JSONDecodeError:
                 continue
-            if row.get("kind") == "attach" and row.get("ts"):
+            if row.get("kind") == "attach" and row.get("ts") and (session_id is None or row.get("from") == session_id):
                 last = row["ts"]
     return last
 
-def attach(root: Path, convoy_id: str | None = None, probe_fn=None) -> dict[str, Any]:
+def attach(root: Path, convoy_id: str | None = None, probe_fn=None, *, session_id: str | None = None) -> dict[str, Any]:
     disk = read_id(root)
     if convoy_id is not None:
         if disk != convoy_id:
@@ -508,9 +506,10 @@ def attach(root: Path, convoy_id: str | None = None, probe_fn=None) -> dict[str,
             return {"ok": False, "error": "no convoy_id"}
         cid = disk
     thread = read_thread(root)
-    since = _last_attach_ts(root)
-    event = hook(root, kind="attach", summary="attach " + cid, extra={"convoy_id": cid, "thread": thread})
-    feed = feed_since(root, since) if since is not None else []
+    since = _last_attach_ts(root, session_id=session_id)
+    event = hook(root, kind="attach", summary="attach " + cid, author=session_id,
+                 extra={"convoy_id": cid, "thread": thread})
+    feed = feed_since(root, since or "1970-01-01T00:00:00.000000Z") if since is not None or session_id else []
     seats = _seats_with_usage(list_seats(root, convoy_id=cid), probe_fn=probe_fn)
     return {
         "ok": True,

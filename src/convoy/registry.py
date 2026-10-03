@@ -5,6 +5,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+from .filelock import append_line
+
 def registry_path(root: Path) -> Path:
     p = Path(root) / ".convoy" / "registry.jsonl"
     p.parent.mkdir(parents=True, exist_ok=True)
@@ -16,9 +18,7 @@ def register(root: Path, session_id: str, to: str, extra: dict[str, Any] | None 
     row = {"session_id": session_id, "to": to}
     if extra:
         row.update(extra)
-    path = registry_path(root)
-    with path.open("a", encoding="utf-8") as f:
-        f.write(json.dumps(row, separators=(",", ":")) + chr(10))
+    append_line(registry_path(root), (json.dumps(row, separators=(",", ":")) + chr(10)).encode("utf-8"))
     return row
 
 def lookup(root: Path, session_id: str) -> dict[str, Any] | None:

@@ -65,10 +65,32 @@ def join(
     effort: str | None = None,
     author: str | None = None,
     where: str | None = None,
+    calling_session: bool = False,
 ) -> dict[str, Any]:
     """Add a new chair: seat + boot prompt + kind=join row (token minted).
     where is local (default) or cloud; write_seat refuses a cloud chair the
     harness cannot attach, before any token is minted."""
+    from .panes import identify
+    from .harness_contract import canonical_harness_id
+    # MCP callers and conductor-created crew chairs cannot borrow the
+    # server/conductor's native identity. Only a local session joins itself.
+    self_request = (calling_session and not session_id and not title and
+                    (not worktree or Path(worktree).resolve() == Path.cwd().resolve()))
+    me = identify(root, allow_unseated=True) if self_request else {}
+    native = me.get("native_session") or {}
+    skipped = []
+    if (me.get("ok") and native.get("id") and native.get("via") in ("environment", "token") and
+        canonical_harness_id(to) == native.get("harness")):
+        from .sessions import attached_elsewhere
+        elsewhere = attached_elsewhere(root, native["harness"], native["id"], skipped=skipped)
+        if elsewhere:
+            raise ValueError("attached to " + elsewhere + "; detach first")
+    if me.get("ok") and me.get("chair") and me.get("via") in ("environment", "token"):
+        existing = _require_seat(root, me["chair"])
+        if canonical_harness_id(existing.get("to")) == canonical_harness_id(to):
+            if existing.get("detached"):
+                raise ValueError("detached; attach again")
+            return {"ok": True, "already": True, "chair": me["chair"], "seat": existing, "next": "receive", "ownership_skipped": skipped}
     sid = (session_id or "").strip() or ((title or to) + "-" + (read_thread(root) or "thread"))
     if any(row.get("session_id") == sid for row in list_seats(root)):
         raise ValueError("refuse join: chair already exists: " + sid)

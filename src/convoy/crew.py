@@ -73,6 +73,8 @@ def crew(
     mint_runner: GitRunner | None = None,
     author: str | None = None,
     allow_unverified_launch: bool = False,
+    write_repo_files: bool | None = None,
+    opt_in_route: str = "cli",
 ) -> dict[str, Any]:
     """Validate -> mint -> join each -> bring_up once. runner=None joins the
     chairs and shows the argv without spawning; live_runner pops the window.
@@ -118,7 +120,8 @@ def crew(
     for p in plan:
         try:
             joined = join(root, p["harness"], session_id=p["session_id"], worktree=minted.get(p["title"]),
-                          model=p["model"], title=p["title"], effort=p["effort"], author=author, where=p["where"])
+                          model=p["model"], title=p["title"], effort=p["effort"], author=author, where=p["where"],
+                          calling_session=False)
         except ValueError as e:
             card["error"] = "join refused for " + p["session_id"] + ": " + str(e) + " (" + str(len(card["seats"])) + " chairs already joined)"
             if card["seats"]:
@@ -127,7 +130,8 @@ def crew(
         card["seats"].append({**joined["seat"], "token": joined["token"], "connect_mode": connect_mode(p["harness"])})
     sids = [s["session_id"] for s in card["seats"]]
     try:
-        up = bring_up(root, thread=bound, runner=runner, session_ids=sids, allow_unverified_launch=allow_unverified_launch)
+        up = bring_up(root, thread=bound, runner=runner, session_ids=sids, allow_unverified_launch=allow_unverified_launch,
+                      write_repo_files=write_repo_files, opt_in_route=opt_in_route)
     except OSError as e:
         return _mark_partial(card, root, sids, "launch failed: " + str(e))
     card["windows"] = up.get("windows") or []
