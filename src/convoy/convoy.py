@@ -171,6 +171,23 @@ def seat(
                     "refuse seat: worktree " + wt + " is bound to thread " + other_thread + " (" + other +
                     "), not this root's " + (read_thread(root) or "?") + " (" + cid + "); use a worktree without"
                     " its own .convoy, or bind it to this thread")
+        # A worktree serves one thread: its root pointer (what every rootless hook in it
+        # resolves) already naming another thread's root refuses a chair of this one.
+        from .inbox import POINTER_RELS
+        for rel in POINTER_RELS:
+            pointer = Path(wt) / rel
+            try:
+                named = pointer.read_text(encoding="utf-8-sig").strip() if pointer.is_file() else ""
+            except OSError:
+                named = ""
+            if not named:
+                continue
+            other = read_id(Path(named)) if Path(named).is_dir() else None
+            if other and other != cid:
+                raise ValueError(
+                    "refuse seat: worktree " + wt + " serves thread " + (read_thread(Path(named)) or "?") +
+                    " (" + other + ") through its root pointer; a worktree serves one thread, so use"
+                    " another worktree for this thread")
         if session_id != CONDUCTOR and to != CONDUCTOR:
             holder = chair_holding_worktree(root, wt, except_session=session_id)
             if holder is not None:

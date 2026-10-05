@@ -12,6 +12,8 @@ from pathlib import Path
 from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from launcher_fixture import seated_launcher, widget_lead, with_seated_launcher  # noqa: E402
 
 from convoy.convoy import ensure_id, bind
 from convoy.widget_web import WidgetApi, choose_engine, serve
@@ -288,7 +290,10 @@ class Server(unittest.TestCase):
     def test_card_and_start_drive_the_original_spec(self):
         c = self.post("/api/card", {"root": str(self.root)})
         self.assertIn("rows", c); self.assertIn("recent", c)
+        # A widget launch records the thread's held lead; here the lead is a synthetic chair
+        # (widget_launcher_test covers the real lead and the refusal without one).
         with mock.patch("convoy.widget_web.WidgetApi.start", wraps=self.api.start) as w, \
+             mock.patch("convoy.launcher.widget_launcher", side_effect=widget_lead), \
              mock.patch("convoy.bringup.ensure_first_run", return_value={"ok": True, "prepared": False, "wrote": False, "settings": None, "home_written": False, "settings_home": None}), \
              mock.patch("convoy.onboard.probe", return_value=NULL_PROBE):
             r = self.post("/api/start", {"repo": str(self.root), "harnesses": ["codex", "grok"], "thread": "w", "github": False,
@@ -298,8 +303,10 @@ class Server(unittest.TestCase):
         cw = r["crew"]; self.assertEqual(len(cw["seats"]), 2); self.assertFalse(cw["launched"])
         self.assertEqual(sorted(s["to"] for s in cw["seats"]), ["codex", "grok"])
         st, _, m = self.get("/api/model"); m = json.loads(m)
-        self.assertEqual(len(m["threads"][0]["chairs"]), 2, "the new chairs show on the next refresh")
-        for ch in m["threads"][0]["chairs"]:
+        # the new chairs show on the next refresh, beside the lead that launched them
+        chairs = [ch for ch in m["threads"][0]["chairs"] if ch.get("session_id") != "synthetic-lead"]
+        self.assertEqual(len(chairs), 2, m["threads"][0]["chairs"])
+        for ch in chairs:
             self.assertEqual(ch["state"], "pending")   # launched is not connected
 
 

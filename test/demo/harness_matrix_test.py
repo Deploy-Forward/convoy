@@ -1,3 +1,4 @@
+import functools
 """Independent launch-eligibility and limit contracts. All identities and stores here are synthetic."""
 import sys
 import tempfile
@@ -7,11 +8,16 @@ from pathlib import Path
 from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from launcher_fixture import seated_launcher, widget_lead, with_seated_launcher  # noqa: E402
 
 from convoy import harness_contract
 from convoy.bringup import bring_up
 from convoy.convoy import bind, ensure_id
 from convoy.crew import crew
+
+crew = with_seated_launcher(crew)
+
 from convoy.lifecycle import join
 from convoy.graph_html import resume_neuron
 from convoy.relaunch import relaunch
@@ -252,7 +258,18 @@ class HarnessMatrix(unittest.TestCase):
         runner.assert_not_called()
 
     def setUp(self):
+        # An MCP launch records the conductor its bearer proves; these tests open the gate
+        # without a bearer, so the launch reads a synthetic conductor (conductor_launcher_test
+        # covers the refusal without one).
+        _conductor = mock.patch("convoy.mcp_http._launch_launcher", return_value={"kind": "conductor", "name": "grok-bot", "via": "bearer", "why": None})
+        _conductor.start()
+        self.addCleanup(_conductor.stop)
         self.tmp = tempfile.TemporaryDirectory()
+        # A launch records a proven launcher; these tests exercise launch mechanics, so the
+        # launching session is a synthetic seated chair (launcher_always_test covers refusal).
+        _launcher = mock.patch("convoy.cli.resolve_launcher", side_effect=seated_launcher)
+        _launcher.start()
+        self.addCleanup(_launcher.stop)
         self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name) / "thread"
         self.root.mkdir()

@@ -21,6 +21,8 @@ from pathlib import Path
 from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from launcher_fixture import seated_launcher, widget_lead, with_seated_launcher  # noqa: E402
 
 from convoy.convoy import bind, ensure_id, list_seats, read_id  # noqa: E402
 from convoy.lifecycle import join  # noqa: E402
@@ -86,7 +88,8 @@ class Base(unittest.TestCase):
 
     def add(self, where, root=None):
         from convoy.crew import add
-        return add(root or self.root, "codex", None, runner=self.runner, window_runner=self.window_runner, **where)
+        return add(root or self.root, "codex", None, runner=self.runner, window_runner=self.window_runner,
+                   launcher=seated_launcher(root or self.root), **where)
 
     def argv(self):
         return [str(a) for a in self.runner.call_args[0][0]]
@@ -146,7 +149,7 @@ class TheThreadsOwnWindow(Base):
 
     def test_a_dry_add_shows_the_same_argv_and_window(self):
         from convoy.crew import add
-        card = add(self.root, "codex", None, runner=None, **WT)
+        card = add(self.root, "codex", None, runner=None, launcher=seated_launcher(self.root), **WT)
         self.assertTrue(card["ok"], card)
         self.assertEqual(card["placement"], "thread-window")
         self.assertEqual(card["window"], self.name_for(self.root))

@@ -24,6 +24,7 @@ covers every project. So:
 Every home, Convoy home and repository is a temporary folder; no harness is started.
 """
 import io
+import functools
 import json
 import os
 import subprocess
@@ -35,11 +36,17 @@ from pathlib import Path
 from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from launcher_fixture import seated_launcher, widget_lead, with_seated_launcher  # noqa: E402
 
 from convoy.bringup import ensure_first_run
 from convoy.cli import main
 from convoy.convoy import bind, ensure_id, list_seats, seat
 from convoy.crew import add, crew
+
+add = with_seated_launcher(add)
+crew = with_seated_launcher(crew)
+
 from convoy.repo import mint_worktrees
 from convoy.synapse import fake_runner, send_one
 
@@ -153,6 +160,11 @@ class FirstRunWritesNoCodexHooksFile(Sandbox):
                          encoding="utf-8")
 
     def skills_notes(self, harness):
+        # Each call seats the worktree on a fresh thread. A worktree serves one thread, so the
+        # previous thread's root pointer is released first.
+        from convoy.inbox import POINTER_RELS
+        for rel in POINTER_RELS:
+            (self.wt / rel).unlink(missing_ok=True)
         root = Path(tempfile.mkdtemp(prefix="convoy-cxh-sroot-"))
         ensure_id(root)
         bind(root, "s")

@@ -8,6 +8,8 @@ from pathlib import Path
 from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from launcher_fixture import seated_launcher, widget_lead, with_seated_launcher  # noqa: E402
 
 from convoy.cli import main
 from convoy.convoy import bind, ensure_id, seat
@@ -49,6 +51,11 @@ def _run(root, *argv):
 
 class TargetedLaunch(unittest.TestCase):
     def setUp(self):
+        # A launch records a proven launcher; these tests exercise launch mechanics, so the
+        # launching session is a synthetic seated chair (launcher_always_test covers refusal).
+        _launcher = mock.patch("convoy.cli.resolve_launcher", side_effect=seated_launcher)
+        _launcher.start()
+        self.addCleanup(_launcher.stop)
         self.root = Path(tempfile.mkdtemp())
         ensure_id(self.root)
         bind(self.root, "launch-thread")

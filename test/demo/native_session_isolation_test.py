@@ -88,8 +88,11 @@ class ARealPaneSessionNeverReachesATest(unittest.TestCase):
                               capture_output=True, text=True, timeout=300, stdin=subprocess.DEVNULL)
         self.assertEqual(done.returncode, 0, done.stderr)
         out = json.loads(done.stdout.strip().splitlines()[-1])
-        self.assertEqual(out["rc"], 0, out)
-        self.assertEqual(len(out["seats"]), 1, "only the added neuron; the pane's session attached: " + json.dumps(out))
+        # The pane's session is invisible to the test, so the launcher is unproven: the add
+        # refuses before any write, and above all nothing attached it.
+        self.assertEqual(out["rc"], 1, out)
+        self.assertEqual(out["error"], "cannot prove who is launching", out)
+        self.assertEqual(out["seats"], [], "the pane's session attached: " + json.dumps(out))
         self.assertFalse((out["card_launcher"] or {}).get("attached"), out)
         self.assertEqual(out["lead"], "none", out)
 
@@ -113,8 +116,14 @@ from convoy.cli import main
 root = Path(sys.argv[1])
 first = {"ok": True, "prepared": False, "wrote": False, "settings": None, "home_written": False,
          "settings_home": None}
+# A proven launcher (a real seated chair), so the add reaches placement and the spawn the
+# guard must stop.
+from convoy.convoy import seat
+seat(root, "claude", "synthetic-launcher", resume="synthetic-launcher-native")
+launcher = {"kind": "seated", "chair": "synthetic-launcher", "via": "environment", "why": None}
 with mock.patch("convoy.bringup.ensure_first_run", return_value=first), \
-     mock.patch("convoy.targeted_launch.ensure_first_run", return_value=first):
+     mock.patch("convoy.targeted_launch.ensure_first_run", return_value=first), \
+     mock.patch("convoy.cli.resolve_launcher", return_value=launcher):
     import io, contextlib
     buf = io.StringIO()
     with contextlib.redirect_stdout(buf):

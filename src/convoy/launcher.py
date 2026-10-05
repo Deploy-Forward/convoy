@@ -31,13 +31,63 @@ STRONG = ("environment", "token")
 TEST_DEFAULT_PROCS: list[dict[str, Any]] | None = None
 
 
+UNPROVEN_ERROR = "cannot prove who is launching"
+UNPROVEN_NEXT = "run it from an agent session (Claude Code, Codex, ...), or `convoy attach <thread>` first"
+
+
+def launcher_of(value: Any) -> tuple[str | None, str | None]:
+    """(kind, name) of a recorded launched_by: a chair's session_id (the string shape every
+    chair launch records), or {"kind": "conductor", "name": ...} from an MCP launch. A dict
+    without a kind is a chair. (None, None) when nothing is recorded."""
+    if isinstance(value, dict):
+        name = str(value.get("name") or value.get("chair") or "").strip()
+        if not name:
+            return None, None
+        return (str(value.get("kind") or "chair"), name)
+    if isinstance(value, str) and value.strip():
+        return "chair", value.strip()
+    return None, None
+
+
+WIDGET_NO_LEAD = ("this thread has no lead: attach an agent session (convoy attach <thread>) so it can lead, "
+                  "then start again")
+
+
+def widget_launcher(root: Path) -> dict[str, Any] | None:
+    """The launcher a widget launch records: the thread's held lead chair (a lead row names
+    it and it is seated), so the neurons report to the lead. The widget is a person's local
+    UI with no agent session to prove; None when no lead is held, and the widget refuses."""
+    state, lead = _lead_view(root)
+    if state["status"] != "held" or not lead:
+        return None
+    return {"kind": "seated", "chair": lead, "via": "widget-lead", "source": "widget-lead", "why": None}
+
+
+def conductor_launcher(name: Any) -> dict[str, Any] | None:
+    """The resolved launcher of an MCP launch: the conductor its bearer proves, or None."""
+    text = str(name or "").strip()
+    return {"kind": "conductor", "name": text, "via": "bearer", "why": None} if text else None
+
+
+def refusal(resolved: dict[str, Any] | None) -> dict[str, Any] | None:
+    """The refusal card for a launcher that cannot be proven, or None. A launch with no
+    proven launcher would leave a neuron nobody can hear back from, so it never starts."""
+    if resolved is not None and resolved.get("kind") in ("seated", "unseated", "conductor"):
+        return None
+    why = "no launcher was given" if resolved is None else str(resolved.get("why") or "not proven")
+    return {"ok": False, "error": UNPROVEN_ERROR, "why": why, "next": UNPROVEN_NEXT}
+
+
 def _unproven(why: str) -> dict[str, Any]:
     return {"kind": "unproven", "chair": None, "via": None, "why": why}
 
 
 def resolve_launcher(root: Path, *, procs: list[dict[str, Any]] | None = None, env: Mapping[str, str] | None = None,
-                     cwd: str | None = None, pid: int | None = None) -> dict[str, Any]:
-    """Which session is launching? Read-only: {kind: seated|unseated|unproven, chair, via, why}."""
+                     cwd: str | None = None, pid: int | None = None,
+                     explicit_root: bool = False) -> dict[str, Any]:
+    """Which session is launching? Read-only: {kind: seated|unseated|unproven, chair, via, why}.
+    explicit_root: the root came from --root, so a cwd in another thread is information
+    (panes.identify), not a conflict."""
     from . import panes
     root = Path(root)
     if procs is None:
@@ -52,7 +102,7 @@ def resolve_launcher(root: Path, *, procs: list[dict[str, Any]] | None = None, e
     env = os.environ if env is None else env
     here = str(cwd or os.getcwd())
     try:
-        me = panes.identify(root, pid=pid, procs=procs, cwd=here, env=env)
+        me = panes.identify(root, pid=pid, procs=procs, cwd=here, env=env, explicit_root=explicit_root)
     except (OSError, ValueError) as exc:
         return _unproven("identity failed: " + str(exc))
     if me.get("ok") and me.get("chair"):
@@ -66,7 +116,8 @@ def resolve_launcher(root: Path, *, procs: list[dict[str, Any]] | None = None, e
     elif me.get("via") == "conflict":
         return _unproven("identity conflict: " + str(me.get("ask") or "sources disagree"))
     try:
-        un = panes.identify(root, pid=pid, procs=procs, cwd=here, env=env, allow_unseated=True)
+        un = panes.identify(root, pid=pid, procs=procs, cwd=here, env=env, allow_unseated=True,
+                            explicit_root=explicit_root)
     except (OSError, ValueError) as exc:
         return _unproven("identity failed: " + str(exc))
     native = un.get("native_session") or {}
@@ -79,16 +130,32 @@ def resolve_launcher(root: Path, *, procs: list[dict[str, Any]] | None = None, e
 
 def seat_launcher(root: Path, resolved: dict[str, Any]) -> dict[str, Any]:
     """Act on a resolved launcher: attach an unseated one. Returns the card's `launcher`
-    block, whose launched_by / launched_by_why the new seat records."""
+    block, whose launched_by the new seat records. An unproven launcher, or one whose attach
+    fails, raises ValueError: no launch records a null launcher."""
     from .activity import neuron_id
     cid = read_id(root)
     kind = (resolved or {}).get("kind")
     out: dict[str, Any] = {"kind": kind, "chair": None, "neuron_id": None, "via": resolved.get("via"),
                            "attached": False, "lead_taken": False, "launched_by": None,
                            "launched_by_why": None, "warning": None}
+    if kind == "conductor":
+        # An MCP launch: the conductor its bearer proves. No chair, no attach, no lead change.
+        name = str(resolved.get("name") or "").strip()
+        if not name:
+            raise ValueError(UNPROVEN_ERROR + ": no bearer identity")
+        out.update(launched_by={"kind": "conductor", "name": name}, via="bearer",
+                   line="launched by conductor " + name)
+        return out
     if kind == "seated":
+        # A chair launcher is a seated chair on this thread, never a name that is not one.
+        row = next((s for s in list_seats(root) if s.get("session_id") == resolved.get("chair")), None)
+        if row is None or row.get("detached"):
+            raise ValueError(UNPROVEN_ERROR + ": launcher " + str(resolved.get("chair")) +
+                             " is not a seated chair on this thread")
         out.update(chair=resolved["chair"], neuron_id=neuron_id(cid, resolved["chair"]),
                    launched_by=resolved["chair"], line="launcher " + resolved["chair"] + " is seated on this thread")
+        if resolved.get("source"):
+            out["source"] = resolved["source"]   # e.g. widget-lead: the record is the lead chair
         return out
     if kind == "unseated":
         from .sessions import attach_proven
@@ -102,11 +169,8 @@ def seat_launcher(root: Path, resolved: dict[str, Any]) -> dict[str, Any]:
                              ("it took the lead (was " + str(taken.get("was")) + ")" if taken
                               else "the lead stays " + str(_lead_chair(root) or "unchanged"))))
             return out
-        why = "the launcher could not attach: " + str(card.get("error") or "attach refused")
-    else:
-        why = str((resolved or {}).get("why") or "the launcher was not resolved")
-    out.update(launched_by_why=why, warning="launcher unknown: " + why + "; launched_by is null")
-    return out
+        raise ValueError(UNPROVEN_ERROR + ": the launcher could not attach: " + str(card.get("error") or "attach refused"))
+    raise ValueError(UNPROVEN_ERROR + ": " + str((resolved or {}).get("why") or "the launcher was not resolved"))
 
 
 def launch_fields(info: dict[str, Any] | None) -> dict[str, Any]:
@@ -162,11 +226,14 @@ def lead_ref(root: Path) -> dict[str, Any] | None:
 
 
 def launched_by_ref(root: Path, session_id: str) -> dict[str, Any] | None:
-    """{chair, neuron_id} of the chair that launched this one, or None (unknown or never recorded)."""
+    """{chair, neuron_id} of the chair that launched this one, {kind: conductor, name} for an
+    MCP launch, or None (unknown or never recorded)."""
     from .activity import neuron_id
     row = next((s for s in list_seats(root) if s.get("session_id") == session_id), {})
-    chair = row.get("launched_by")
-    return {"chair": chair, "neuron_id": neuron_id(read_id(root), chair)} if chair else None
+    kind, name = launcher_of(row.get("launched_by"))
+    if kind == "conductor":
+        return {"kind": "conductor", "name": name}
+    return {"chair": name, "neuron_id": neuron_id(read_id(root), name)} if name else None
 
 
 def whoami_fields(root: Path, session_id: str) -> dict[str, Any]:
@@ -195,9 +262,15 @@ def identity_sentence(root: Path, session_id: str) -> str:
         lead_text = "Lead: none (" + _lead_none_reason(state) + ")."
     if "launched_by" not in me:
         return lead_text
-    launcher = me.get("launched_by")
+    kind, launcher = launcher_of(me.get("launched_by"))
+    if kind == "conductor":
+        return lead_text + " Launched by: conductor " + str(launcher) + "."
+    if launcher is None and me.get("launched_by_why") == "recorded when this chair is launched":
+        return lead_text + " Launched by: recorded when this chair is launched."
     if launcher is None:
-        return lead_text + " Launched by: unknown (" + str(me.get("launched_by_why") or "not proven") + ")."
+        # A chair from before every launch recorded its launcher: point at the fix.
+        return (lead_text + " Launched by: not recorded; ask the person or your conductor to run "
+                "`convoy adopt --id " + str(neuron_id(cid, session_id)) + "`.")
     if launcher == lead and lead != session_id:
         return "Lead and launcher: " + who(lead) + "."
     return lead_text + " Launched by: " + who(launcher, harness=False) + "."

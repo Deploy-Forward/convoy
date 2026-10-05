@@ -337,6 +337,20 @@ def last_usage_row(root: Path, session_id: str) -> dict[str, Any] | None:
     return last
 
 
+def default_usage_reading(harness: str) -> dict[str, Any]:
+    """The vendor's own usage reading for one harness, run from CONVOY_HOME, never from a
+    chair's worktree: the probe shells out to the harness, and `claude -p /usage` leaves a
+    stub session record in whatever directory it runs in."""
+    from .index import home_dir
+    from .usage import probe
+    home = home_dir()
+    try:
+        home.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        pass
+    return probe(harness, cwd=home if home.is_dir() else None)
+
+
 def stamp_usage_row(root: Path, session_id: str, harness: str, *, probe_fn=None, now: str | None = None,
                     require_source: bool = False) -> dict[str, Any] | None:
     """One kind=usage row for this chair from its vendor's own reading, at
@@ -344,9 +358,8 @@ def stamp_usage_row(root: Path, session_id: str, harness: str, *, probe_fn=None,
     require_source=True skips the row when the vendor gave no reading (a
     launch heartbeat must not write "unknown" rows)."""
     from datetime import datetime, timezone
-    from .index import home_dir
     from .layer import hook, utc_now
-    from .usage import probe, surface
+    from .usage import surface
     stamp = now or utc_now()
     prev = last_usage_row(root, session_id)
     if prev is not None:
@@ -357,19 +370,7 @@ def stamp_usage_row(root: Path, session_id: str, harness: str, *, probe_fn=None,
                 return None
         except ValueError:
             pass
-    if probe_fn is not None:
-        got = probe_fn(harness)
-    else:
-        # From CONVOY_HOME, never from the chair's worktree. The probe
-        # shells out to the harness, and `claude -p /usage` leaves a stub
-        # session record in whatever directory it runs in; run from the
-        # chair's worktree, the stubs pile up in its project directory.
-        home = home_dir()
-        try:
-            home.mkdir(parents=True, exist_ok=True)
-        except OSError:
-            pass
-        got = probe(harness, cwd=home if home.is_dir() else None)
+    got = (probe_fn or default_usage_reading)(harness)
     if require_source and not got.get("source"):
         return None
     # A reading the vendor has not restamped is the same reading, and writing
@@ -392,15 +393,23 @@ def stamp_usage_row(root: Path, session_id: str, harness: str, *, probe_fn=None,
     return hook(root, "usage", text, instance_id=session_id, author=session_id, extra=extra)
 
 
-def delivery_context(messages: list[dict[str, Any]]) -> str:
+def delivery_context(messages: list[dict[str, Any]], *, thread: dict[str, Any] | None = None) -> str:
     """The rows as one framed body, bounded. The only place this text is
     built: the Stop block and the context card must read identically, and
-    Claude's Stop path (end.py) needs the same framing Grok's already had."""
+    Claude's Stop path (end.py) needs the same framing Grok's already had.
+    thread: for a session on several threads, {name, convoy_id, root}: each row says which
+    thread it came from and the reply command for that thread."""
     chunks = []
     for item in messages:
         label = item.get("label") or "synapse"
+        where = ""
+        if thread:
+            from .cmd import convoy_root_command
+            where = (" thread=" + str(thread.get("name") or thread.get("convoy_id")) +
+                     " (" + str(thread.get("convoy_id")) + "); reply with " +
+                     convoy_root_command(thread["root"]) + " reply " + str(item.get("token") or "") + " \"...\"")
         chunks.append(
-            "Convoy inbox (" + str(label) + ") token=" + str(item.get("token") or "") +
+            "Convoy inbox (" + str(label) + ") token=" + str(item.get("token") or "") + where +
             "\n" + str(item.get("body") or "")
         )
     context = (
@@ -544,14 +553,18 @@ def hook_pretooluse(cwd: str | Path | None = None) -> dict[str, Any]:
     # Read the payload once: stdin is a stream and the second read is empty.
     payload = _hook_payload_from_stdin()
     from .panes import HOOK_PROBE_TIMEOUT_S
-    from .sessions import proven_session_chair
+    from .sessions import proven_session_chairs
     seen: dict[str, Any] = {}
     try:
-        proven_root, proven_seat = proven_session_chair(start, seen=seen, probe_timeout=HOOK_PROBE_TIMEOUT_S)
+        proven = proven_session_chairs(start, seen=seen, probe_timeout=HOOK_PROBE_TIMEOUT_S)
     except ValueError as exc:
         return {"hookSpecificOutput": {"hookEventName": _hook_event_name(payload), "additionalContext": "Convoy inbox refuses: " + str(exc)}}
-    if proven_root is not None:
-        root, matches = proven_root, [proven_seat]
+    if len(proven) > 1:
+        # One session on several threads: drain and deliver every thread's inbox, each
+        # row labelled with its thread, from the one process read already made.
+        return _hook_many(proven, payload, seen)
+    if proven:
+        root, matches = proven[0][0], [proven[0][1]]
     else:
         matches = seats_for_worktree(root, start)
     if len(matches) > 1:
@@ -614,6 +627,60 @@ def hook_pretooluse(cwd: str | Path | None = None) -> dict[str, Any]:
             "additionalContext": context,
         },
     }
+
+
+def _hook_side_effects(root: Path, seat: dict[str, Any], payload: dict[str, Any], event: str,
+                       seen: dict[str, Any], probe_fn=None) -> None:
+    """The per-chair stamps a hook makes: the vendor session id, and after a tool call the
+    pane's own usage reading. Neither may ever break a hook."""
+    from .panes import HOOK_PROBE_TIMEOUT_S
+    sid = str(seat.get("session_id") or "").strip()
+    observed = payload.get("session_id") or payload.get("sessionId")
+    if not observed and str(seat.get("to") or "").strip().startswith("grok"):
+        observed = os.environ.get("GROK_SESSION_ID")
+    try:
+        stamp_from_hook(root, seat, observed, procs=seen.get("procs"),
+                        read_error=seen.get("error"), timeout=HOOK_PROBE_TIMEOUT_S)
+    except Exception:
+        pass
+    if event == "PostToolUse" and sid:
+        try:
+            stamp_usage_row(root, sid, str(seat.get("to") or ""), probe_fn=probe_fn)
+        except Exception:
+            pass
+
+
+def _hook_many(proven: list, payload: dict[str, Any], seen: dict[str, Any]) -> dict[str, Any]:
+    """The hook for a session that holds a chair on several threads."""
+    from .convoy import read_id, read_thread
+    event = _hook_event_name(payload)
+    contexts = []
+    # One session, one reading: the vendor usage probe runs at most once per harness per
+    # hook, and every chair of that harness is stamped from it (never N sequential probes).
+    readings: dict[str, Any] = {}
+
+    def once(harness: str) -> dict[str, Any]:
+        if harness not in readings:
+            readings[harness] = default_usage_reading(harness)
+        return readings[harness]
+
+    for root, seat in proven:
+        if seat.get("detached"):
+            continue
+        sid = str(seat.get("session_id") or "").strip()
+        if not sid:
+            continue
+        _hook_side_effects(root, seat, payload, event, seen, probe_fn=once)
+        messages = drain(root, sid)
+        if messages:
+            contexts.append(delivery_context(messages, thread={
+                "name": read_thread(root), "convoy_id": read_id(root), "root": str(root)}))
+    if not contexts:
+        return {}
+    context = "\n\n===\n\n".join(contexts)
+    if event == "Stop":
+        return {"decision": "block", "reason": context}
+    return {"hookSpecificOutput": {"hookEventName": event, "additionalContext": context}}
 
 
 def wait_for_pending(root: Path, session_id: str, *, timeout: float = 3600.0, interval: float = 2.0,

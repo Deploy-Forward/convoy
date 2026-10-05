@@ -22,6 +22,8 @@ from pathlib import Path
 from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from launcher_fixture import seated_launcher, widget_lead, with_seated_launcher  # noqa: E402
 
 from convoy.convoy import ensure_id, bind
 from convoy.widget_web import WidgetApi, serve
@@ -44,6 +46,11 @@ def _repo():
 
 class WidgetWalksTheOriginalSpec(unittest.TestCase):
     def setUp(self):
+        # A widget launch records the thread's held lead; here the lead is a synthetic chair
+        # (widget_launcher_test covers the real lead and the refusal without one).
+        _launcher = mock.patch("convoy.launcher.widget_launcher", side_effect=widget_lead)
+        _launcher.start()
+        self.addCleanup(_launcher.stop)
         self.root = _repo(); ensure_id(self.root); bind(self.root, "spec")
         user_home = tempfile.mkdtemp(prefix="user-home-")   # the operator's home is never the test's
         env = mock.patch.dict(os.environ, {"CONVOY_HOME": tempfile.mkdtemp(), "USERPROFILE": user_home, "HOME": user_home,
@@ -130,7 +137,8 @@ class WidgetWalksTheOriginalSpec(unittest.TestCase):
 
         # the widget reads the new thread state back: three chairs, all connected, none invented
         m = self.get("/api/model"); t = m["threads"][0]
-        self.assertEqual(t["thread"], "spec"); self.assertEqual(len(t["chairs"]), 3); self.assertEqual(t["seated_n"], 3)
+        # three chairs from the walk, plus the lead that launched them
+        self.assertEqual(t["thread"], "spec"); self.assertEqual(len(t["chairs"]), 4); self.assertEqual(t["seated_n"], 3)
         self.assertNotIn("token", json.dumps(m))
 
     def test_a_cloud_seat_where_the_vendor_evidences_it_is_a_chair_with_no_pane(self):

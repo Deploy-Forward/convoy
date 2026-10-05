@@ -53,7 +53,7 @@ Locked from the stress findings (audit trail: docs/audits/; further artifacts li
 - **`to` disambiguation (pre-existing key, two meanings).** On `note`/`conductor` rows `to` is the addressee. On `synapse`/`refuse` rows `to` remains what it always was: the send-target harness name. Readers filtering "rows addressed to me" must filter on kind `note`/`conductor` first; a bare `row["to"]=="claude"` filter also matches every send to the claude harness.
 - **`note` — the neuron-side write, symmetric to `stamp`.** `layer.neuron_note` / MCP tool `note` (args `summary`, `instance_id` required, `to` optional): kind `note`, same one-line ≤500 clamp as stamp (`truncated: true` on clamp), refuses anonymous or conductor-alias authors. This is the hosted-neuron write path; local neurons may keep using CLI `hook note`.
 - **Runner provenance on synapse rows.** Every synapse row stamps `runner` (`"native"`/`"fake"`/`"ola"` by function identity via `synapse.runner_kind`, else the runner's name) and `argv0` (from the card's argv, JSON `null` when absent) — so the SoT can distinguish a native vendor send from a fake ACK. Rows without these fields predate v2.1 and are not evidence of a native send.
-- **Build id on the wire.** `initialize` `serverInfo.version` is `<base>+<git describe --always --dirty>` (base 1.2.0) when the package sits in a git checkout (`-dirty` marks a patched-in-place deploy), the bare base version when unknown (never an invented sha). A hung/missing git degrades to the bare version — it must never stop the server (`OSError` and `SubprocessError` both caught). Scope honesty: one-call drift detection holds only for git-checkout deploys; the bare-version fallback is indistinguishable from a pre-v2.1 deploy.
+- **Build id on the wire.** `initialize` `serverInfo.version` is `<base>+<git describe --always --dirty>` (base 1.3.0) when the package sits in a git checkout (`-dirty` marks a patched-in-place deploy), the bare base version when unknown (never an invented sha). A hung/missing git degrades to the bare version — it must never stop the server (`OSError` and `SubprocessError` both caught). Scope honesty: one-call drift detection holds only for git-checkout deploys; the bare-version fallback is indistinguishable from a pre-v2.1 deploy.
 - **One process ↔ one bound root.** The public MCP stays bound to exactly one root (demo: <demo-root>). Other threads are CLI/file on their own `--root`; an empty MCP `feed` for an unbound thread is the contract working, not a product fail. No root selector on the public URL (arbitrary-path read hole). Rebinding demo to flip a test GREEN is refused.
 - **Public write-tool gate.** The RPC layer never exposes SoT write tools (`stamp`, `note`) on an ungated process: they are absent from `tools/list` and refused on `tools/call` unless `CONVOY_MCP_WRITE_TOOLS=1` is set (a gated/loopback deploy opts in). CLI and in-process `call_tool` are not gated. The public convoy.bot process stays read-only for the bus until a real writer gate (shared-secret/OAuth) exists; this gate stays RED on the wire until then.
 - **Chip front matter (conductor render contract).** The chip a neuron message surfaces with (`harness / model / effort / session% / week% / convoy_id / vendor session id / worktree / summary`) renders from two existing reads, no jsonl archaeology: the `note` row carries `summary`/`from`/`to`; the glance by-thread seat card carries `to` (harness), `model`, `effort`, `resume` (vendor id), `worktree`, `session_pct` (from the headless `claude -p /usage` probe via `usage.surface`); `week%` comes from glance **Overall** (locked: never duplicated per-thread). `effort` is a declared seat field (`seat --effort`, real-or-null) — validated per harness against `harness_effort.json` keys (grok `xhigh`, codex `extra-high`, pi `--thinking` levels; a refusal names the harness's real keys). Convoy applies it to argv when, and only when, the contract carries `cli_flag` + an `evidence` string (grok `--reasoning-effort`, claude `--effort`, agy `--effort`, pi `--thinking`); the seat row's `effort_applied` records which (`false` = recorded, not applied: codex, cursor-agent, hermes; `null` = no effort declared). `choices` carries `harnesses[].effort = {mode, keys, cli_flag, evidence, applied}`. Unknown `effort`/`resume`/`model` are omitted from the card, never "unknown". No probe ⇒ usage stays null.
@@ -122,8 +122,14 @@ pointed at a `thread.md` that did not exist.
     `launched_by: <that chair>`. This changes who leads a fresh thread: the
     session that launches the first neuron becomes the lead. The card's
     `launcher` block says `attached: true`, `lead_taken`, `lead_was` and a line;
-  - no proof: `launched_by: null` with `launched_by_why`, a `warnings[]` line on
-    the card, no attach, no lead change. Never a guess.
+  - no proof (a cwd or path match only, a script, a conflict, an unreadable
+    table): the launch **refuses before any write**: no worktree, no chair, no
+    claim, no attach, no lead change, `ok: false`, `error: "cannot prove who is
+    launching"`, `next`: run it from an agent session or `convoy attach <thread>`
+    first. A dry run reports `would_refuse` with the same reason. No launch
+    records `launched_by: null`; legacy rows that carry it are still read.
+  A session may hold one chair on each of any number of threads, so a session
+  seated on another thread is attached here as above, never refused.
   The launcher is acted on only once the chair exists: `add`, `crew` and
   `join --launch` attach and record after every join succeeded, so a refused
   join or a failed mint attaches nobody and moves no lead (a dry `add` attaches
@@ -153,17 +159,47 @@ pointed at a `thread.md` that did not exist.
   be judged and still refuses). A live pane host is its pid AND its start time (the claim
   records `host_started`: the creation time on Windows, the start tick from
   `/proc` on Linux; macOS gives none, and there the pid alone decides), so a pid
-  the OS reused for another process never reads as the host. A chair that joins itself records nothing. MCP verbs do
-  not resolve a launcher (the server cannot prove the caller's session) and
-  record nothing.
+  the OS reused for another process never reads as the host. A chair that joins itself records nothing. An MCP
+  launch (`crew`, `join`, `launch`, `bring_up` with `dry_run: false`) records
+  the conductor its bearer proves: `launched_by: {"kind": "conductor", "name":
+  <conductor>}`, on the chairs it spawns (put back on any it did not); with no
+  bearer identity (a legacy-flag call) it refuses with "cannot prove who is
+  launching". A chair launcher keeps its string shape (`launched_by: <chair>`);
+  readers take both (`launcher.launcher_of`: a dict without a kind is a chair).
+  `add` and `crew` called with no launcher at all refuse the same way, so no
+  caller can launch without naming one. A chair launcher must be a seated chair
+  on that thread (`seat_launcher` refuses a name that is not one, or a detached
+  chair). An MCP launch checks and records under the chair's launch-claim lock
+  and skips a chair whose launch claim a live process holds, so it never
+  overwrites a CLI launch in flight. A swap clears the old occupant's launcher:
+  the new occupant's prompt says `Launched by: recorded when this chair is
+  launched`, and the launch that spawns it records its launcher (the swap CLI
+  takes `--as` as an assertion, not a proof, so the swap caller is not
+  recorded). `adopt` refuses a chair whose boot prompt is still pending: "this
+  chair has not launched yet; its launch will record its launcher". The widget is a person's local UI with
+  no agent session to prove: a widget launch (a start with seats) records the
+  thread's held lead chair as `launched_by` (the plain chair string, so its
+  neurons report to the lead) and the card says `launcher.source:
+  "widget-lead"`. With no held lead (none or dangling) it refuses before writing
+  a chair: "this thread has no lead: attach an agent session (convoy attach
+  <thread>) so it can lead, then start again". It never guesses a launcher and
+  never records null.
+  The boot prompt then reads `Launched by: conductor <name>`, `whoami` shows
+  `launched_by: {kind: conductor, name}`, `convoy report` writes a proven note
+  (environment, token or pane-host) from the chair addressed `to=<conductor>`,
+  which the conductor's `replies {since}` cursor returns (it filters by
+  addressee, not by token), and `adopt` treats a conductor launcher as live
+  (only the lead replaces it).
 - **Boot prompt** (`lifecycle._boot_prompt`), one line: the seat, `Read` only
   the files that exist (`thread.md`, the handoff; a thread started without a name
   has no `thread.md`, so none is named), the `seated` ack with its token, then
   information only: `Lead: <chair> (neuron <id>, <harness>).`, or `Lead: you`,
   or `Lead: none (<reason>)`. A lead is named only when a kind `lead` row names
   that chair; a chair that merely matches the lead file's harness is never told
-  it leads (the reason then says which harness the lead file names); `Launched by: <chair> (neuron <id>).` or
-  `Launched by: unknown (<why>).`, or `Lead and launcher: ...` named once when
+  it leads (the reason then says which harness the lead file names); `Launched by: <chair> (neuron <id>).`
+  (a legacy row with no launcher reads `Launched by: not recorded; ask the
+  person or your conductor to run convoy adopt --id <id>`), or `Lead and
+  launcher: ...` named once when
   they are the same chair; and two commands: `Report results with: convoy --root
   <root> report "..."` and `Answer a message with: convoy --root <root> reply
   <token> "..."`. No routing rules in prose: routing is the code below. This
@@ -182,6 +218,57 @@ pointed at a `thread.md` that did not exist.
   send is the ordinary send path (fake runner, sender = the proven chair), so
   wake and delivery are those of `send`; the card adds `routed_to`, `route`
   (`launcher` | `lead`) and `route_why` on a fallback.
+- **One session, several threads.** A native session may hold one chair on each
+  of any number of threads (`sessions.proven_session_chairs` returns every
+  active (root, chair) from one process-table read). `attach` and a session
+  joining itself never refuse because the session sits elsewhere; the attach card
+  lists the others in `also_on`. The hooks that run without a root act on every
+  thread the session sits on: the inbox hook drains and delivers each thread's
+  inbox, each row labelled with its thread and its reply command, and the Stop
+  writes a heartbeat and stamp on each, all from the hook's one read (2 s inbox,
+  3 s Stop). A command that needs exactly one thread (`whoami` with no root,
+  `detach` without `--thread`, a manual `end`) refuses with the list: pass
+  `--root` or `--thread`. `report`, `reply` and `send` take `--root`. Acting on
+  thread A with `--root A` from thread B's folder is normal: when the caller is
+  proven on A by environment or token, `identify` reports the cwd as
+  `cwd_thread_differs: {cwd_thread, root_thread, hint}`, not `conflict`. A real
+  disagreement (environment and token naming different chairs, or a path chair
+  contradicting an environment chair on that root) still refuses with
+  `via: conflict`. `adopt` from a proven caller whose own chair on the thread is
+  detached re-attaches it (the attach path, with its lead rules) and proceeds;
+  so does a launch: adopt and launch re-attach a caller who detached on purpose.
+  The cwd relaxation applies only to an explicit `--root`: an inferred root
+  (from the cwd, `CONVOY_ROOT` or a neuron id) keeps `conflict` and its ask. That
+  changes only what the identity record reports (`cwd_thread_differs` instead
+  of `conflict`), never whether a launch, adopt, send or reply proceeds: with an
+  inferred root the cwd chose the thread, so a launch goes there and attaches
+  its launcher there. A path proof (a pane-host record, a worktree in the
+  argv, the cwd) never identifies a different session than the caller's own
+  native id proves: that id recorded as a chair on another thread refuses the
+  path's chair with `ok: false`, `via: conflict` and an ask naming both chairs.
+  A body with no native id still resolves by path. A
+  session on several threads cannot use the native-id plus unique-cwd shortcut,
+  so every one of its hooks pays the process read; the Stop budget (3 s read,
+  then per thread a git snapshot, handoff and heartbeat) assumes up to about 4
+  threads on one session. A PostToolUse runs the vendor usage probe at most once
+  per harness and stamps every chair of that harness from that one reading. A
+  worktree serves one thread: a chair is never seated in a worktree whose root
+  pointer names another thread (the seat refuses with the reason). The lead
+  override in `adopt` counts only a lead held before the adopt began, and adopt
+  refuses a detached neuron before writing, writes by compare-and-set under the
+  chair's launcher lock (the lock every launcher record takes), and puts the
+  previous launcher back if its message cannot be sent.
+- **`adopt --id <neuron id>` / `--seat <chair>`** (`adopt.adopt`): makes the
+  proven caller (environment, token or pane-host; an unseated caller is attached
+  first, as a launch does) the launcher of an existing neuron whose
+  `launched_by` is missing, null, or names a chair that is gone or detached. A
+  live recorded launcher is replaced only by the thread's lead, and the card says
+  so. It then sends the neuron one message from the caller: `Your launcher is now
+  <chair> (neuron <id>). Report with: convoy --root <root> report "..."; answer
+  messages with convoy reply <token>.` The card carries `previous_launched_by`,
+  `launched_by` and the send `token`. `report` refusing for want of a launcher
+  and a lead names this fix: ask the person or your conductor to run `convoy
+  adopt --id <your neuron id>`.
 - **`reply <token> "<text>"`** (`route.reply`): the caller's chair by
   environment, token or pane-host proof; finds the send carrying that token; refuses an unknown token and a caller that was not its recipient;
   writes a `note` from the caller's chair, addressed to the send's proven
@@ -1299,7 +1386,7 @@ This tree at `f40b01a` — the landed public checkout of `Deploy-Forward/convoy`
 | `src/convoy/synapse.py` | `fake_runner` (default), `native_runner` (`--live`: vendor binary on PATH, wrapper names refused, `cwd=worktree`), `send_one` / `send_many`. Live mode is native on both CLI and MCP. Wrapper names (`ola-brain`, side-chat, UltraCode-Shim) are refused as a harness. |
 | `src/convoy/usage.py` | `probe()`, `normalize_usage_remaining()`, `surface()`. Unknown remaining is JSON `null`; never invent `0`; grok remaining is always `null`. |
 | `test/run.py` + `test/demo/` | 22 test modules, 184 tests, all passing at `f40b01a`. |
-| `pyproject.toml` | `convoy` 1.2.0, packages under `src`, requires-python >= 3.11. |
+| `pyproject.toml` | `convoy` 1.3.0, packages under `src`, requires-python >= 3.11. |
 
 We do not:
 

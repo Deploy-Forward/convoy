@@ -31,7 +31,8 @@ class ListAttachEdges(unittest.TestCase):
             card = thread_list()
         self.assertIn("convoy attach " + read_id(self.root), format_list(card))
 
-    def test_other_thread_ownership_requires_detach(self):
+    def test_a_chair_on_another_thread_is_listed_not_refused(self):
+        # A session may hold one chair on each of several threads.
         from convoy.sessions import attach_session
         other = self.root.parent / "other"
         other.mkdir()
@@ -40,9 +41,9 @@ class ListAttachEdges(unittest.TestCase):
         with patch("convoy.sessions.identify", side_effect=lambda root, **kw: self.identity()), \
              patch("convoy.sessions.is_temp_root", return_value=False):
             result = attach_session(read_id(self.root), cwd=self.root)
-        self.assertFalse(result["ok"], result)
-        self.assertIn("detach first", result["error"])
-        self.assertEqual(list_seats(self.root), [])
+        self.assertTrue(result["ok"], result)
+        self.assertEqual([x["convoy_id"] for x in result["also_on"]], [read_id(other)])
+        self.assertEqual(len(list_seats(self.root)), 1)
 
     def test_detach_rejects_cwd_identity(self):
         from convoy.sessions import detach_session
@@ -115,7 +116,7 @@ class ListAttachEdges(unittest.TestCase):
         self.assertTrue(card.get("already"), card)
         self.assertEqual(len(list_seats(self.root)), 1)
 
-    def test_join_cannot_duplicate_session_on_other_thread(self):
+    def test_join_on_a_second_thread_seats_the_session_there_too(self):
         from convoy.lifecycle import join
         other = self.root.parent / "other"
         other.mkdir()
@@ -125,9 +126,9 @@ class ListAttachEdges(unittest.TestCase):
             "id": "synthetic-native-id", "harness": "claude", "via": "environment"}}
         with patch("convoy.panes.identify", return_value=me), \
              patch("convoy.sessions.is_temp_root", return_value=False):
-            with self.assertRaisesRegex(ValueError, "detach first"):
-                join(self.root, "claude", calling_session=True)
-        self.assertEqual(list_seats(self.root), [])
+            card = join(self.root, "claude", calling_session=True)
+        self.assertTrue(card["ok"], card)
+        self.assertEqual(len(list_seats(self.root)), 1)
 
     def test_detached_harness_send_refuses_before_probe(self):
         from convoy.synapse import send_one, fake_runner
@@ -167,11 +168,16 @@ class ListAttachEdges(unittest.TestCase):
         import os
         from convoy.mcp_http import _call_tool
         seat(self.root, "claude", "synthetic-server", resume="synthetic-server-id")
+        # An MCP join records the conductor its bearer proves; the gate is the legacy flag here,
+        # so the conductor is synthetic. The server's own session is never borrowed.
+        conductor = {"kind": "conductor", "name": "grok-bot", "via": "bearer", "why": None}
         with patch.dict(os.environ, {"CONVOY_MCP_WRITE_TOOLS": "1"}), \
+             patch("convoy.mcp_http._launch_launcher", return_value=conductor), \
              patch("convoy.panes.identify", return_value={"ok": True, "chair": "synthetic-server", "via": "environment"}):
             card = _call_tool(self.root, "join", {"to": "claude", "session_id": "synthetic-remote"})
         self.assertTrue(card["ok"], card)
         self.assertEqual(card["seat"]["session_id"], "synthetic-remote")
+        self.assertEqual(card["seat"]["launched_by"], {"kind": "conductor", "name": "grok-bot"})
 
     def test_low_level_provisioning_join_never_probes_identity(self):
         from convoy.lifecycle import join
@@ -224,7 +230,7 @@ class ListAttachEdges(unittest.TestCase):
         self.assertEqual(ended.get("chair"), "synthetic-chair", ended)
         self.assertEqual(ended.get("root"), str(self.root), ended)
 
-    def test_alias_guard_preserves_one_session_one_thread(self):
+    def test_alias_names_the_other_thread_in_also_on(self):
         from convoy.sessions import attach_session
         other = self.root.parent / "other"
         other.mkdir()
@@ -233,8 +239,8 @@ class ListAttachEdges(unittest.TestCase):
         with patch("convoy.sessions.identify", side_effect=lambda root, **kw: self.identity()), \
              patch("convoy.sessions.is_temp_root", return_value=False):
             card = attach_session(read_id(self.root), cwd=self.root)
-        self.assertFalse(card["ok"], card)
-        self.assertIn("detach first", card["error"])
+        self.assertTrue(card["ok"], card)
+        self.assertEqual([x["convoy_id"] for x in card["also_on"]], [read_id(other)])
 
     def test_hook_enumerates_processes_once_for_many_roots(self):
         from convoy.inbox import hook_pretooluse
@@ -361,13 +367,14 @@ class ListAttachEdges(unittest.TestCase):
         self.assertIn("process table unavailable", ended["error"])
         self.assertEqual(len(pending(self.root, "synthetic-attached")), 1)
 
-    def test_ambiguity_names_both_exact_thread_ids(self):
+    def test_a_session_on_two_threads_ends_its_turn_on_both(self):
         other = self.root.parent / "other"
         other.mkdir()
         bind(other, "synthetic-other")
         seat(self.root, "claude", "synthetic-one", resume="synthetic-native-id")
         seat(other, "claude", "synthetic-two", resume="synthetic-native-id")
-        inbox, ended, _ = self.real_hooks(self.root.parent)
-        for thread_id in (read_id(self.root), read_id(other)):
-            self.assertIn(thread_id, str(inbox))
-            self.assertIn(thread_id, ended["error"])
+        inbox, ended, reads = self.real_hooks(self.root.parent)
+        self.assertNotIn("refuse", str(inbox))
+        self.assertTrue(ended["ok"], ended)
+        self.assertEqual(sorted(c["root"] for c in ended["threads"]),
+                         sorted(str(p.resolve()) for p in (self.root, other)))

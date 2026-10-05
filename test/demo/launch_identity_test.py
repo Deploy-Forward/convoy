@@ -183,7 +183,8 @@ class SeatedLaunchers(Base):
 
 
 class UnprovenLauncher(Base):
-    def test_a_cwd_only_launcher_is_null_with_a_reason_a_warning_and_no_attach(self):
+    def test_a_cwd_only_launcher_refuses_the_launch_with_no_write(self):
+        # Every launch records a proven launcher: a cwd match alone refuses before any write.
         wdir = self.other_dir()
         seat(self.root, "claude", "cwd-chair", worktree=str(wdir))
         launcher = self.resolve({}, wdir)
@@ -191,16 +192,10 @@ class UnprovenLauncher(Base):
         self.assertIn("cwd", launcher["why"])
         before = {s["session_id"] for s in list_seats(self.root)}
         card = self.add(launcher)
-        self.assertTrue(card["ok"], card)
-        new = card["seats"][0]["session_id"]
-        self.assertEqual({s["session_id"] for s in list_seats(self.root)}, before | {new}, "no attach")
-        row = _row(self.root, new)
-        self.assertIn("launched_by", row)
-        self.assertIsNone(row["launched_by"])
-        self.assertTrue(row.get("launched_by_why"))
-        self.assertTrue(any("launcher" in w for w in card.get("warnings") or []), card)
+        self.assertFalse(card["ok"], card)
+        self.assertEqual(card["error"], "cannot prove who is launching")
+        self.assertEqual({s["session_id"] for s in list_seats(self.root)}, before, "no chair, no attach")
         self.assertEqual(lead_state(self.root)["status"], "none")
-        self.assertIn("unknown", row["boot_prompt"].lower())
 
     def test_a_script_with_no_harness_is_unproven(self):
         from convoy.launcher import resolve_launcher
@@ -237,26 +232,25 @@ class CliResolvesTheLauncher(Base):
     def test_launch_records_the_launcher_on_a_fresh_chair_joined_without_one(self):
         joined = join(self.root, "codex", session_id="fresh-chair", worktree=str(self.other_dir()))
         self.assertNotIn("launched_by", joined["seat"])
-        resolved = {"kind": "unproven", "chair": None, "why": "synthetic: no proof"}
+        seat(self.root, "claude", "x-chair", worktree=str(self.other_dir()), resume="x-native")
+        resolved = {"kind": "seated", "chair": "x-chair", "via": "environment", "why": None}
         with mock.patch("convoy.cli.resolve_launcher", return_value=resolved), \
              mock.patch("convoy.cli.launch_seat", return_value={"ok": True}):
             rc, card = self.cli("launch", "--seat", "fresh-chair")
         self.assertEqual(rc, 0, card)
         row = _row(self.root, "fresh-chair")
-        self.assertIn("launched_by", row)
-        self.assertIsNone(row["launched_by"])
-        self.assertEqual(row["launched_by_why"], "synthetic: no proof")
+        self.assertEqual(row["launched_by"], "x-chair")
         self.assertIn(joined["token"], row["boot_prompt"], "the recomposed prompt keeps the join token")
 
     def test_join_launch_records_the_launcher_and_a_plain_join_records_nothing(self):
-        resolved = {"kind": "unproven", "chair": None, "why": "synthetic: no proof"}
+        seat(self.root, "claude", "x-chair", worktree=str(self.other_dir()), resume="x-native")
+        resolved = {"kind": "seated", "chair": "x-chair", "via": "environment", "why": None}
         with mock.patch("convoy.cli.resolve_launcher", return_value=resolved) as res, \
              mock.patch("convoy.cli.launch_seat", return_value={"ok": True}):
             rc, card = self.cli("join", "--to", "codex", "--session-id", "launched-chair",
                                 "--worktree", str(self.other_dir()), "--launch")
             self.assertEqual(rc, 0, card)
-            self.assertIsNone(_row(self.root, "launched-chair")["launched_by"])
-            self.assertTrue(any("launcher" in w for w in card.get("warnings") or []), card)
+            self.assertEqual(_row(self.root, "launched-chair")["launched_by"], "x-chair")
             rc, card = self.cli("join", "--to", "codex", "--session-id", "plain-chair",
                                 "--worktree", str(self.other_dir()))
         self.assertEqual(rc, 0, card)
@@ -968,7 +962,8 @@ class R3AClaimOfADeadProcessExpires(Base):
         join(self.root, "codex", session_id="fresh", worktree=str(self.other_dir()))
         import time
         self.write_claim("fresh", reserver_pid=self.dead_pid(), reserved_at=time.time() - 60)   # died mid-launch
-        a = {"kind": "unproven", "chair": None, "why": "synthetic"}
+        seat(self.root, "claude", "x-chair", worktree=str(self.other_dir()), resume="x-native")
+        a = {"kind": "seated", "chair": "x-chair", "via": "environment", "why": None}
         buf = io.StringIO()
         with mock.patch("convoy.cli.resolve_launcher", return_value=a), \
              mock.patch("convoy.cli.launch_seat", return_value={"ok": True}) as launch, redirect_stdout(buf):

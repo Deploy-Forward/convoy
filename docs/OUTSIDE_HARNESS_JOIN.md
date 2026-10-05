@@ -22,11 +22,12 @@ so the answer is `chair: null` with an ask. A `--root` that carries no
 `.convoy/id` answers the same way. `start` with no repo never picks for you:
 temp roots (mkdtemp residue) are excluded from the list, and the card is
 `ok:false` until you name a root. Attach takes a `cvy_` id or an exact thread
-name, not a number. It refuses unknown/conflicting native identity and a
-session already attached elsewhere (detach first). Repeating it, or calling
+name, not a number. It refuses unknown/conflicting native identity. A
+session may already sit on other threads: it holds one chair on each, and the
+card lists them in `also_on`. Repeating it, or calling
 bare local self-join afterward, returns `already:true`, never a second chair. Explicit
 chair names, titles, other worktrees and `join --launch` retain the provisioning flow.
-An unavailable non-temp indexed root refuses with ownership unknown; temp roots
+An unavailable non-temp indexed root is reported in `ownership_skipped`, never a refusal; temp roots
 are outside attachable scope and the card names the skipped roots. Nothing is
 launched. Legacy metadata-only catch-up is `attach <cvy_id> --read-only`.
 

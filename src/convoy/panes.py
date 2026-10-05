@@ -605,7 +605,55 @@ def hook_body(pid: int | None = None, procs: list[dict[str, Any]] | None = None,
 
 def identify(root: Path, pid: int | None = None, procs: list[dict[str, Any]] | None = None,
              cwd: str | None = None, env: Mapping[str, str] | None = None,
-             *, allow_unseated: bool = False) -> dict[str, Any]:
+             *, allow_unseated: bool = False, explicit_root: bool = False) -> dict[str, Any]:
+    """Which chair is the CALLER on this root? See _identify for the rungs.
+
+    A session may sit on several threads, so acting on thread A with an explicit root from
+    thread B's folder is normal. When the caller is proven on this root by environment or
+    token, a cwd that walks into another thread is information, `cwd_thread_differs`
+    ({cwd_thread, root_thread, hint}), never a conflict. Real disagreements (environment and
+    token naming different chairs, or a path chair contradicting an environment chair on
+    this root) still refuse with via=conflict. The relaxation needs an explicit root (the
+    CLI's --root): an inferred root keeps the visible warning."""
+    out = _identify(root, pid, procs, cwd, env, allow_unseated=allow_unseated)
+    if explicit_root and out.get("ok") and out.get("via") in ("environment", "token") and out.get("conflict"):
+        out["conflict"] = False
+        out["cwd_thread_differs"] = {"cwd_thread": out.get("cwd_thread"), "root_thread": out.get("root_thread"),
+                                     "hint": out.pop("ask", None)}
+    return out
+
+
+def _native_chair_elsewhere(root: Path, unrecorded: list[tuple[str, str, str]]) -> tuple[str, str] | None:
+    """(thread, chair) of another thread where the caller's native id (not recorded on this
+    root) is recorded as a chair, or None."""
+    ids = {(h, i) for h, i, _via in unrecorded if i}
+    if not ids:
+        return None
+    from .index import list_threads
+    here = os.path.normcase(str(Path(root).resolve()))
+    for thread in list_threads():
+        if not thread.get("present") or not thread.get("root"):
+            continue
+        other = Path(thread["root"])
+        try:
+            if os.path.normcase(str(other.resolve())) == here:
+                continue
+            seats = list_seats(other, require_session=True)
+        except (OSError, ValueError):
+            continue
+        for s in seats:
+            harness = canonical_harness_id(s.get("to"))
+            recorded = [s.get("vendor_session_id")]
+            if s.get("resume_for") in (None, "", harness):
+                recorded.append(s.get("resume"))
+            if any(h == harness and i in recorded for h, i in ids):
+                return str(thread.get("thread") or thread.get("convoy_id")), str(s.get("session_id"))
+    return None
+
+
+def _identify(root: Path, pid: int | None = None, procs: list[dict[str, Any]] | None = None,
+              cwd: str | None = None, env: Mapping[str, str] | None = None,
+              *, allow_unseated: bool = False) -> dict[str, Any]:
     """Which chair is the CALLER? Detect -> identify -> only then send.
 
     Walks the caller's ancestry (shell -> harness) in the process table.
@@ -866,6 +914,24 @@ def identify(root: Path, pid: int | None = None, procs: list[dict[str, Any]] | N
                        " (pid " + str(pid_hit[1]) + ") and the " + path_hit[1] + " path says " + path_hit[0] +
                        "; pass the chair explicitly and fix the stale record before authoring")}
         out.update(ctx)
+        return out
+    # A path proof (a pane-host record, a worktree in the argv, the cwd) never identifies a
+    # different session than the one the caller's own native id proves: that id recorded as
+    # a chair on another thread is a different chair than the path names here.
+    path_chair = pid_hit[0] if pid_hit else (path_hit[0] if path_hit else None)
+    elsewhere = _native_chair_elsewhere(root, unrecorded_native) if path_chair else None
+    if elsewhere is not None:
+        other_thread, other_chair = elsewhere
+        out = {"ok": False, "chair": None, "via": "conflict", "harness": None, "harness_pid": None,
+               "on_thread": True, "chairs": [path_chair],
+               "ask": ("your native session is chair " + other_chair + " on thread " + str(other_thread) +
+                       ", but the " + ("pane-host record" if pid_hit else path_hit[1] + " path") +
+                       " here names chair " + path_chair + ", another session: a path never proves a"
+                       " different session; pass --root for your own thread, or attach this session here")}
+        reason = out["ask"]
+        out.update(ctx)
+        if ctx.get("ask"):
+            out["ask"] = reason + "; " + str(ctx["ask"])
         return out
     if pid_hit:
         seat_row = known[pid_hit[0]]

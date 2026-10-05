@@ -109,7 +109,9 @@ conductor, and conductors never author notes (rule 4).
 
 - `replies {since}` returns feed rows addressed to you, newer than `since`, plus a
   `cursor`: the newest `ts` returned, or `since` when nothing landed. Pass the cursor
-  back next turn.
+  back next turn. It filters by addressee, not by token: a neuron you launched over MCP
+  records you as its launcher (`launched_by: {kind: conductor, name}`), and its
+  `convoy report` arrives here as a proven note addressed to you, citing no token.
 - `replies {token}` returns the rows citing one token, and `delivered` true or false.
 - `replies {since, wait}` holds the request up to `wait` seconds (max 600) and returns
   as soon as one row lands. It is gated like `await_seated` because it holds a request.

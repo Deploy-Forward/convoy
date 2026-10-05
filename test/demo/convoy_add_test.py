@@ -18,6 +18,7 @@ uses the real terminal_capability with an injected env, which and platform;
 the runners are mocks, so nothing is ever launched.
 """
 import io
+import functools
 import json
 import os
 import shlex
@@ -30,10 +31,15 @@ from pathlib import Path
 from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from launcher_fixture import seated_launcher, widget_lead, with_seated_launcher, work_seats  # noqa: E402
 
 from convoy.cli import main  # noqa: E402
 from convoy.convoy import bind, ensure_id, list_seats  # noqa: E402
 from convoy.crew import crew  # noqa: E402
+
+crew = with_seated_launcher(crew)
+
 from convoy.harness_contract import model_flag  # noqa: E402
 
 FIRST_RUN = {"ok": True, "prepared": False, "wrote": False, "settings": None, "home_written": False, "settings_home": None}
@@ -42,6 +48,7 @@ MODEL_FLAGS = ("-m", "--model")
 
 def _add(*args, **kwargs):
     from convoy.crew import add
+    kwargs.setdefault("launcher", seated_launcher(args[0]))
     return add(*args, **kwargs)
 
 
@@ -88,6 +95,11 @@ WINDOWS_NO_WT_SESSION = {"env": {}, "which": _terminal_which("wt"), "platform_na
 
 class AddBase(unittest.TestCase):
     def setUp(self):
+        # A launch records a proven launcher; these tests exercise launch mechanics, so the
+        # launching session is a synthetic seated chair (launcher_always_test covers refusal).
+        _launcher = mock.patch("convoy.cli.resolve_launcher", side_effect=seated_launcher)
+        _launcher.start()
+        self.addCleanup(_launcher.stop)
         self.root = _git_repo()
         ensure_id(self.root)
         bind(self.root, "add-t")
@@ -127,8 +139,8 @@ class AddSplitsIntoTheCallersTerminal(AddBase):
         self.assertNotIn("0", argv[1:3])
         self.assertNotIn("--window", argv)
         sid = card["seats"][0]["session_id"]
-        self.assertEqual([s["session_id"] for s in list_seats(self.root)], [sid])
-        row = list_seats(self.root)[0]
+        self.assertEqual([s["session_id"] for s in work_seats(self.root)], [sid])
+        row = work_seats(self.root)[0]
         self.assertTrue(row["boot_prompt"])
         self.assertIn(str(row["worktree"]), argv)
 
@@ -173,7 +185,7 @@ class AddOnLinux(AddBase):
         self.assertRegex(name, r"^convoy-[0-9a-f]{8}$")  # the thread's own session
         self.assertNotIn(".", name)
         self.assertNotIn(":", name)
-        worktree = list_seats(self.root)[0]["worktree"]
+        worktree = work_seats(self.root)[0]["worktree"]
         from convoy.targeted_launch import root_thread_label
         self.assertEqual(argv[5:7], ["-n", root_thread_label(self.root) + " - codex-1"])   # names the thread
         self.assertEqual(argv[7:9], ["-c", str(worktree)])
@@ -191,7 +203,7 @@ class AddOnLinux(AddBase):
         self.assertIn("install tmux", card["placement_reason"])
         self.runner.assert_not_called()
         self.window_runner.assert_not_called()
-        self.assertEqual(list_seats(self.root), [])
+        self.assertEqual(work_seats(self.root), [])
         self.assertEqual([p for p in self.root.parent.iterdir() if p.name.startswith(self.root.name + "-wt-")], [])
 
     def test_failed_spawn_leaves_the_chair_joined_and_says_not_launched(self):
@@ -201,7 +213,7 @@ class AddOnLinux(AddBase):
         self.assertFalse(card["launched"])
         self.assertTrue(card["partial"])
         sid = card["seats"][0]["session_id"]
-        self.assertEqual([s["session_id"] for s in list_seats(self.root)], [sid])
+        self.assertEqual([s["session_id"] for s in work_seats(self.root)], [sid])
         self.assertEqual(card["recovery"], [{"session_id": sid, "verb": "launch --seat " + sid}])
 
 
@@ -213,14 +225,14 @@ class AddModelDefaultsToAuto(AddBase):
         self.assertEqual(card["effort"], "auto")
         self.assertNoModelOrEffortFlag(self.harness_argv(card))
         self.assertNoModelOrEffortFlag([str(a) for a in self.runner.call_args[0][0]])
-        self.assertIsNone(list_seats(self.root)[0].get("model"))
+        self.assertIsNone(work_seats(self.root)[0].get("model"))
 
     def test_add_codex_auto_is_the_same_as_no_model(self):
         card = self.add("codex", "auto")
         self.assertTrue(card["ok"], card)
         self.assertEqual(card["model"], "auto")
         self.assertNoModelOrEffortFlag(self.harness_argv(card))
-        self.assertIsNone(list_seats(self.root)[0].get("model"))
+        self.assertIsNone(work_seats(self.root)[0].get("model"))
 
     def test_add_claude_passes_no_model_flag(self):
         card = self.add("claude")
@@ -244,7 +256,7 @@ class AddModelDefaultsToAuto(AddBase):
         self.assertFalse(card["ok"])
         self.assertIn("ludicrous", card["error"])
         self.runner.assert_not_called()
-        self.assertEqual(list_seats(self.root), [])
+        self.assertEqual(work_seats(self.root), [])
 
 
 class AddKeepsTheLaunchGates(AddBase):
@@ -253,7 +265,7 @@ class AddKeepsTheLaunchGates(AddBase):
         self.assertFalse(card["ok"])
         self.assertIn("unverified launch eligibility", card["error"])
         self.runner.assert_not_called()
-        self.assertEqual(list_seats(self.root), [])
+        self.assertEqual(work_seats(self.root), [])
 
     def test_unverified_harness_launches_with_the_override(self):
         card = self.add("grok", allow_unverified_launch=True, trust_probe=lambda _row: True)
@@ -266,7 +278,7 @@ class AddKeepsTheLaunchGates(AddBase):
         self.assertTrue(card["dry_run"])
         self.assertFalse(card["launched"])
         self.assertEqual(card["placement"], "thread-window")
-        self.assertEqual(list_seats(self.root), [])
+        self.assertEqual(work_seats(self.root), [])
 
     def test_crew_launch_opens_the_threads_own_window(self):
         from convoy.targeted_launch import thread_window_name
@@ -475,7 +487,7 @@ class AddDryRunShowsWhatItWouldRun(AddBase):
         argv = [str(a) for a in card["argv"]]
         self.assertEqual(argv[1:5], ["new-session", "-d", "-s", card["session_name"]])
         self.assertEqual(card["attach"], "tmux attach -t =" + card["session_name"])
-        self.assertEqual(list_seats(self.root), [])
+        self.assertEqual(work_seats(self.root), [])
 
     def test_dry_run_in_windows_terminal_reports_the_thread_window_argv(self):
         card = _add(self.root, "codex", **WT)

@@ -368,18 +368,29 @@ class WidgetApi:
         from .onboard import onboard
         from .crew import crew
         from .bringup import live_runner
+        from .convoy import read_id
+        from .launcher import WIDGET_NO_LEAD, widget_launcher
         target = (repo or "").strip() or None
         base = Path(self.roots[0]) if self.roots else Path.cwd()
         gh = github if github is not None else None
+        specs = [{k: v for k, v in s.items() if k in ("harness", "model", "effort", "where", "title") and v not in (None, "")} for s in seats if s.get("harness")]
+        # A widget launch records the thread's held lead as the launcher (the widget has no
+        # agent session to prove). On this machine's own thread, check before anything is
+        # written; a thread named by a repo target is checked once onboard has bound it.
+        if specs and target is None and (not read_id(base) or widget_launcher(base) is None):
+            return {"ok": False, "error": WIDGET_NO_LEAD, "root": str(base)}
         ob = onboard(base, harnesses, thread=(thread or None), checkout_root=target, github=gh)
         out: dict[str, Any] = {"ok": bool(ob.get("ok")), "onboard": ob}
         if not ob.get("ok"):
             return out
         root = Path(str(ob.get("root") or base))
-        specs = [{k: v for k, v in s.items() if k in ("harness", "model", "effort", "where", "title") and v not in (None, "")} for s in seats if s.get("harness")]
         if specs:
+            launcher = widget_launcher(root)
+            if launcher is None:
+                out.update(ok=False, error=WIDGET_NO_LEAD, root=str(root))
+                return out
             cw = crew(root, specs, thread=ob.get("thread"), runner=live_runner if launch else None,
-                      allow_unverified_launch=allow_unverified_launch)
+                      allow_unverified_launch=allow_unverified_launch, launcher=launcher)
             out["crew"] = cw
             out["ok"] = bool(cw.get("ok"))
         out["root"] = str(root)

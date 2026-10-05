@@ -113,6 +113,12 @@ class WizardE2EGated(unittest.TestCase):
     maxDiff = None
 
     def setUp(self):
+        # An MCP launch records the conductor its bearer proves; these tests open the gate
+        # without a bearer, so the launch reads a synthetic conductor (conductor_launcher_test
+        # covers the refusal without one).
+        _conductor = mock.patch("convoy.mcp_http._launch_launcher", return_value={"kind": "conductor", "name": "grok-bot", "via": "bearer", "why": None})
+        _conductor.start()
+        self.addCleanup(_conductor.stop)
         # The realistic gated deployment: the endpoint's root IS the checkout
         # the neurons will work in. An MCP process is bound to one root for
         # its lifetime, so a thread bound anywhere else is a thread this

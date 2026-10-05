@@ -110,13 +110,19 @@ def crew(
     except ValueError as e:
         card["error"] = str(e)
         return card
+    from .launcher import refusal
+    refused = refusal(launcher)
+    if refused:
+        card.update(refused)
+        return card   # before any write: no worktree, no chair, no claim, no lead change
     if runner is not None and not pane_host_available():
         card["error"] = "no pane host (wt) on PATH; refuse mint and join"
         return card
     sids = _mint_and_join(card, root, plan, checkout=checkout, mint_runner=mint_runner, author=author)
     if sids is None:
         return _warn_codex_hooks(card, plan)
-    _seat_launcher(card, root, launcher, sids)
+    if not _seat_launcher(card, root, launcher, sids):
+        return _warn_codex_hooks(card, plan)
     return _warn_codex_hooks(_bring_up_window(card, root, sids, bound, runner=runner,
                                               allow_unverified_launch=allow_unverified_launch,
                                               write_repo_files=write_repo_files), plan)
@@ -131,15 +137,21 @@ def _warn_codex_hooks(card: dict[str, Any], plan: list[dict[str, Any]]) -> dict[
     return card
 
 
-def _seat_launcher(card: dict[str, Any], root: Path, launcher: dict[str, Any] | None, sids: list[str]) -> None:
+def _seat_launcher(card: dict[str, Any], root: Path, launcher: dict[str, Any] | None, sids: list[str]) -> bool:
     """Act on the resolved launcher once every chair has joined (a refused or failed verb
     attaches nobody and moves no lead): the card's `launcher` block, a warning when it is
     unknown, and launched_by on each joined chair, whose prompt then names it."""
     if launcher is None or not sids:
-        return
-    from .launcher import public_block, seat_launcher
+        return True
+    from .launcher import UNPROVEN_NEXT, public_block, seat_launcher
     from .lifecycle import record_launcher
-    info = seat_launcher(root, launcher)
+    try:
+        info = seat_launcher(root, launcher)
+    except ValueError as exc:
+        # The launcher proved its session but could not attach: nothing is launched, and
+        # the joined chairs keep no launcher (`convoy adopt` names one later).
+        card.update(ok=False, error=str(exc), next=UNPROVEN_NEXT)
+        return False
     card["launcher"] = public_block(info)
     if info.get("warning"):
         card["warnings"] = list(card.get("warnings") or []) + [info["warning"]]
@@ -147,6 +159,7 @@ def _seat_launcher(card: dict[str, Any], root: Path, launcher: dict[str, Any] | 
     keys = ("launched_by", "launched_by_why", "boot_prompt")
     card["seats"] = [{**s, **{k: rows[s["session_id"]].get(k) for k in keys}} if s.get("session_id") in rows else s
                      for s in card.get("seats") or []]
+    return True
 
 
 def _mint_and_join(card: dict[str, Any], root: Path, plan: list[dict[str, Any]], *, checkout: Path | str | None,
@@ -356,6 +369,14 @@ def add(
     if card["placement"] == "none":
         card["error"] = card["placement_reason"]
         return card
+    from .launcher import refusal
+    refused = refusal(launcher)
+    if refused:
+        if runner is None:   # a dry run says what a live add would do: refuse
+            card.update({k: v for k, v in refused.items() if k != "error"}, would_refuse=refused["error"])
+            return card
+        card.update(refused)
+        return card          # before any write
     if runner is None:
         if launcher is not None:
             # A dry run attaches nobody; it says what a live add would do with the launcher.
@@ -369,7 +390,8 @@ def add(
     sids = _mint_and_join(card, root, plan, checkout=checkout, mint_runner=mint_runner, author=author)
     if sids is None:
         return card
-    _seat_launcher(card, root, launcher, sids)
+    if not _seat_launcher(card, root, launcher, sids):
+        return card
     launched = launch_seat(root, sids[0], runner=runner, env=env, which=which, platform_name=platform_name,
                            trust_probe=trust_probe, allow_unverified_launch=allow_unverified_launch,
                            write_repo_files=write_repo_files)

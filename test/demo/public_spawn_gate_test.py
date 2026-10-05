@@ -48,6 +48,12 @@ def _payload(resp):
 
 class PublicSpawnGate(unittest.TestCase):
     def setUp(self):
+        # An MCP launch records the conductor its bearer proves; these tests open the gate
+        # without a bearer, so the launch reads a synthetic conductor (conductor_launcher_test
+        # covers the refusal without one).
+        _conductor = mock.patch("convoy.mcp_http._launch_launcher", return_value={"kind": "conductor", "name": "grok-bot", "via": "bearer", "why": None})
+        _conductor.start()
+        self.addCleanup(_conductor.stop)
         self.root = Path(tempfile.mkdtemp())
         ensure_id(self.root)
         bind(self.root, "gate")

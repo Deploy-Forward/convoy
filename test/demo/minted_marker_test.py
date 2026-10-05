@@ -23,6 +23,8 @@ from pathlib import Path
 from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from launcher_fixture import seated_launcher, widget_lead, with_seated_launcher  # noqa: E402
 
 from convoy.bringup import bring_up, ensure_first_run, terminals
 from convoy.cli import main
@@ -398,6 +400,17 @@ class EveryLaunchVerbOnARealRepo(Sandbox):
 
     def setUp(self):
         super().setUp()
+        # An MCP launch records the conductor its bearer proves; these tests open the gate
+        # without a bearer, so the launch reads a synthetic conductor (conductor_launcher_test
+        # covers the refusal without one).
+        _conductor = mock.patch("convoy.mcp_http._launch_launcher", return_value={"kind": "conductor", "name": "grok-bot", "via": "bearer", "why": None})
+        _conductor.start()
+        self.addCleanup(_conductor.stop)
+        # A launch records a proven launcher; these tests exercise launch mechanics, so the
+        # launching session is a synthetic seated chair (launcher_always_test covers refusal).
+        _launcher = mock.patch("convoy.cli.resolve_launcher", side_effect=seated_launcher)
+        _launcher.start()
+        self.addCleanup(_launcher.stop)
         self.repo = _repo("convoy-marker-repo-")
         ensure_id(self.repo)
         bind(self.repo, "demo")
@@ -537,6 +550,14 @@ class TheOptInRecord(Sandbox):
 
 
 class TheWidget(Sandbox):
+    def setUp(self):
+        super().setUp()
+        # A widget launch records the thread's held lead; here the lead is a synthetic chair
+        # (widget_launcher_test covers the real lead and the refusal without one).
+        _launcher = mock.patch("convoy.launcher.widget_launcher", side_effect=widget_lead)
+        _launcher.start()
+        self.addCleanup(_launcher.stop)
+
     def test_the_widget_crew_start_names_what_it_would_write(self):
         import convoy.onboard as onboard_module
         from convoy.widget_web import WidgetApi

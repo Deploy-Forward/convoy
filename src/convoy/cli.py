@@ -69,7 +69,7 @@ def _seat_spec(text: str) -> dict:
 SENDER_PROBE_TIMEOUT_S = 5
 
 
-def _proven_sender(root: Path, dry_run: bool) -> dict[str, Any] | None:
+def _proven_sender(root: Path, dry_run: bool, *, explicit_root: bool = False) -> dict[str, Any] | None:
     """The chair whoami proves for this body, as the sender of a send; None when
     nothing proves one. A dry run records no send, and a probe that fails or runs
     out of time never stops a send: the sender is then unknown."""
@@ -77,7 +77,7 @@ def _proven_sender(root: Path, dry_run: bool) -> dict[str, Any] | None:
         return None
     try:
         procs = enumerate_processes(attempts=1, timeout=SENDER_PROBE_TIMEOUT_S)
-        me = identify(root, procs=procs, env=os.environ)
+        me = identify(root, procs=procs, env=os.environ, explicit_root=explicit_root)
     except Exception:
         return None
     if not isinstance(me, dict) or not me.get("chair"):
@@ -93,7 +93,9 @@ def _codex_worktree(root: Path, worktree: str | Path) -> bool:
     return any(_harness_bin(str(s.get("to") or "")) == "codex" for s in seats_for_worktree(root, worktree))
 
 
-def _record_launcher(root: Path, session_ids: list[str] | None) -> dict[str, Any] | None:
+def _record_launcher(root: Path, session_ids: list[str] | None,
+                     resolved: dict[str, Any] | None = None, *,
+                     explicit_root: bool = False) -> dict[str, Any] | None:
     """join --launch / launch / bring-up: resolve the launching session once, act on it
     (attach an unseated one), and record launched_by on each chair this verb may spawn:
     a pending boot prompt and no live pane host (a chair another launch already spawned is
@@ -109,6 +111,11 @@ def _record_launcher(root: Path, session_ids: list[str] | None) -> dict[str, Any
              and str(s.get("boot_prompt") or "").strip() and not hosted_live(root, s["session_id"])]
     if not fresh:
         return None
+    from .launcher import refusal
+    resolved = resolved if resolved is not None else resolve_launcher(root, explicit_root=explicit_root)
+    refused = refusal(resolved)
+    if refused:
+        return {"refuse": refused}   # before any write: no claim, no attach, no record
     # The launch claim first: only the invocation holding a chair's reservation records
     # and settles it. A chair another launch holds is left alone and not spawned here.
     claims: dict[str, Any] = {}
@@ -122,7 +129,12 @@ def _record_launcher(root: Path, session_ids: list[str] | None) -> dict[str, Any
     if not fresh:
         return {"recorded_on": [], "claim_refused": refused, "_previous": {}, "_claims": {}}
     try:
-        info = seat_launcher(root, resolve_launcher(root))
+        info = seat_launcher(root, resolved)
+    except ValueError as exc:
+        for path in claims.values():
+            path.unlink(missing_ok=True)
+        from .launcher import UNPROVEN_NEXT
+        return {"refuse": {"ok": False, "error": str(exc), "next": UNPROVEN_NEXT}}
     except BaseException:
         for path in claims.values():
             path.unlink(missing_ok=True)
@@ -175,6 +187,19 @@ def _claimed_launch(root: Path, sid: str, recorded: dict[str, Any] | None, launc
     holds = sid in ((recorded or {}).get("_claims") or {})
     return _spawn_settled(root, recorded, lambda: launch(holds),
                           lambda c: [sid] if c.get("ok") and not dry else [])
+
+
+def _would_refuse(root: Path, session_ids: list[str] | None, card: dict[str, Any], *,
+                  explicit_root: bool = False) -> None:
+    """A dry run of a launch says what the live one would do with an unproven launcher."""
+    from .launcher import refusal
+    wanted = set(session_ids) if session_ids else None
+    if not any((wanted is None or s.get("session_id") in wanted) and str(s.get("boot_prompt") or "").strip()
+               for s in list_seats(root)):
+        return
+    refused = refusal(resolve_launcher(root, explicit_root=explicit_root))
+    if refused and isinstance(card, dict):
+        card.update(would_refuse=refused["error"], why=refused["why"], next=refused["next"])
 
 
 def _with_launcher(card: dict[str, Any], recorded: dict[str, Any] | None) -> None:
@@ -248,6 +273,11 @@ def main(argv: list[str] | None = None) -> int:
     ry = sub.add_parser("reply", help="answer one send by its token: a note to that send's sender citing the token, which is its delivery receipt")
     ry.add_argument("token")
     ry.add_argument("body")
+
+    adp = sub.add_parser("adopt", help="make yourself the launcher of an existing neuron with none (or a gone one), then send it its report/reply commands; a live launcher is replaced only by the lead")
+    adp_who = adp.add_mutually_exclusive_group(required=True)
+    adp_who.add_argument("--id", dest="neuron_id", help="the neuron's short id (n + 6 hex)")
+    adp_who.add_argument("--seat", help="the neuron's chair session_id on --root")
 
     s = sub.add_parser("send")
     s.add_argument("--to", action="append", help="harness of the target chair (repeat for many); or use --id")
@@ -581,7 +611,22 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(card))
         return 0 if card.get("ok") else 1
     if args.cmd == "whoami":
-        me = identify(root)
+        if not root_explicit and not read_id(root):
+            # No thread here: the session itself says which thread it sits on. On several
+            # it refuses with the list; whoami answers for one thread.
+            from .sessions import proven_session_chairs, several_threads_error
+            try:
+                hits = proven_session_chairs(Path.cwd())
+            except ValueError:
+                hits = []
+            if len(hits) > 1:
+                print(json.dumps({"ok": False, "chair": None, "error": several_threads_error(hits),
+                                  "threads": [{"convoy_id": read_id(r), "root": str(r), "chair": s.get("session_id")}
+                                              for r, s in hits]}))
+                return 1
+            if hits:
+                root = Path(hits[0][0])
+        me = identify(root, explicit_root=root_explicit)
         if me.get("chair"):
             from .launcher import whoami_fields
             me.update(whoami_fields(root, me["chair"]))
@@ -592,7 +637,7 @@ def main(argv: list[str] | None = None) -> int:
         verified_by = None
         # Explicit authorship is legacy-compatible when no body can be
         # identified, but it cannot override a different proved chair.
-        me = identify(root) if (args.as_me or instance_id) else None
+        me = identify(root, explicit_root=root_explicit) if (args.as_me or instance_id) else None
         if instance_id and me and me.get("chair") and instance_id != me["chair"]:
             print(json.dumps({"ok": False, "error": "refuse hook: explicit author disagrees with this body's verified chair", "whoami": me}))
             return 1
@@ -650,7 +695,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.cmd == "committed":
         chair = args.author
         if args.as_me:
-            me = identify(root)
+            me = identify(root, explicit_root=root_explicit)
             chair = me.get("chair")
             if not chair:
                 print(json.dumps({"ok": False, "error": "refuse committed --as-me: no chair on this thread matches this body", "whoami": me}))
@@ -757,13 +802,26 @@ def main(argv: list[str] | None = None) -> int:
     if args.cmd in ("join", "swap", "seated"):
         try:
             if args.cmd == "join":
+                resolved = None
+                if args.launch:
+                    # Who is launching, before any write: an unproven launcher refuses here.
+                    from .launcher import refusal
+                    resolved = resolve_launcher(root, explicit_root=root_explicit)
+                    refused = refusal(resolved)
+                    if refused:
+                        print(json.dumps(refused))
+                        return 1
                 card = join(root, args.to, session_id=args.session_id, worktree=args.worktree,
                             model=args.model, title=args.title, effort=args.effort, author=args.author,
                             where=args.where, calling_session=not args.launch)
                 recorded = None
                 if args.launch and not card.get("already"):
                     # Only after the join succeeded: a refused join attaches nobody.
-                    recorded = _record_launcher(root, [card["seat"]["session_id"]])
+                    recorded = _record_launcher(root, [card["seat"]["session_id"]], resolved=resolved,
+                                                    explicit_root=root_explicit)
+                    if recorded and recorded.get("refuse"):
+                        print(json.dumps({**card, **recorded["refuse"]}))
+                        return 1
                 if args.launch and not card.get("already"):
                     sid = card["seat"]["session_id"]
                     launched = _claimed_launch(root, sid, recorded, lambda claimed: launch_seat(
@@ -789,7 +847,7 @@ def main(argv: list[str] | None = None) -> int:
                 card = swap(root, args.seat, to=args.to, handoff=args.handoff,
                             author=args.author, model=args.model, effort=args.effort)
             else:
-                me = identify(root)
+                me = identify(root, explicit_root=root_explicit)
                 if me.get("chair") and me["chair"] != args.seat:
                     raise ValueError("refuse seated: this body proves another chair")
                 card = seated_ack(root, args.seat, token=args.token,
@@ -825,7 +883,8 @@ def main(argv: list[str] | None = None) -> int:
             return 1
         card = crew(root, seats, thread=args.thread, checkout=args.checkout,
                     runner=live_runner if args.launch else None, allow_unverified_launch=args.allow_unverified_launch,
-                    write_repo_files=_opt_in(args), launcher=resolve_launcher(root))
+                    write_repo_files=_opt_in(args),
+                    launcher=resolve_launcher(root, explicit_root=root_explicit))
         if card.get("ok") and args.launch:
             card["widget_service"] = auto_widget_service(disabled=bool(args.no_widget))
         print(json.dumps(card))
@@ -838,7 +897,7 @@ def main(argv: list[str] | None = None) -> int:
                           checkout=args.checkout, runner=None if args.dry_run else active_pane_runner,
                           window_runner=None if args.dry_run else live_runner,
                           allow_unverified_launch=args.allow_unverified_launch, write_repo_files=_opt_in(args),
-                          launcher=resolve_launcher(root))
+                          launcher=resolve_launcher(root, explicit_root=root_explicit))
         print(json.dumps(card))
         return 0 if card.get("ok") else 1
     if args.cmd == "await-seated":
@@ -854,7 +913,10 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(card))
         return 0 if card.get("ok") else 1
     if args.cmd == "launch":
-        recorded = None if args.dry_run else _record_launcher(root, [args.seat])
+        recorded = None if args.dry_run else _record_launcher(root, [args.seat], explicit_root=root_explicit)
+        if recorded and recorded.get("refuse"):
+            print(json.dumps({"session_id": args.seat, **recorded["refuse"]}))
+            return 1
         card = _claimed_launch(root, args.seat, recorded, lambda claimed: launch_seat(
             root,
             args.seat,
@@ -865,6 +927,8 @@ def main(argv: list[str] | None = None) -> int:
             claimed=claimed,
         ), dry=bool(args.dry_run))
         _with_launcher(card, recorded)
+        if args.dry_run:
+            _would_refuse(root, [args.seat], card, explicit_root=root_explicit)
         print(json.dumps(card))
         return 0 if card.get("ok") else 1
     if args.cmd == "consent":
@@ -1014,7 +1078,7 @@ def main(argv: list[str] | None = None) -> int:
             try:
                 # A lead change is authored by the proven calling chair (environment or token
                 # proof; a cwd match is not enough). --as asserts it and never overrides it.
-                me = identify(root)
+                me = identify(root, explicit_root=root_explicit)
                 proven = me.get("chair") if me.get("ok") and me.get("via") in ("environment", "token") else None
                 if not proven:
                     raise ValueError("refuse lead change: cannot prove the calling chair (environment or token"
@@ -1050,7 +1114,10 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps({"ok": False, "dry_run": True, "windows": [], "error": dry_opt_in_refusal(args.cmd, cli=True)}))
             return 1
         runner = None if args.dry_run else live_runner
-        recorded = None if args.dry_run else _record_launcher(root, args.seat)
+        recorded = None if args.dry_run else _record_launcher(root, args.seat, explicit_root=root_explicit)
+        if recorded and recorded.get("refuse"):
+            print(json.dumps({"windows": [], **recorded["refuse"]}))
+            return 1
         card = _spawn_settled(root, recorded, lambda: bring_up(
             root, convoy_id=args.convoy_id, thread=args.thread, runner=runner, session_ids=args.seat,
             allow_unverified_launch=args.allow_unverified_launch, write_repo_files=_opt_in(args),
@@ -1058,6 +1125,8 @@ def main(argv: list[str] | None = None) -> int:
             lambda c: [str(w.get("session_id")) for w in c.get("windows") or []
                        if isinstance(w, dict) and w.get("ok") and w.get("session_id")])
         _with_launcher(card, recorded)
+        if args.dry_run:
+            _would_refuse(root, args.seat, card, explicit_root=root_explicit)
         print(json.dumps(card))
         if args.dry_run:
             existing = {s.get("session_id") for s in list_seats(root, convoy_id=card.get("convoy_id"))}
@@ -1191,9 +1260,31 @@ def main(argv: list[str] | None = None) -> int:
         # No explicit --root: the origin serves every thread the machine index
         # knows and each call names its thread (move 3). --root pins it.
         return serve(root if root_explicit else None, host=args.host, port=args.port)
+    if args.cmd == "adopt":
+        from .adopt import adopt
+        from .conductor import RECEIPT_PROOF
+        sid = args.seat
+        if args.neuron_id:
+            from .activity import resolve_neuron_id
+            hit = resolve_neuron_id(args.neuron_id)
+            if not hit.get("ok"):
+                print(json.dumps(hit))
+                return 1
+            root, sid = Path(hit["root"]), hit["session_id"]
+        # A root found from a neuron id is inferred, whatever --root said.
+        explicit = root_explicit and not args.neuron_id
+        me = identify(root, explicit_root=explicit)
+        # A proven caller whose own chair here is detached is re-attached through the launcher
+        # path (attach_proven, with its lead rules), so it is resolved like an unseated one.
+        own = next((s for s in list_seats(root) if s.get("session_id") == me.get("chair")), {})
+        proven = (me.get("ok") and me.get("chair") and me.get("via") in RECEIPT_PROOF
+                  and not own.get("detached"))
+        card = adopt(root, sid, me=me, launcher=None if proven else resolve_launcher(root, explicit_root=explicit))
+        print(json.dumps(card))
+        return 0 if card.get("ok") else 1
     if args.cmd in ("report", "reply"):
         from .route import reply, report
-        me = identify(root)
+        me = identify(root, explicit_root=root_explicit)
         card = (report(root, args.body, me=me) if args.cmd == "report"
                 else reply(root, args.token, args.body, me=me))
         print(json.dumps(card))
@@ -1236,7 +1327,7 @@ def main(argv: list[str] | None = None) -> int:
                 worktree=wt,
                 allow_interactive_resume=allow_interactive_resume,
                 allow_unverified_launch=args.allow_unverified_launch,
-                sender=_proven_sender(root, args.dry_run),
+                sender=_proven_sender(root, args.dry_run, explicit_root=root_explicit),
             )
             print(json.dumps(card))
             if args.dry_run and card.get("session_id"):
@@ -1253,7 +1344,7 @@ def main(argv: list[str] | None = None) -> int:
             dry_run=args.dry_run,
             allow_interactive_resume=allow_interactive_resume,
             allow_unverified_launch=args.allow_unverified_launch,
-            sender=_proven_sender(root, args.dry_run),
+            sender=_proven_sender(root, args.dry_run, explicit_root=root_explicit),
         )
         print(json.dumps(cards))
         if args.dry_run and any(c.get("session_id") for c in cards):

@@ -13,13 +13,17 @@ from .panes import identify
 from .thread_list import thread_list
 
 
-def proven_session_chair(cwd: Path, root: Path | None = None, *, seen: dict | None = None,
-                         probe_timeout: float | None = None):
-    """Prefer active native links; keep ordinary cwd hooks cheap and available.
-    seen: when given, a process table read here is left in seen["procs"] (or its failure in
-    seen["error"]) for the caller's hook to reuse, so one hook reads the table at most once.
-    probe_timeout: a hook's budget; the read is then one attempt bounded by it. None (a caller
-    outside a hook) keeps the long default."""
+def proven_session_chairs(cwd: Path, root: Path | None = None, *, seen: dict | None = None,
+                          probe_timeout: float | None = None) -> list:
+    """Every active (root, seat) this calling session is proven to hold, one per thread.
+
+    A session may sit on several threads at once (one chair on each). Native ids are
+    checked first; a single native link corroborated by a unique cwd chair needs no
+    process scan. Otherwise ONE process-table read proves the session on every candidate
+    thread. seen: when given, that read (or its failure in seen["error"]) is left in
+    seen["procs"] for the caller's hook to reuse, so one hook reads the table at most once.
+    probe_timeout: a hook's budget; the read is then one attempt bounded by it. None (a
+    caller outside a hook) keeps the long default. Detached links are never returned."""
     from . import panes
     roots = [root] if root is not None else [Path(t["root"]) for t in list_threads()
         if t.get("present") and not is_temp_root(str(t.get("root") or ""))]
@@ -41,18 +45,17 @@ def proven_session_chair(cwd: Path, root: Path | None = None, *, seen: dict | No
                       if any(matches_native(s) and not s.get("detached") for s in seats)]
         active_native = [(candidate, s) for candidate, seats in candidates
                          for s in seats if matches_native(s) and not s.get("detached")]
-        if len({str(candidate) for candidate, _ in active_native}) > 1:
-            names = sorted({str(read_id(candidate)) for candidate, _ in active_native})
-            raise ValueError("calling session matches multiple threads: " + ", ".join(names) + "; detach --thread <cvy_id> before continuing")
         # Native-id + unique cwd corroboration needs no machine-wide process
-        # scan. Outside/foreign-cwd links still use the real identify veto.
+        # scan. Outside/foreign-cwd links, and a session on several threads, use
+        # the real identify veto on every candidate from one read below.
         from .inbox import seats_for_worktree
-        for candidate, s in active_native:
+        if len(active_native) == 1:
+            candidate, s = active_native[0]
             cwd_seats = seats_for_worktree(candidate, cwd)
-            if len(active_native) == 1 and len(cwd_seats) == 1 and cwd_seats[0]["session_id"] == s["session_id"]:
-                return candidate, s
+            if len(cwd_seats) == 1 and cwd_seats[0]["session_id"] == s["session_id"]:
+                return [(candidate, s)]
     if not candidates:
-        return None, None
+        return []
     if panes._TEST_PROCS is not None:
         processes, error = panes._TEST_PROCS, None
     elif probe_timeout is not None:
@@ -65,7 +68,7 @@ def proven_session_chair(cwd: Path, root: Path | None = None, *, seen: dict | No
         from .inbox import resolve_root, seats_for_worktree
         cwd_root = root or resolve_root(cwd)
         if cwd_root is not None and len(seats_for_worktree(cwd_root, cwd)) == 1:
-            return None, None  # The legacy unique cwd route remains available.
+            return []  # The legacy unique cwd route remains available.
         raise ValueError("cannot prove calling session: process table unavailable: " + error)
     hits = []
     for candidate, recorded in candidates:
@@ -74,13 +77,24 @@ def proven_session_chair(cwd: Path, root: Path | None = None, *, seen: dict | No
             seats = [s for s in recorded if s.get("session_id") == me["chair"]]
             if len(seats) == 1:
                 hits.append((candidate, seats[0]))
-    active = [hit for hit in hits if not hit[1].get("detached")]
-    if len(active) > 1:
-        names = sorted({str(read_id(candidate)) for candidate, _ in active})
-        raise ValueError("calling session matches multiple threads: " + ", ".join(names) + "; detach --thread <cvy_id> before continuing")
-    if active:
-        return active[0] if len(active) == 1 else (None, None)
-    return None, None  # An old detached link must not veto the cwd's chair.
+    # An old detached link must not veto the cwd's chair.
+    return [hit for hit in hits if not hit[1].get("detached")]
+
+
+def several_threads_error(hits: list) -> str:
+    names = sorted({str(read_id(candidate)) for candidate, _ in hits})
+    return ("calling session matches several threads: " + ", ".join(names) +
+            "; pass --root or --thread to choose one")
+
+
+def proven_session_chair(cwd: Path, root: Path | None = None, *, seen: dict | None = None,
+                         probe_timeout: float | None = None):
+    """The one (root, seat) a caller that needs exactly one thread acts on, or (None, None).
+    Several threads refuse with their list: pass --root or --thread."""
+    hits = proven_session_chairs(cwd, root, seen=seen, probe_timeout=probe_timeout)
+    if len(hits) > 1:
+        raise ValueError(several_threads_error(hits))
+    return hits[0] if hits else (None, None)
 
 
 PREFIX_MIN = 8  # characters of a cvy_ id, "cvy_" included
@@ -123,7 +137,16 @@ def resolve_thread(choice: str) -> Path:
 
 
 def attached_elsewhere(root: Path, harness: str, native_id: str, *, skipped=None) -> str | None:
-    """Shared join/attach ownership guard; never infer identity from a path."""
+    """The first other thread this native session holds a chair on, or None. Reporting
+    only: a session may hold one chair on each of any number of threads."""
+    hits = attached_threads(root, harness, native_id, skipped=skipped)
+    return str(hits[0].get("thread") or hits[0]["convoy_id"]) if hits else None
+
+
+def attached_threads(root: Path, harness: str, native_id: str, *, skipped=None) -> list[dict]:
+    """Every other thread this native session holds an active chair on: {convoy_id, thread}.
+    Never infers identity from a path."""
+    found: list[dict] = []
     for thread in list_threads():
         if is_temp_root(str(thread.get("root") or "")):
             if skipped is not None:
@@ -145,8 +168,9 @@ def attached_elsewhere(root: Path, harness: str, native_id: str, *, skipped=None
                 tokens.append(existing.get("resume"))
             if (not existing.get("detached") and canonical_harness_id(existing.get("to")) == harness and
                 native_id in tokens):
-                return str(thread.get("thread") or thread["convoy_id"])
-    return None
+                found.append({"convoy_id": thread.get("convoy_id"), "thread": thread.get("thread")})
+                break
+    return found
 
 
 def attach_session(choice: str | None, *, cwd: Path | None = None, as_harness: str | None = None):
@@ -166,7 +190,8 @@ def attach_proven(root: Path, here: Path, me: dict, *, as_harness: str | None = 
 
     The one attach rule, shared by `convoy attach` and by a launch whose launcher is not
     seated yet: refuse without environment or token proof, seat (or re-attach) the chair,
-    stamp the seated row, and take a lead that is none or dangling."""
+    stamp the seated row, and take a lead that is none or dangling. A session may hold a
+    chair on several threads: the card lists the others in `also_on`."""
     try:
         root = Path(root)
         here = Path(here).resolve()
@@ -179,9 +204,11 @@ def attach_proven(root: Path, here: Path, me: dict, *, as_harness: str | None = 
         if as_harness and canonical_harness_id(as_harness) != harness:
             return {"ok": False, "error": "--as-harness disagrees with calling harness " + harness}
         skipped = []
-        elsewhere = attached_elsewhere(root, harness, native["id"], skipped=skipped)
-        if elsewhere:
-            return {"ok": False, "error": "attached to " + elsewhere + "; detach first"}
+        try:
+            also_on = attached_threads(root, harness, native["id"], skipped=skipped)
+        except ValueError as exc:   # an unreadable root: reported, never a refusal
+            also_on = []
+            skipped.append({"reason": str(exc)})
         sid = me.get("chair")
         already = bool(sid)
         if not sid:
@@ -205,7 +232,7 @@ def attach_proven(root: Path, here: Path, me: dict, *, as_harness: str | None = 
         # Do not run vendor usage CLIs just to attach. Unknown quota is honest.
         card = catch_up(root, probe_fn=lambda h: {}, session_id=sid)
         return {**card, "chair": sid, "already": already, "verified_by": native["via"], "lead_taken": taken,
-                "root": str(root), "seat": row, "ownership_skipped": skipped}
+                "root": str(root), "seat": row, "also_on": also_on, "ownership_skipped": skipped}
     except (OSError, ValueError) as exc:
         return {"ok": False, "error": str(exc)}
 
@@ -216,19 +243,12 @@ def detach_session(*, root: Path, cwd: Path | None = None, thread: str | None = 
         if not thread and not read_id(root):
             # A worktree-less attachment cannot install a cwd pointer. Find
             # it only by whoami proof across usable roots, not by recency.
-            hits = []
-            for t in list_threads():
-                if not t.get("present") or is_temp_root(str(t.get("root") or "")):
-                    continue
-                candidate = Path(t["root"])
-                found = identify(candidate, cwd=str(cwd or Path.cwd()))
-                if found.get("ok") and found.get("chair") and found.get("via") in ("environment", "token"):
-                    rows = [s for s in list_seats(candidate) if s.get("session_id") == found["chair"]]
-                    if len(rows) == 1 and not rows[0].get("detached"):
-                        hits.append(candidate)
-            if len(hits) != 1:
-                return {"ok": False, "error": "choose --thread: calling session matches " + str(len(hits)) + " threads"}
-            root = hits[0]
+            hits = proven_session_chairs(Path(cwd or Path.cwd()))
+            if len(hits) > 1:
+                return {"ok": False, "error": "choose --thread: " + several_threads_error(hits)}
+            if not hits:
+                return {"ok": False, "error": "choose --thread: calling session matches no thread"}
+            root = hits[0][0]
         me = identify(root, cwd=str(cwd or Path.cwd()))
         if not me.get("ok") or not me.get("chair") or me.get("via") not in ("environment", "token"):
             return {"ok": False, "error": "cannot prove calling chair: " + str(me.get("ask") or "unknown")}

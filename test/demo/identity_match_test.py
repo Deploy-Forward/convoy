@@ -193,6 +193,11 @@ class LinkedSessionIdentityContract(unittest.TestCase):
     OTHER_ID = "synthetic-native-session-b"
 
     def setUp(self):
+        # One thread per machine index: these ids are recorded on no other thread, so a
+        # fresh or rotated id here is unrecorded everywhere, not a chair on another test's thread.
+        home = patch.dict(os.environ, {"CONVOY_HOME": tempfile.mkdtemp(prefix="convoy-link-home-")})
+        home.start()
+        self.addCleanup(home.stop)
         self.root = Path(tempfile.mkdtemp())
         ensure_id(self.root)
         bind(self.root, "link-identity")

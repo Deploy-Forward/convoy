@@ -24,6 +24,7 @@ Four guarantees:
 """
 import io
 import itertools
+import functools
 import json
 import os
 import subprocess
@@ -37,6 +38,8 @@ from pathlib import Path
 from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from launcher_fixture import seated_launcher, widget_lead, with_seated_launcher, work_seats  # noqa: E402
 
 from convoy.pane_host import read_launch_argv
 from convoy.bringup import bring_up  # noqa: E402
@@ -44,6 +47,9 @@ from convoy.cli import main  # noqa: E402
 from convoy.consent import request_consent  # noqa: E402
 from convoy.convoy import bind, ensure_id, list_seats, seat  # noqa: E402
 from convoy.crew import await_seated, crew  # noqa: E402
+
+crew = with_seated_launcher(crew)
+
 from convoy.graph import build_graph  # noqa: E402
 from convoy.inbox import HARNESS_INBOX, connect_mode  # noqa: E402
 from convoy.layer import feed_since  # noqa: E402
@@ -78,7 +84,7 @@ def _norm(p) -> str:
 
 
 def _row(root, sid):
-    return [s for s in list_seats(root) if s["session_id"] == sid][-1]
+    return [s for s in work_seats(root) if s["session_id"] == sid][-1]
 
 
 
@@ -183,7 +189,7 @@ class CrewMintsJoinsAndLaunchesOnce(unittest.TestCase):
         self.assertFalse(alias["launched"])
         mismatch = crew(self.root, [{"harness": "grok"}], thread="other", runner=runner, mint_runner=minted)
         self.assertFalse(mismatch["launched"], mismatch)
-        self.assertEqual(list_seats(self.root), [], "a refused crew writes no chair")
+        self.assertEqual(work_seats(self.root), [], "a refused crew writes no chair")
         self.assertEqual(feed_since(self.root, EPOCH), [], "a refused crew mints no token")
         self.assertEqual(minted.calls, [], "a refused crew runs no git")
         runner.assert_not_called()
@@ -234,7 +240,7 @@ class CrewMintsJoinsAndLaunchesOnce(unittest.TestCase):
         self.assertFalse(card["ok"])
         self.assertIn("pane host", card["error"])
         self.assertEqual(minted.calls, [])
-        self.assertEqual(list_seats(self.root), [])
+        self.assertEqual(work_seats(self.root), [])
         runner.assert_not_called()
         self.assertFalse(card.get("partial"))
 
@@ -242,7 +248,7 @@ class CrewMintsJoinsAndLaunchesOnce(unittest.TestCase):
         card = crew(self.root, [{"harness": "grok"}, {"harness": "claude"}])
         self.assertTrue(card["ok"], card)
         self.assertFalse(card["launched"])
-        self.assertEqual(len(list_seats(self.root)), 2)
+        self.assertEqual(len(work_seats(self.root)), 2)
         # the argv that WOULD run is shown; nothing ran
         self.assertEqual(len(card["windows"]), 2)
         for w in card["windows"]:
@@ -253,7 +259,7 @@ class CrewMintsJoinsAndLaunchesOnce(unittest.TestCase):
         card = crew(self.root, [{"harness": "grok"}], thread="other")
         self.assertFalse(card["ok"])
         self.assertIn("other", card["error"])
-        self.assertEqual(list_seats(self.root), [])
+        self.assertEqual(work_seats(self.root), [])
         offered = [h["id"] for h in launch_choices(self.root, which=_which, env={}, platform_name="nt",
                                                    git_worktrees=lambda _p: [])["harnesses"] if h["where"]["cloud"]["offered"]]
         self.assertTrue(offered, "the contract must offer cloud somewhere today")
@@ -395,6 +401,12 @@ def _rpc(url, method, params=None):
 
 class CrewWire(unittest.TestCase):
     def setUp(self):
+        # An MCP launch records the conductor its bearer proves; these tests open the gate
+        # without a bearer, so the launch reads a synthetic conductor (conductor_launcher_test
+        # covers the refusal without one).
+        _conductor = mock.patch("convoy.mcp_http._launch_launcher", return_value={"kind": "conductor", "name": "grok-bot", "via": "bearer", "why": None})
+        _conductor.start()
+        self.addCleanup(_conductor.stop)
         self.root = Path(tempfile.mkdtemp())
         (self.root / ".git").mkdir()  # mint's checkout check; git itself is mocked here
         ensure_id(self.root)
@@ -432,7 +444,7 @@ class CrewWire(unittest.TestCase):
         card = self._call("crew", seats=[{"harness": "grok"}], launch=True)
         self.assertFalse(card["ok"])
         self.assertIn("CONVOY_MCP_WRITE_TOOLS", card["error"])
-        self.assertEqual(list_seats(self.root), [])
+        self.assertEqual(work_seats(self.root), [])
         self.assertEqual(self.git.calls, [], "a refused crew runs no git")
         refused = self._call("seated", seat="x", token="t")
         self.assertFalse(refused["ok"])
@@ -515,6 +527,11 @@ class CrewWire(unittest.TestCase):
 
 class CrewCli(unittest.TestCase):
     def setUp(self):
+        # A launch records a proven launcher; these tests exercise launch mechanics, so the
+        # launching session is a synthetic seated chair (launcher_always_test covers refusal).
+        _launcher = mock.patch("convoy.cli.resolve_launcher", side_effect=seated_launcher)
+        _launcher.start()
+        self.addCleanup(_launcher.stop)
         self.root = _git_repo()
         ensure_id(self.root)
         bind(self.root, "cli-t")
@@ -570,7 +587,8 @@ class CrewCardSurfacesHookErrors(unittest.TestCase):
         with mock.patch.object(crew_mod, "bring_up", return_value=fake_up), \
              mock.patch.object(crew_mod, "mint_worktrees", return_value=fake_mint), \
              mock.patch.object(crew_mod, "pane_host_available", return_value=True):
-            card = crew_mod.crew(root, [{"harness": "codex"}], runner=lambda argv: {"ok": True, "pid": 1},
+            card = crew_mod.crew(root, [{"harness": "codex"}], launcher=seated_launcher(root),
+                                 runner=lambda argv: {"ok": True, "pid": 1},
                                  mint_runner=lambda *a, **k: None)
         self.assertIn("warnings", card)
         self.assertIn("inbox_hook_error", card["warnings"][0])

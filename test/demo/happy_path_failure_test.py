@@ -8,6 +8,7 @@ is a contract that has not landed, not a skip.
 from __future__ import annotations
 
 import io
+import functools
 import json
 import os
 import re
@@ -21,11 +22,16 @@ from pathlib import Path
 from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from launcher_fixture import seated_launcher, widget_lead, with_seated_launcher, work_seats  # noqa: E402
 
 from convoy import cli, index
 from convoy.cli import main
 from convoy.convoy import bind, ensure_id, list_seats, seat
 from convoy.crew import crew
+
+crew = with_seated_launcher(crew)
+
 from convoy.layer import feed_since, parse_since
 from convoy.onboard import onboard
 from convoy.panes import identify
@@ -164,7 +170,7 @@ class CrewWindowFailure(unittest.TestCase):
         )
         self.assertFalse(card.get("ok"), card)
         self.assertFalse(card.get("launched"), card)
-        seats = list_seats(self.root)
+        seats = work_seats(self.root)
         joins = [r for r in feed_since(self.root, EPOCH) if r.get("kind") == "join"]
         if card.get("partial") is True:
             self.assertTrue(seats, "partial:true names the chairs that survived")

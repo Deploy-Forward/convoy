@@ -36,6 +36,8 @@ from pathlib import Path
 from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from launcher_fixture import seated_launcher, widget_lead, with_seated_launcher  # noqa: E402
 
 from convoy import cli
 from convoy.layer import parse_since
@@ -82,6 +84,11 @@ class HappyPath(unittest.TestCase):
     maxDiff = None
 
     def setUp(self):
+        # A launch records a proven launcher; these tests exercise launch mechanics, so the
+        # launching session is a synthetic seated chair (launcher_always_test covers refusal).
+        _launcher = mock.patch("convoy.cli.resolve_launcher", side_effect=seated_launcher)
+        _launcher.start()
+        self.addCleanup(_launcher.stop)
         self.root = _real_repo()
         self.spawns = []
         path = str(FAKES) + os.pathsep + os.environ.get("PATH", "")
@@ -208,8 +215,9 @@ class HappyPath(unittest.TestCase):
         self.assertIsNone(rail["lead"])
         self.assertEqual(rail["feed"]["since"], "10m")
         self.assertEqual(rail["feed"]["events"], len(fd["events"]))
-        self.assertEqual(rail["seats"], {"total": 2, "connected": 2, "pending": 0, "stale": 0})
-        self.assertEqual(sorted(rail["usage"]), ["codex", "grok"])
+        # The launcher is a chair on the thread too (seated, never joined, so never acked).
+        self.assertEqual(rail["seats"], {"total": 3, "connected": 2, "pending": 1, "stale": 0})
+        self.assertEqual(sorted(rail["usage"]), ["claude", "codex", "grok"])   # the launcher is a claude chair
         for h, u in rail["usage"].items():
             self.assertIsNone(u["usage_remaining"], h)   # unknown is null, never 0
             self.assertFalse(u["limited"], h)
@@ -256,9 +264,11 @@ class HappyPath(unittest.TestCase):
         self.assertTrue(by[sids[1]]["last_seen"] <= live["relaunched_at"])
         self.assertTrue(by[sids[1]]["relaunch_note"].endswith(sids[1] + ".jsonl"))
         # old acks do not count: every chair is pending until it acks again
-        self.assertEqual(sorted(live["seated"]["pending"]), sorted(sids))
+        self.assertEqual(sorted(live["seated"]["pending"]), sorted(sids + ["synthetic-launcher"]))
         # the relaunched pane boots WITH a prompt again: the join token rides it
         for c in live["chairs"]:
+            if c["session_id"] == "synthetic-launcher":
+                continue   # the launcher chair never joined, so it has no join token to re-arm
             self.assertTrue(c["boot_prompt_rearmed"]); self.assertTrue(c["token_found"])
         argv = self.spawns[0]["argv"]
         # The pane runs the lifecycle host, so the re-armed prompt rides

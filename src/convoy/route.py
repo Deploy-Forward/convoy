@@ -43,7 +43,22 @@ def report(root: Path, text: str, *, me: dict[str, Any] | None, runner=None) -> 
     if chair is None:
         return {**refused, "why": why}
     seats = {s.get("session_id"): s for s in list_seats(root)}
-    launcher = (seats.get(chair) or {}).get("launched_by")
+    from .launcher import launcher_of
+    kind, launcher = launcher_of((seats.get(chair) or {}).get("launched_by"))
+    if kind == "conductor":
+        # Launched over MCP: the result goes to that conductor as a proven note addressed to
+        # it, which its `replies` cursor returns.
+        from .layer import hook
+        try:
+            row = hook(root, "note", text, instance_id=chair, to=launcher, verified_by=via_of(me))
+        except ValueError as exc:
+            return {**refused, "why": str(exc)}
+        return {"ok": True, "routed_to": launcher, "route": "conductor", "row": row,
+                "delivery": "recorded", "delivered": False}
+    from .activity import neuron_id
+    from .convoy import read_id
+    fix = ("; ask the person or your conductor to run `convoy adopt --id " +
+           str(neuron_id(read_id(root), chair)) + "`")
     if launcher and launcher != chair and launcher in seats and not seats[launcher].get("detached"):
         target, route, note = launcher, "launcher", None
     else:
@@ -57,9 +72,9 @@ def report(root: Path, text: str, *, me: dict[str, Any] | None, runner=None) -> 
             note = "the launcher " + str(launcher) + " is detached"
         lead = lead_state(root)["chair"]
         if lead == chair:
-            return {**refused, "why": note + ", and you are the lead: there is no one to report to"}
+            return {**refused, "why": note + ", and you are the lead: there is no one to report to" + fix}
         if not lead:
-            return {**refused, "why": note + ", and no lead on this thread"}
+            return {**refused, "why": note + ", and no lead on this thread" + fix}
         target, route = lead, "lead"
     card = send_one(root, target, text, runner=runner or fake_runner, allow_interactive_resume=True,
                     sender={"chair": chair, "verified_by": via_of(me)})

@@ -274,29 +274,34 @@ def _spawn_waiter(root: Path, chair: str, incarnation: Any) -> dict[str, Any]:
     return {"spawned": True, "pid": int(process.pid)}
 
 
-def _resolve_identity(
+def _resolve_identities(
     *, root: Path | str | None, cwd: Path, allow_missing_root: bool, seen: dict[str, Any] | None = None,
-    probe_timeout: float | None = None,
-) -> tuple[Path | None, dict[str, Any] | None, str | None]:
+    probe_timeout: float | None = None, several: bool = False,
+) -> tuple[list[tuple[Path, dict[str, Any]]], str | None]:
+    """The (root, seat) pairs this call acts on, from one process-table read at most. A
+    session may hold a chair on several threads: the automatic Stop (several=True) acts on
+    every one; a command that needs one thread refuses with the list."""
     resolved: Path | None
-    from .sessions import proven_session_chair
+    from .sessions import proven_session_chairs, several_threads_error
     if root is not None:
         resolved = Path(root).resolve()
         if not read_id(resolved):
-            return None, None, "explicit --root is not a Convoy thread"
+            return [], "explicit --root is not a Convoy thread"
     else:
         resolved = resolve_root(cwd)
     try:
-        proven_root, proven_seat = proven_session_chair(cwd, resolved if root is not None else None, seen=seen,
-                                                        probe_timeout=probe_timeout)
+        hits = proven_session_chairs(cwd, resolved if root is not None else None, seen=seen,
+                                     probe_timeout=probe_timeout)
     except ValueError as exc:
-        return resolved, None, str(exc)
-    if proven_root is not None:
-        return proven_root, proven_seat, None
+        return [], str(exc)
+    if len(hits) > 1 and not several:
+        return [], several_threads_error(hits)
+    if hits:
+        return [(Path(r), s) for r, s in hits], None
     if resolved is None:
         if allow_missing_root:
-            return None, None, None
-        return None, None, "no Convoy thread root resolves from cwd"
+            return [], None
+        return [], "no Convoy thread root resolves from cwd"
     matches = seats_for_worktree(resolved, cwd)
     if len(matches) != 1:
         # A calling session can be proven without a worktree (for example an
@@ -304,8 +309,18 @@ def _resolve_identity(
         # native-session proof; never guess by the latest seat or pulse.
         chairs = [str(row.get("session_id") or "") for row in matches]
         detail = ", ".join(chairs) if chairs else "none"
-        return resolved, None, "end refuses ambiguous/unseated cwd; matching chairs: " + detail
-    return resolved, matches[0], None
+        return [], "end refuses ambiguous/unseated cwd; matching chairs: " + detail
+    return [(resolved, matches[0])], None
+
+
+def _merge_hooks(hooks: list[dict[str, Any]]) -> dict[str, Any]:
+    """One Stop answer for several threads: a block if any thread blocks (every reason,
+    in order), else the system messages joined."""
+    blocks = [h for h in hooks if isinstance(h, dict) and h.get("decision") == "block"]
+    if blocks:
+        return {"decision": "block", "reason": "\n\n---\n\n".join(str(h.get("reason") or "") for h in blocks)}
+    messages = [str(h["systemMessage"]) for h in hooks if isinstance(h, dict) and h.get("systemMessage")]
+    return {"systemMessage": " ".join(messages)} if messages else {}
 
 
 def end_task(
@@ -338,15 +353,32 @@ def end_task(
     # that one read, or its failure, is all the stamp gate below gets: at most one read per Stop.
     # A failed read still falls back to this cwd's unique seat, so the heartbeat is written.
     seen: dict[str, Any] = {}
-    thread_root, seat, error = _resolve_identity(
+    hits, error = _resolve_identities(
         root=root, cwd=worktree, allow_missing_root=automatic, seen=seen,
-        probe_timeout=STOP_PROBE_TIMEOUT_S if automatic else None,
+        probe_timeout=STOP_PROBE_TIMEOUT_S if automatic else None, several=automatic and root is None,
     )
     if error:
         return {"ok": False, "skipped": automatic, "error": error}
-    if thread_root is None or seat is None:
+    if not hits:
         return {"ok": True, "skipped": True, "reason": "not in a Convoy worktree"}
+    cards = [_end_one(thread_root, seat, worktree=worktree, automatic=automatic, payload=payload,
+                      summary=summary, push=push, git_runner=git_runner, seen=seen)
+             for thread_root, seat in hits]
+    if len(cards) == 1:
+        return cards[0]
+    # One session on several threads: a heartbeat and a stamp on each; one hook answer.
+    first = dict(cards[0])
+    first["ok"] = all(bool(c.get("ok")) for c in cards)
+    first["threads"] = cards
+    if automatic:
+        first["hook"] = _merge_hooks([c.get("hook") or {} for c in cards])
+    return first
 
+
+def _end_one(thread_root: Path, seat: dict[str, Any], *, worktree: Path, automatic: bool,
+             payload: dict[str, Any], summary: str | None, push: bool, git_runner: GitRunner,
+             seen: dict[str, Any]) -> dict[str, Any]:
+    """The heartbeat, stamp and Stop work for one (thread, chair)."""
     chair = str(seat.get("session_id") or "").strip()
     if seat.get("detached"):
         return {"ok": True, "skipped": True, "reason": "detached; attach again"}

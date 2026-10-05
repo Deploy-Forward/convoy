@@ -100,6 +100,11 @@ class OutsideHarnessJoin(unittest.TestCase):
     maxDiff = None
 
     def setUp(self):
+        # An MCP launch records the conductor its bearer proves; the gate here is the legacy
+        # flag, so the conductor is synthetic (conductor_launcher_test covers the refusal).
+        _conductor = mock.patch("convoy.mcp_http._launch_launcher", return_value={"kind": "conductor", "name": "grok-bot", "via": "bearer", "why": None})
+        _conductor.start()
+        self.addCleanup(_conductor.stop)
         # The thread root is minted in the REAL temp dir first; then the temp
         # dir is moved so recent() sees it as a non-temp root, and a second
         # thread minted under the moved temp dir is the residue recent() must

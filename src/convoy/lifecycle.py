@@ -34,6 +34,7 @@ def _require_seat(root: Path, session_id: str) -> dict[str, Any]:
 
 
 _UNSET: Any = object()
+SWAP_LAUNCHER_WHY = "recorded when this chair is launched"
 
 
 def _boot_prompt(root: Path, session_id: str, token: str, handoff: str) -> str:
@@ -83,13 +84,18 @@ def refresh_identity(root: Path, row: dict[str, Any]) -> dict[str, Any]:
     return {**row, "boot_prompt": fresh}
 
 
-def record_launcher(root: Path, session_id: str, launched_by: str | None, why: str | None = None) -> dict[str, Any]:
+def record_launcher(root: Path, session_id: str, launched_by: Any, why: str | None = None) -> dict[str, Any]:
     """Record who launched a chair joined without one (`join` then `launch`/`bring-up`),
     and recompose its one-shot boot prompt with the token its join or swap minted, so the
     prompt names the launcher too. A chair with no token on the feed keeps its prompt."""
+    from .filelock import exclusive
+    from .targeted_launch import _claim_path
     _require_seat(root, session_id)
     changes: dict[str, Any] = {"launched_by": launched_by, "launched_by_why": why if launched_by is None else None}
-    row = update_seat(root, session_id, **changes)
+    # One lock per chair for every launcher record (launch, settle, adopt), so a launch and
+    # an adopt never interleave a write.
+    with exclusive(_claim_path(Path(root), session_id)):
+        row = update_seat(root, session_id, **changes)
     return refresh_identity(root, row)
 
 
@@ -123,12 +129,8 @@ def join(
     me = identify(root, allow_unseated=True) if self_request else {}
     native = me.get("native_session") or {}
     skipped = []
-    if (me.get("ok") and native.get("id") and native.get("via") in ("environment", "token") and
-        canonical_harness_id(to) == native.get("harness")):
-        from .sessions import attached_elsewhere
-        elsewhere = attached_elsewhere(root, native["harness"], native["id"], skipped=skipped)
-        if elsewhere:
-            raise ValueError("attached to " + elsewhere + "; detach first")
+    # A session may hold one chair on each of several threads: joining this one is not
+    # refused because it sits on another.
     if me.get("ok") and me.get("chair") and me.get("via") in ("environment", "token"):
         existing = _require_seat(root, me["chair"])
         if canonical_harness_id(existing.get("to")) == canonical_harness_id(to):
@@ -186,7 +188,10 @@ def swap(
     # Both tokens null on EVERY swap, same harness included: update_seat only
     # nulls vendor_session_id on a harness change, which left a grok->grok
     # swap resumable and made `launch` refuse it as "not fresh" (2026-09-03).
-    changes: dict[str, Any] = {"to": to, "resume": None, "vendor_session_id": None}
+    # The new occupant has not been launched yet: the launch that spawns it records who
+    # launched it, and until then its prompt says so (never the old occupant's launcher).
+    changes: dict[str, Any] = {"to": to, "resume": None, "vendor_session_id": None,
+                               "launched_by": None, "launched_by_why": SWAP_LAUNCHER_WHY}
     if model:
         changes["model"] = model
     if effort:

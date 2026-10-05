@@ -46,7 +46,7 @@ First run can prepare the thread index, `~/.bashrc`, `~/.claude/settings.json`, 
 
 Run `convoy list` and show its output verbatim, including skipped roots and unknown values. Default lists usable recent threads; `--all` includes hidden/older usable threads. Never delete skipped roots automatically.
 
-For the person's chosen block, run `convoy attach <cvy_id|exact thread name>`. Map display pick numbers to the block's exact `cvy_` id; never pass a number. Attach proves this running native session, launches nothing, refuses unavailable/conflicting identity and reuses its chair on repeat. Detach before switching threads. Legacy pointer-only catch-up uses `attach --read-only`.
+For the person's chosen block, run `convoy attach <cvy_id|exact thread name>`. Map display pick numbers to the block's exact `cvy_` id; never pass a number. Attach proves this running native session, launches nothing, refuses unavailable/conflicting identity and reuses its chair on repeat. A session can sit on several threads (one chair each); the card lists the others in `also_on`. Legacy pointer-only catch-up uses `attach --read-only`.
 
 Run `convoy detach [--thread <cvy_id|name>]` to detach the proven calling session. Its rolling handoff, chair, history and pending rows remain. It closes no pane and kills no session. Detached chairs cannot drain/pulse or wake; sends refuse until attach reactivates them.
 

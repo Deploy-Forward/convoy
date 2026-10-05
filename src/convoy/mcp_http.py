@@ -76,7 +76,7 @@ probe: Any = CachedProbe(_live_probe, ttl_s=60.0)
 PROTOCOL_LATEST = "2025-03-26"
 PROTOCOL_SUPPORTED = frozenset({PROTOCOL_LATEST, "2024-11-05"})
 SERVER_NAME = "convoy"
-_BASE_VERSION = "1.2.0"
+_BASE_VERSION = "1.3.0"
 
 
 def _server_version(repo_dir: Path | None = None) -> str:
@@ -155,6 +155,56 @@ AWAIT_SEATED_MAX_S = 600.0
 # twenty-odd gate checks below stay one call and read the right request even on
 # the threading server.
 _PRINCIPAL: contextvars.ContextVar[dict[str, Any] | None] = contextvars.ContextVar("convoy_principal", default=None)
+
+
+def _launch_launcher() -> dict[str, Any] | None:
+    """The launcher an MCP launch records: the conductor this request's bearer proves.
+    None without one (a legacy-flag call): the launch then refuses."""
+    from .launcher import conductor_launcher
+    sender = _conductor_sender()
+    return conductor_launcher(sender["chair"]) if sender else None
+
+
+def _no_launcher(extra: dict[str, Any] | None = None) -> dict[str, Any]:
+    from .launcher import UNPROVEN_ERROR
+    return {"ok": False, **(extra or {}), "error": UNPROVEN_ERROR,
+            "why": "this request carries no bearer identity, so no conductor can be recorded as the launcher",
+            "next": "call with the conductor's bearer (`convoy conductor mint`)"}
+
+
+def _record_mcp_launcher(root: Path, sids: list[str]) -> tuple[dict[str, Any], dict[str, str]]:
+    """Record the bearer's conductor on each chair a launch may spawn (a pending boot prompt,
+    no live pane host, no launch claim held by a live process) and return what was there
+    before, for _settle_mcp_launcher, plus the chairs another launch holds (skipped). The
+    check and the record run under the chair's launch-claim lock, the lock every launcher
+    record takes, so an MCP launch and a CLI launch of one chair never interleave."""
+    from .filelock import exclusive
+    from .lifecycle import record_launcher
+    from .targeted_launch import _claim_expired, _claim_path, hosted_live, read_launch_claim
+    launcher = _launch_launcher()
+    wanted = set(sids) if sids else None
+    previous: dict[str, Any] = {}
+    held: dict[str, str] = {}
+    for s in list_seats(root):
+        sid = s.get("session_id")
+        if not ((wanted is None or sid in wanted) and str(s.get("boot_prompt") or "").strip()):
+            continue
+        with exclusive(_claim_path(root, sid)):
+            claim = read_launch_claim(root, sid)
+            if hosted_live(root, sid) or (claim is not None and not _claim_expired(claim)):
+                held[sid] = "another launch holds this chair's claim"
+                continue
+            current = next((r for r in list_seats(root) if r.get("session_id") == sid), s)
+            previous[sid] = ("launched_by" in current, current.get("launched_by"), current.get("launched_by_why"))
+            record_launcher(root, sid, {"kind": "conductor", "name": launcher["name"]})
+    return previous, held
+
+
+def _settle_mcp_launcher(root: Path, previous: dict[str, Any], spawned: list[str]) -> None:
+    from .lifecycle import record_launcher
+    for sid, (had, by, why) in previous.items():
+        if sid not in spawned:
+            record_launcher(root, sid, by, (why if had else "no launch has spawned this chair yet") if by is None else None)
 
 
 def _conductor_sender() -> dict[str, Any] | None:
@@ -1156,14 +1206,28 @@ def _call_tool_at(root: Path, name: str, args: dict[str, Any]) -> dict[str, Any]
         if not dry and not _write_tools_enabled():
             return {"ok": False, "dry_run": False, "spawned": False, "windows": [], "error": _gate_text(name + " dry_run=false")}
         runner = None if dry else live_runner
-        card = bring_up(
-            root,
-            convoy_id=_opt_str(args, "convoy_id"),
-            thread=_opt_str(args, "thread"),
-            runner=runner,
-            allow_unverified_launch=args.get("allow_unverified_launch", False),
-            **repo_files,
-        )
+        previous: dict[str, Any] = {}
+        if not dry:
+            if _launch_launcher() is None:
+                return _no_launcher({"dry_run": False, "spawned": False, "windows": []})
+            previous, held = _record_mcp_launcher(root, [])
+        else:
+            held = {}
+        spawned: list[str] = []
+        try:
+            card = bring_up(
+                root,
+                convoy_id=_opt_str(args, "convoy_id"),
+                thread=_opt_str(args, "thread"),
+                runner=runner,
+                allow_unverified_launch=args.get("allow_unverified_launch", False),
+                exclude=held or None,
+                **repo_files,
+            )
+            spawned = [str(w.get("session_id")) for w in card.get("windows") or []
+                       if isinstance(w, dict) and w.get("ok") and w.get("session_id")]
+        finally:
+            _settle_mcp_launcher(root, previous, spawned)
         card["dry_run"] = dry
         return card
     if name in ("hide", "minimize", "background"):
@@ -1246,11 +1310,15 @@ def _call_tool_at(root: Path, name: str, args: dict[str, Any]) -> dict[str, Any]
             return {"ok": False, "error": "join requires to"}
         if not _write_tools_enabled():
             return {"ok": False, "error": _gate_text("join")}
+        launcher = _launch_launcher()
+        if launcher is None:
+            return _no_launcher()
         try:
             return join_chair(root, to, session_id=_opt_str(args, "session_id"), worktree=_opt_str(args, "worktree"),
                               model=_opt_str(args, "model"), title=_opt_str(args, "title"),
                               effort=_opt_str(args, "effort"), author=_opt_str(args, "author"),
-                              where=_opt_str(args, "where"), calling_session=False)
+                              where=_opt_str(args, "where"), calling_session=False,
+                              launched_by={"kind": "conductor", "name": launcher["name"]})
         except ValueError as e:
             return {"ok": False, "error": str(e)}
     if name == "launch":
@@ -1260,11 +1328,22 @@ def _call_tool_at(root: Path, name: str, args: dict[str, Any]) -> dict[str, Any]
         if not _write_tools_enabled():
             # Refused BEFORE launch_seat is reached: nothing is spawned.
             return {"ok": False, "seat": sid, "spawned": False, "error": _gate_text("launch")}
+        if _launch_launcher() is None:
+            return _no_launcher({"seat": sid, "spawned": False})
+        previous, held = _record_mcp_launcher(root, [sid])
+        if sid in held:
+            return {"ok": False, "seat": sid, "spawned": False,
+                    "error": "refuse duplicate launch: " + held[sid]}
+        spawned: list[str] = []
         try:
-            return launch_seat(root, sid, runner=active_pane_runner, consent=_opt_str(args, "consent"),
+            card = launch_seat(root, sid, runner=active_pane_runner, consent=_opt_str(args, "consent"),
                                allow_unverified_launch=args.get("allow_unverified_launch", False), **repo_files)
+            spawned = [sid] if card.get("ok") else []
+            return card
         except ValueError as e:
             return {"ok": False, "seat": sid, "spawned": False, "error": str(e)}
+        finally:
+            _settle_mcp_launcher(root, previous, spawned)
     if name == "focus":
         sid = (_opt_str(args, "seat") or "").strip()
         if not sid:
@@ -1280,9 +1359,12 @@ def _call_tool_at(root: Path, name: str, args: dict[str, Any]) -> dict[str, Any]
             # Refused BEFORE validation, mint or join: no chair, no git, no window.
             return {"ok": False, "seats": [], "launched": False, "error": _gate_text("crew")}
         launch = _opt_bool(args, "launch", False)
+        launcher = _launch_launcher()
+        if launcher is None:
+            return _no_launcher({"seats": [], "launched": False})
         return crew_chairs(root, seats, thread=_opt_str(args, "thread"), checkout=_opt_str(args, "checkout"),
                            runner=live_runner if launch else None, allow_unverified_launch=args.get("allow_unverified_launch", False),
-                           **repo_files)
+                           launcher=launcher, **repo_files)
     if name == "seated":
         sid = (_opt_str(args, "seat") or "").strip()
         token = _opt_str(args, "token") or ""

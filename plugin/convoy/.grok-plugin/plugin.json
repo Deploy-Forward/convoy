@@ -1,6 +1,6 @@
 {
   "name": "convoy",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "description": "Orchestrate BYO AI harnesses as neurons on one Convoy thread with a live, fail-closed MCP wizard.",
   "author": {
     "name": "Deploy Forward",
