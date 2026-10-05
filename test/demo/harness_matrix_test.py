@@ -362,7 +362,11 @@ class HarnessMatrix(unittest.TestCase):
         import io
         from contextlib import redirect_stdout
         from convoy.cli import main
+        from convoy.targeted_launch import _claim_path
         for extra, expected in (([], False), (["--allow-unverified-launch"], True)):
+            # The CLI holds the chair's launch claim through the spawn; a successful launch
+            # leaves it for the pane host. Release it so the second pass is a fresh launch.
+            _claim_path(Path(self.root), self.sid).unlink(missing_ok=True)
             with mock.patch("convoy.cli.launch_seat", return_value={"ok": True}) as launch, redirect_stdout(io.StringIO()):
                 self.assertEqual(main(["--root", str(self.root), "launch", "--seat", self.sid, *extra]), 0)
             self.assertIs(launch.call_args.kwargs["allow_unverified_launch"], expected)

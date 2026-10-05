@@ -37,6 +37,56 @@ def _stamp() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
+def process_started(pid: Any) -> str | None:
+    """When that process started, as an opaque string, so a pid the OS reused for another
+    process can be told apart from the one recorded. Windows: the creation FILETIME from
+    GetProcessTimes. Linux: the start tick, field 22 of /proc/<pid>/stat. None elsewhere
+    (macOS has no cheap stdlib reading) and for a process that cannot be read: the caller
+    then falls back to the pid alone."""
+    try:
+        value = int(pid)
+    except (TypeError, ValueError):
+        return None
+    if value <= 0:
+        return None
+    if os.name == "nt":
+        try:
+            import ctypes
+            from ctypes import wintypes
+            kernel32 = ctypes.windll.kernel32   # type: ignore[attr-defined]
+            handle = kernel32.OpenProcess(0x1000, False, value)   # PROCESS_QUERY_LIMITED_INFORMATION
+            if not handle:
+                return None
+            try:
+                times = [wintypes.FILETIME() for _ in range(4)]
+                if not kernel32.GetProcessTimes(handle, *(ctypes.byref(t) for t in times)):
+                    return None
+                created = times[0]
+                return str((int(created.dwHighDateTime) << 32) | int(created.dwLowDateTime))
+            finally:
+                kernel32.CloseHandle(handle)
+        except Exception:
+            return None
+    try:
+        text = Path("/proc/" + str(value) + "/stat").read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    fields = text.rsplit(")", 1)[-1].split()
+    # After the command name: state is field 3, starttime is field 22.
+    return fields[19] if len(fields) > 19 else None
+
+
+def host_alive(pid: Any, started: Any = None) -> bool:
+    """The recorded host is still running: its pid is alive and, when both the record and
+    this platform give a start time, the start time matches (a reused pid is not the host)."""
+    if not pid_alive(pid):
+        return False
+    if started is None:
+        return True
+    now = process_started(pid)
+    return True if now is None else str(now) == str(started)
+
+
 def pid_alive(pid: Any) -> bool:
     """True when that process id is still running.
 

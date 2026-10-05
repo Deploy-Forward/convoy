@@ -1,14 +1,15 @@
-"""convoy add: one neuron, split into the caller's terminal, model auto by default.
+"""convoy add: one neuron, launched into its thread's terminal, model auto by default.
 
-`crew --seat X --launch` brings a WHOLE thread up in its own new window, so a
-person asking for one more neuron got a second Windows Terminal window instead
-of a split beside the pane they were working in. `add` mints and joins one
-chair through crew's code, then launches it through the targeted path:
+`add` mints and joins one chair through crew's code, then launches it through the
+targeted path:
 
-- inside Windows Terminal or tmux: a split of the caller's active pane;
-- on Windows outside Windows Terminal, with wt on PATH: bring-up's new window;
-- on POSIX outside tmux, with tmux installed: a detached tmux session, and the
-  card carries the attach command;
+- inside tmux: a split of the caller's exact pane;
+- on Windows with wt on PATH: the thread's own named Windows Terminal window
+  (`wt -w 0` splits whatever pane has focus, so a neuron would land wherever the
+  person last clicked); the first neuron opens it, later ones
+  split inside it; thread_window_test.py pins the details;
+- on POSIX outside tmux, with tmux installed: the thread's own detached tmux
+  session, and the card carries the attach command;
 - nowhere to put it: a refusal before anything is written.
 
 The card's `placement` says which happened. Model and effort are auto unless
@@ -113,18 +114,18 @@ class AddBase(unittest.TestCase):
 
 
 class AddSplitsIntoTheCallersTerminal(AddBase):
-    def test_windows_terminal_one_split_of_the_active_pane_never_a_new_window(self):
+    def test_windows_terminal_opens_the_threads_own_window_never_window_zero(self):
         card = self.add("codex")
         self.assertTrue(card["ok"], card)
         self.assertTrue(card["launched"])
-        self.assertEqual(card["placement"], "split")
+        self.assertEqual(card["placement"], "thread-window")
         self.assertEqual(self.runner.call_count, 1)
         self.window_runner.assert_not_called()
         argv = [str(a) for a in self.runner.call_args[0][0]]
         self.assertEqual(_base(argv[0]), "wt")
-        self.assertEqual(argv[1:4], ["-w", "0", "split-pane"])
+        self.assertEqual(argv[1:4], ["-w", card["window"], "new-tab"])
+        self.assertNotIn("0", argv[1:3])
         self.assertNotIn("--window", argv)
-        self.assertNotIn("new", argv)
         sid = card["seats"][0]["session_id"]
         self.assertEqual([s["session_id"] for s in list_seats(self.root)], [sid])
         row = list_seats(self.root)[0]
@@ -140,16 +141,15 @@ class AddSplitsIntoTheCallersTerminal(AddBase):
         self.assertEqual(argv[1:4], ["split-window", "-t", "%3"])
         self.window_runner.assert_not_called()
 
-    def test_windows_outside_windows_terminal_falls_back_to_bring_up_new_window(self):
+    def test_windows_outside_windows_terminal_uses_the_same_thread_window(self):
         card = self.add("codex", where=WINDOWS_NO_WT_SESSION)
         self.assertTrue(card["ok"], card)
         self.assertTrue(card["launched"])
-        self.assertEqual(card["placement"], "new-window")
+        self.assertEqual(card["placement"], "thread-window")
         self.assertTrue(card["placement_reason"])
-        self.runner.assert_not_called()
-        self.assertEqual(self.window_runner.call_count, 1)
-        argv = [str(a) for a in self.window_runner.call_args[0][0]]
-        self.assertEqual(argv[1:3], ["--window", "new"])
+        self.window_runner.assert_not_called()
+        argv = [str(a) for a in self.runner.call_args[0][0]]
+        self.assertEqual(argv[1:4], ["-w", card["window"], "new-tab"])
 
     def test_a_second_add_of_the_same_harness_gets_its_own_chair(self):
         first = self.add("codex")
@@ -170,13 +170,15 @@ class AddOnLinux(AddBase):
         self.assertEqual(argv[0], "/usr/bin/tmux")
         self.assertEqual(argv[1:4], ["new-session", "-d", "-s"])
         name = argv[4]
-        self.assertTrue(name.startswith("convoy-add-t-"), name)
+        self.assertRegex(name, r"^convoy-[0-9a-f]{8}$")  # the thread's own session
         self.assertNotIn(".", name)
         self.assertNotIn(":", name)
         worktree = list_seats(self.root)[0]["worktree"]
-        self.assertEqual(argv[5:7], ["-c", str(worktree)])
+        from convoy.targeted_launch import root_thread_label
+        self.assertEqual(argv[5:7], ["-n", root_thread_label(self.root) + " - codex-1"])   # names the thread
+        self.assertEqual(argv[7:9], ["-c", str(worktree)])
         # tmux runs ONE shell command string; it is shlex-quoted, not split argv
-        self.assertEqual(len(argv), 8)
+        self.assertEqual(len(argv), 10)
         self.assertEqual(card["attach"], "tmux attach -t =" + name)
         self.window_runner.assert_not_called()
 
@@ -263,14 +265,15 @@ class AddKeepsTheLaunchGates(AddBase):
         self.assertTrue(card["ok"], card)
         self.assertTrue(card["dry_run"])
         self.assertFalse(card["launched"])
-        self.assertEqual(card["placement"], "split")
+        self.assertEqual(card["placement"], "thread-window")
         self.assertEqual(list_seats(self.root), [])
 
-    def test_crew_launch_is_unchanged_and_still_opens_a_new_window(self):
+    def test_crew_launch_opens_the_threads_own_window(self):
+        from convoy.targeted_launch import thread_window_name
         card = crew(self.root, [{"harness": "codex"}], runner=self.window_runner)
         self.assertTrue(card["ok"], card)
         argv = [str(a) for a in self.window_runner.call_args[0][0]]
-        self.assertEqual(argv[1:4], ["--window", "new", "nt"])
+        self.assertEqual(argv[1:4], ["-w", thread_window_name(card["convoy_id"]), "new-tab"])
 
 
 class AddCli(unittest.TestCase):
@@ -325,9 +328,8 @@ def _no_terminal_env():
 
 
 class DetachedSessionsNeverCollide(AddBase):
-    """A detached session name that two chairs can share means the second
-    `new-session` fails while the card claims a launch, and `attach` opens the
-    other neuron."""
+    """One detached tmux session per thread: chairs of one thread share it (the second
+    splits inside it once the first neuron's host is live), and two threads never do."""
 
     def _name(self, card):
         self.assertTrue(card["ok"], card)
@@ -339,12 +341,18 @@ class DetachedSessionsNeverCollide(AddBase):
         bind(other, thread)
         return other
 
-    def test_titles_that_fold_to_the_same_text_get_distinct_sessions(self):
-        first = self._name(self.add("codex", where=TMUX_OUTSIDE, title="a.b"))
-        second = self._name(self.add("codex", where=TMUX_OUTSIDE, title="a-b"))
-        self.assertNotEqual(first, second)
-        for name in (first, second):
-            self.assertRegex(name, r"^convoy-add-t-a-b-[0-9a-f]{6}$")
+    def test_two_chairs_of_one_thread_share_its_session_and_the_second_splits_into_it(self):
+        from convoy.targeted_launch import take_launch_claim
+        card = self.add("codex", where=TMUX_OUTSIDE, title="a.b")
+        first = self._name(card)
+        from convoy.targeted_launch import _claim_path
+        sid = card["seats"][0]["session_id"]
+        _claim_path(self.root, sid).unlink(missing_ok=True)
+        take_launch_claim(self.root, sid, host_pid=os.getpid())   # the first neuron's host is live
+        self.add("codex", where=TMUX_OUTSIDE, title="a-b")
+        argv = [str(a) for a in self.runner.call_args[0][0]]
+        self.assertRegex(first, r"^convoy-[0-9a-f]{8}$")
+        self.assertEqual(argv[1:4], ["split-window", "-t", "=" + first + ":"])
 
     def test_two_roots_on_one_thread_name_with_default_titles_get_distinct_sessions(self):
         first = self._name(_add(self.root, "codex", runner=self.runner, window_runner=self.window_runner, **TMUX_OUTSIDE))
@@ -416,21 +424,25 @@ class EveryPrintedRecoveryLaunches(AddBase):
         self.assertEqual(pane.call_count, 1)
         window.assert_not_called()
 
-    def test_new_window_retry_reaches_bring_up_for_that_one_chair(self):
+    def test_thread_window_retry_launches_that_one_chair_into_the_threads_window(self):
         first = self.add("codex", where=WINDOWS_NO_WT_SESSION)
         self.assertTrue(first["ok"], first)
-        self.window_runner.return_value = {"ok": False, "error": "wt refused"}
+        self.runner.return_value = {"ok": False, "error": "wt refused"}
         card = self.add("agy", where=WINDOWS_NO_WT_SESSION, allow_unverified_launch=True)
         self.assertTrue(card["partial"], card)
         sid = card["seats"][0]["session_id"]
         verb = card["recovery"][0]["verb"]
         self.assertIn("--allow-unverified-launch", verb)
-        rc, out, pane, window = self._retry(verb, {})
+        if os.name != "nt":
+            self.skipTest("the CLI retry places by this machine's platform; the thread window is Windows")
+        tools = Path(tempfile.mkdtemp())
+        (tools / "wt.exe").write_text("", encoding="utf-8")   # looked up on PATH; the mocked runner never runs it
+        rc, out, pane, window = self._retry(verb, {"PATH": str(tools) + os.pathsep + os.environ.get("PATH", "")})
         self.assertEqual(rc, 0, out)
-        pane.assert_not_called()
-        self.assertEqual(window.call_count, 1)
-        argv = [str(a) for a in window.call_args[0][0]]
-        self.assertEqual(argv[1:3], ["--window", "new"])
+        window.assert_not_called()
+        self.assertEqual(pane.call_count, 1)
+        argv = [str(a) for a in pane.call_args[0][0]]
+        self.assertEqual(argv[1:3], ["-w", card["window"]])
         self.assertIn(sid, " ".join(argv))
         self.assertNotIn(first["seats"][0]["session_id"], " ".join(argv))
 
@@ -465,11 +477,11 @@ class AddDryRunShowsWhatItWouldRun(AddBase):
         self.assertEqual(card["attach"], "tmux attach -t =" + card["session_name"])
         self.assertEqual(list_seats(self.root), [])
 
-    def test_dry_run_in_windows_terminal_reports_the_split_argv(self):
+    def test_dry_run_in_windows_terminal_reports_the_thread_window_argv(self):
         card = _add(self.root, "codex", **WT)
         self.assertTrue(card["ok"], card)
         self.assertIn("argv", card)
-        self.assertEqual([str(a) for a in card["argv"]][1:4], ["-w", "0", "split-pane"])
+        self.assertEqual([str(a) for a in card["argv"]][1:4], ["-w", card["window"], "new-tab"])
         self.assertNotIn("attach", card)
 
     def test_dry_run_refuses_a_title_the_live_run_would_refuse(self):

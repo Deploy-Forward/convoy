@@ -3,7 +3,7 @@
 Skills are neuron-side instruction files. Convoy agent guidance lives in the
 Convoy plugin (`convoy@deploy-forward`): `convoy-operate` (first turn,
 identity via `convoy whoami`, how to work on a thread), `convoy-listen`
-(receive: wait, drain the inbox, acknowledge with a note citing the token)
+(receive: wait, drain the inbox, acknowledge with `convoy reply <token>`)
 and `convoy-send` (send one neuron a message and prove it arrived). Claude
 Code and Codex install the convoy plugin from the deploy-forward marketplace
 (Claude Code: `claude plugin install convoy@deploy-forward`). Grok and

@@ -259,6 +259,23 @@ def _argv_tokens(cmdline: str) -> list[str]:
     return out
 
 
+# Codex options that take a value: the value is never a subcommand, a prompt or a native id.
+CODEX_VALUE_FLAGS = frozenset({"-m", "--model", "-c", "--config", "-C", "--cd",
+                               "-a", "--ask-for-approval", "--enable", "--disable",
+                               "--remote", "--remote-auth-token-env", "-i", "--image",
+                               "--local-provider", "-p", "--profile", "-s", "--sandbox",
+                               "--add-dir"})
+# A hook reads the process table at most once, in one attempt: a slow table must never hold a
+# tool call or outlive the plugin's 5 s Stop timeout. The inbox hook (PreToolUse/PostToolUse)
+# holds a tool call, so 2 s. The Stop hook's one read is shared by identity and the stamp gate;
+# real reads take 1.7-2.0 s, so 3 s (about 1.5x the slowest). The budget must leave room for
+# interpreter start and the git snapshot under the 5 s timeout: at 4 s a timed-out read put the
+# heartbeat near 4.5 s; at 3 s the worst case is near 3.6 s. A fixed constant, never derived
+# from elapsed time.
+HOOK_PROBE_TIMEOUT_S = 2.0
+STOP_PROBE_TIMEOUT_S = 3.0
+
+
 def _native_resume_ids(cmdline: str, harness: str) -> set[str]:
     """Exact native ids passed in the harness's evidenced continuation form.
 
@@ -274,11 +291,7 @@ def _native_resume_ids(cmdline: str, harness: str) -> set[str]:
     if harness == "codex":
         # Only evidenced option forms may be skipped for identity. An unknown
         # switch does not let a later prompt or value become a native id.
-        value_flags = {"-m", "--model", "-c", "--config", "-C", "--cd",
-                       "-a", "--ask-for-approval", "--enable", "--disable",
-                       "--remote", "--remote-auth-token-env", "-i", "--image",
-                       "--local-provider", "-p", "--profile", "-s", "--sandbox",
-                       "--add-dir"}
+        value_flags = CODEX_VALUE_FLAGS
         boolean_flags = {"--approve-for-me", "--dangerously-bypass-approvals-and-sandbox",
                          "--dangerously-bypass-hook-trust", "--search", "--no-alt-screen",
                          "--no-daemon", "--worktree", "--oss", "--strict-config",
@@ -499,8 +512,95 @@ def bodies(root: Path, enumerate_fn: Callable[[], list[dict[str, Any]]] | None =
     return out
 
 
+# Every environment variable through which a harness proves its native session to
+# Convoy (identify, attach, hook id stamps). The one list: the test guard clears these
+# for a whole run, and a test asserts no session variable the code reads is missing.
+NATIVE_SESSION_ENV = ("CLAUDE_CODE_SESSION_ID", "CODEX_THREAD_ID", "CODEX_SESSION_ID", "GROK_SESSION_ID")
+
 _TEST_PROCS: list[dict[str, Any]] | None = None   # test seam for the CLI path
 _TEST_PID: int | None = None
+
+
+def _codex_subcommand(cmdline: str) -> str | None:
+    """The first non-option word after a Codex executable (`exec`, `resume`, ...), or None. The
+    value of a value-taking option (`-m o3`, `-c x=y`) is skipped, never read as the subcommand."""
+    argv = _argv_tokens(cmdline)
+    start = 2 if argv and os.path.basename(argv[0].replace("\\", "/")).lower() in ("node", "node.exe") else 1
+    args = argv[start:]
+    i = 0
+    while i < len(args):
+        if args[i] in CODEX_VALUE_FLAGS:
+            i += 2
+        elif args[i].startswith("-"):
+            i += 1
+        else:
+            return args[i]
+    return None
+
+
+def _body_and_outer(chain: list[dict[str, Any]]) -> tuple[list[tuple[int, dict[str, Any], str]],
+                                                           list[tuple[int, dict[str, Any], str]]]:
+    """Split a caller's ancestry (nearest first) into its nearest harness body and the harness
+    nodes outside it. A non-empty outer list is a nested harness: a child run by another body."""
+    harness_nodes = [(i, p, _exe_harness(str(p.get("cmdline") or "")))
+                     for i, p in enumerate(chain)]
+    harness_nodes = [(i, p, h) for i, p, h in harness_nodes if h]
+    body_nodes = harness_nodes[:1]
+    for node in harness_nodes[1:]:
+        if not body_nodes or node[2] != body_nodes[-1][2]:
+            break
+        near_cmd = str(body_nodes[-1][1].get("cmdline") or "")
+        outer_cmd = str(node[1].get("cmdline") or "")
+        near_ids = _native_resume_ids(near_cmd, node[2])
+        outer_ids = _native_resume_ids(outer_cmd, node[2])
+        # Codex's npm wrapper, vendored binary and app-server child can all
+        # appear in one ancestry. Repeated equal resume ids are one body; a
+        # bare Codex launcher pair or its app-server is also one body. A
+        # Claude child with no id below a parent resuming another id is not.
+        # A `codex exec` below a Codex that is not itself that exec is a
+        # nested run (a review, a one-shot), never the same body.
+        nested_exec = (node[2] == "codex" and _codex_subcommand(near_cmd) == "exec"
+                       and _codex_subcommand(outer_cmd) != "exec")
+        same_body = not nested_exec and ((bool(near_ids) and near_ids == outer_ids) or (
+            node[2] == "codex" and (
+                "app-server" in _argv_tokens(near_cmd)[1:] or
+                (not near_ids and not outer_ids)
+            )
+        ))
+        if not same_body:
+            break
+        body_nodes.append(node)
+    return body_nodes, harness_nodes[len(body_nodes):]
+
+
+def hook_body(pid: int | None = None, procs: list[dict[str, Any]] | None = None, *,
+              read_error: str | None = None, timeout: float = HOOK_PROBE_TIMEOUT_S) -> dict[str, Any]:
+    """Which harness body runs this hook process, read from its own ancestry.
+
+    {harness, nested, error}: harness is the nearest harness body (None when no harness is an
+    ancestor or the table is unavailable); nested is True when another harness body runs that
+    one, as for a `codex exec` started by a Codex neuron. Never a chair claim.
+    procs / read_error: the table, or the error, of a read this hook already made; given either,
+    nothing is read again. Otherwise one attempt bounded by timeout."""
+    error = None
+    if read_error:
+        return {"harness": None, "nested": None, "error": read_error}
+    if procs is None:
+        if _TEST_PROCS is not None:
+            procs = _TEST_PROCS
+        else:
+            procs, error = _safe_enumerate(attempts=1, timeout=timeout)
+    if error:
+        return {"harness": None, "nested": None, "error": error}
+    me = pid if pid is not None else (_TEST_PID if _TEST_PID is not None else os.getpid())
+    by_pid = {p["pid"]: p for p in procs}
+    chain: list[dict[str, Any]] = []
+    cur = by_pid.get(me)
+    while cur is not None and len(chain) < 32:
+        chain.append(cur)
+        cur = by_pid.get(cur.get("ppid"))
+    body, outer = _body_and_outer(chain)
+    return {"harness": body[0][2] if body else None, "nested": bool(outer), "error": None}
 
 
 def identify(root: Path, pid: int | None = None, procs: list[dict[str, Any]] | None = None,
@@ -577,31 +677,7 @@ def identify(root: Path, pid: int | None = None, procs: list[dict[str, Any]] | N
                 hits.append(s)
         return hits
 
-    harness_nodes = [(i, p, _exe_harness(str(p.get("cmdline") or "")))
-                     for i, p in enumerate(chain)]
-    harness_nodes = [(i, p, h) for i, p, h in harness_nodes if h]
-    body_nodes = harness_nodes[:1]
-    for node in harness_nodes[1:]:
-        if not body_nodes or node[2] != body_nodes[-1][2]:
-            break
-        near_cmd = str(body_nodes[-1][1].get("cmdline") or "")
-        outer_cmd = str(node[1].get("cmdline") or "")
-        near_ids = _native_resume_ids(near_cmd, node[2])
-        outer_ids = _native_resume_ids(outer_cmd, node[2])
-        # Codex's npm wrapper, vendored binary and app-server child can all
-        # appear in one ancestry. Repeated equal resume ids are one body; a
-        # bare Codex launcher pair or its app-server is also one body. A
-        # Claude child with no id below a parent resuming another id is not.
-        same_body = (bool(near_ids) and near_ids == outer_ids) or (
-            node[2] == "codex" and (
-                "app-server" in _argv_tokens(near_cmd)[1:] or
-                (not near_ids and not outer_ids)
-            )
-        )
-        if not same_body:
-            break
-        body_nodes.append(node)
-    outer_nodes = harness_nodes[len(body_nodes):]
+    body_nodes, outer_nodes = _body_and_outer(chain)
     body_pids = {node[1]["pid"] for node in body_nodes}
     if allow_unseated and outer_nodes:
         return _refuse("nested harness cannot prove an independent native session; refuse attach")
@@ -821,9 +897,9 @@ def identify(root: Path, pid: int | None = None, procs: list[dict[str, Any]] | N
     return out
 
 
-def _safe_enumerate() -> tuple[list[dict[str, Any]], str | None]:
+def _safe_enumerate(*, attempts: int = 3, timeout: float = 150) -> tuple[list[dict[str, Any]], str | None]:
     try:
-        return enumerate_processes(), None
+        return enumerate_processes(attempts=attempts, timeout=timeout), None
     except (OSError, subprocess.SubprocessError, ValueError) as e:
         return [], type(e).__name__ + ": " + str(e)
 

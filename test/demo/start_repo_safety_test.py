@@ -96,9 +96,9 @@ class StartOnARepoRoot(RepoRoot):
     def test_it_lists_what_it_would_write_and_writes_it_only_when_asked(self):
         card = self.start()
         would = set(card["would_write"])
-        for path in ("AGENTS.md", ".claude/settings.local.json", ".codex/hooks.json",
-                     ".grok/hooks/convoy-inbox.json"):
+        for path in ("AGENTS.md", ".claude/settings.local.json", ".grok/hooks/convoy-inbox.json"):
             self.assertIn(path, would)
+        self.assertNotIn(".codex/hooks.json", would, "the convoy plugin carries Codex's hooks")
         self.assertNotIn(".claude/settings.json", would)
         self.assertFalse(card["write_repo_files"])
         written = self.start(write_repo_files=True)
@@ -353,7 +353,7 @@ class TheVisibleFilesNote(RepoRoot):
         notes = [n for n in card["start_card"]["notes"] if n.startswith(self.NOTE)]
         self.assertEqual(len(notes), 1, card["start_card"]["notes"])
         self.assertIn("AGENTS.md", notes[0])
-        self.assertIn(".codex/hooks.json", notes[0])
+        self.assertNotIn(".codex/hooks.json", notes[0])
 
     def test_the_note_is_on_the_attached_return_too(self):
         card = start(self.repo, str(self.repo), harnesses=["claude", "codex"], identify_fn=lambda r: {},

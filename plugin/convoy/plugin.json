@@ -1,7 +1,7 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "convoy",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Convoy marketplace Agent Plugin for Grok Bot with live MCP + wizard skills.",
   "author": {
     "name": "Deploy Forward",

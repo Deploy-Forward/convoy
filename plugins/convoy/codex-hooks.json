@@ -11,6 +11,17 @@
           }
         ]
       }
+    ],
+    "PostToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "convoy inbox --hook-pretooluse",
+            "timeout": 8
+          }
+        ]
+      }
     ]
   }
 }

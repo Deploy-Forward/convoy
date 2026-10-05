@@ -78,7 +78,7 @@ _AGENTS_BLOCK = (
     "You are a Convoy neuron on this thread. Run `convoy --root <root> whoami` first. "
     "Your guidance is the Convoy plugin's skills (convoy@deploy-forward): "
     "convoy-operate (first turn, identity, how to work on a thread), "
-    "convoy-listen (wait, drain your inbox, acknowledge with a note citing the token) and "
+    "convoy-listen (wait, drain your inbox, acknowledge with `convoy reply <token> \"...\"`) and "
     "convoy-send (send one neuron a message and prove it arrived). "
     "Claude Code and Codex install the convoy plugin from the deploy-forward marketplace "
     "(Claude Code: `claude plugin install convoy@deploy-forward`). "
@@ -86,8 +86,10 @@ _AGENTS_BLOCK = (
     "(`node plugin/install.mjs --apply`). "
     "agy, hermes and pi have none yet: run `convoy --root <root> whoami` "
     "and the receive loop in convoy-listen. "
-    "Convoy files: don't commit .codex/hooks.json changes Convoy made; "
-    "`convoy end --push` names any Convoy-written file in the commits it pushes.\n"
+    "Listening: --wait is for Claude and Grok background tasks. "
+    "Codex is woken through its native queue (the convoy plugin's hooks record its session id): "
+    "drain your inbox at turn start, and never run `inbox --wait` in the foreground. "
+    "Convoy files: `convoy end --push` names any Convoy-written file in the commits it pushes.\n"
     + SKILL_END + "\n"
 )
 
@@ -239,24 +241,34 @@ def install_neuron_identity(worktree: Path | str, *, person_files: bool = True) 
 
 def person_files_missing(worktree: Path | str) -> list[str]:
     """The files a person could own that do not yet carry Convoy's part, read from disk:
-    AGENTS.md without the pointer block, .codex/hooks.json without the end hook."""
-    wt = Path(worktree)
-    out: list[str] = []
-    agents = wt / "AGENTS.md"
+    AGENTS.md without the pointer block."""
+    agents = Path(worktree) / "AGENTS.md"
     try:
         has_block = agents.is_file() and SKILL_BEGIN in agents.read_text(encoding="utf-8-sig", errors="replace")
     except OSError:
         has_block = False
-    if not has_block:
-        out.append("AGENTS.md")
-    hooks = wt / CODEX_HOOKS_RELATIVE
+    return [] if has_block else ["AGENTS.md"]
+
+
+# Codex runs Convoy's hooks from the convoy plugin (codex-hooks.json), keyed once for every
+# project. A project .codex/hooks.json is keyed by its absolute path, so in a fresh worktree it is
+# a key nobody trusted and never runs; were it trusted, it would fire beside the plugin's. Convoy
+# no longer writes one, and one an older Convoy wrote is the person's to remove.
+CODEX_HOOKS_MIGRATION_NOTE = (
+    ".codex/hooks.json still carries Convoy hooks an older Convoy wrote; the convoy plugin now runs "
+    "them in Codex, so remove Convoy's entries from that file (Convoy leaves it as it is)")
+
+
+def stale_codex_hooks(worktree: Path | str) -> str | None:
+    """The worktree's .codex/hooks.json when it carries a Convoy end or inbox hook, else None."""
+    dest = Path(worktree) / CODEX_HOOKS_RELATIVE
     try:
-        text = hooks.read_text(encoding="utf-8-sig") if hooks.is_file() else None
+        text = dest.read_text(encoding="utf-8-sig") if dest.is_file() else None
     except OSError:
-        text = None
-    if not _existing_hook_commands(text, END_HOOK_ARGS):
-        out.append(CODEX_HOOKS_RELATIVE.as_posix())
-    return sorted(out)
+        return None
+    if _existing_hook_commands(text, END_HOOK_ARGS) or _existing_hook_commands(text, INBOX_HOOK_ARGS):
+        return str(dest)
+    return None
 
 
 def ensure_grok_agent(worktree: Path | str) -> dict[str, Any]:
@@ -485,21 +497,6 @@ def _merge_end_hook(data: dict[str, Any], command: str) -> tuple[dict[str, Any],
     return data, changed
 
 
-def _merge_codex_usage_hook(data: dict[str, Any], command: str) -> tuple[dict[str, Any], bool]:
-    """EXACTLY ONE Convoy inbox entry under PostToolUse in codex's hooks.json."""
-    hooks = data.get("hooks")
-    if not isinstance(hooks, dict):
-        hooks = {}
-    events = hooks.get("PostToolUse")
-    if not isinstance(events, list):
-        events = []
-    rebuilt = [e for e in events if not _commands_in(e)] + [_command_hook_entry(command)]
-    changed = rebuilt != events
-    hooks["PostToolUse"] = rebuilt
-    data["hooks"] = hooks
-    return data, changed
-
-
 def _ensure_end_hook_file(
     worktree: Path | str,
     relative: Path,
@@ -530,18 +527,6 @@ def _ensure_end_hook_file(
             out.update({"ok": False, "error": "unparseable; left alone: " + str(dest)})
             return out
         data, changed = _merge_end_hook(data, command)
-        if relative == CODEX_HOOKS_RELATIVE:
-            # codex fires PostToolUse (the ola-brain codex plugin declares it
-            # in its hooks.json; ~/.codex/logs_2.sqlite carries the event
-            # name). Same inbox command as grok/claude; the handler reads
-            # hook_event_name from stdin and stamps kind=usage on PostToolUse.
-            inbox = _resolved_or_kept(prev_text)
-            if inbox.get("command"):
-                data, more = _merge_codex_usage_hook(data, inbox["command"])
-                changed = changed or more
-                out["usage_hook_command"] = inbox["command"]
-            else:
-                out["usage_hook_error"] = inbox.get("error")
         if changed or not dest.is_file():
             dest.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
             out["written"] = True
@@ -555,11 +540,6 @@ def _ensure_end_hook_file(
         return out
 
 
-def ensure_codex_end_hook(worktree: Path | str, root: Path | str | None = None) -> dict[str, Any]:
-    """Merge Convoy's heartbeat into project ``.codex/hooks.json``."""
-    return _ensure_end_hook_file(worktree, CODEX_HOOKS_RELATIVE, root)
-
-
 def ensure_claude_end_hook(worktree: Path | str, root: Path | str | None = None) -> dict[str, Any]:
     """Merge the same heartbeat into Claude's project Stop hooks."""
     return _ensure_end_hook_file(worktree, CLAUDE_SETTINGS_RELATIVE, root)
@@ -570,22 +550,18 @@ def _skipped(rel: Path) -> dict[str, Any]:
 
 
 def ensure_end_hooks(worktree: Path | str, root: Path | str | None = None, *, skip: Iterable[str] = ()) -> dict[str, Any]:
-    """skip: worktree paths not to write (a file the person could own, or one git tracks)."""
+    """skip: worktree paths not to write (a file the person could own, or one git tracks).
+    Claude's Stop hook only: Codex's comes from the convoy plugin (see stale_codex_hooks)."""
     skip = set(skip)
-    codex = (_skipped(CODEX_HOOKS_RELATIVE) if CODEX_HOOKS_RELATIVE.as_posix() in skip
-             else ensure_codex_end_hook(worktree, root=root))
     claude = (_skipped(CLAUDE_SETTINGS_RELATIVE) if CLAUDE_SETTINGS_RELATIVE.as_posix() in skip
               else ensure_claude_end_hook(worktree, root=root))
     out = {
-        "ok": bool(codex.get("ok") and claude.get("ok")),
-        "written": bool(codex.get("written") or claude.get("written")),
-        "command": codex.get("command") or claude.get("command") or end_hook_command(),
-        "codex_hook": codex,
+        "ok": bool(claude.get("ok")),
+        "written": bool(claude.get("written")),
+        "command": claude.get("command") or end_hook_command(),
         "claude_hook": claude,
     }
-    if not codex.get("ok"):
-        out["error"] = codex.get("error")
-    elif not claude.get("ok"):
+    if not claude.get("ok"):
         out["error"] = claude.get("error")
     return out
 
@@ -687,11 +663,11 @@ def ensure_inbox_hooks(
     skip: Iterable[str] = (),
 ) -> dict[str, Any]:
     """Swap-safe: write Grok + Claude hook docs for every non-home worktree.
-    skip: worktree paths not to write (.codex/hooks.json in the person's repo, a tracked
-    .claude/settings.local.json).
+    skip: worktree paths not to write (a tracked .claude/settings.local.json).
 
     cursor-agent / agy / hermes / pi have no proven vendor hook file — they
-    drain via `convoy inbox --drain`. Codex may native-queue on send.
+    drain via `convoy inbox --drain`. Codex's hooks come from the convoy plugin; a send
+    native-queues once its Stop hook has recorded the session id.
     Never invent Terminal.app / iTerm adapters.
     """
     from .inbox import HARNESS_INBOX

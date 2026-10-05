@@ -38,7 +38,7 @@ CLI resolution accepts a path, URL, owner/repo or name, reusing a matching check
 
 ## Delivery and home writes
 
-Use `send`, never a plain addressed `hook note`, to queue work to a neuron. Cards report `recorded`, `queued`, `native-queued`, `executed`, `refused` or `error`; none is proof of delivery. Only the target's proven token-citing receipt counts. `hook note ... --as-me --to <sender>` is for receipts and reports.
+Use `send`, never a plain addressed `hook note`, to queue work to a neuron. Cards report `recorded`, `queued`, `native-queued`, `executed`, `refused` or `error`; none is proof of delivery. Only the target's proven token-citing receipt counts. Answer with `convoy reply <token> "..."` (the receipt: it counts and clears your pending row; it needs environment, token or pane-host proof) and report with `convoy report "..."`.
 
 First run can prepare the thread index, `~/.bashrc`, `~/.claude/settings.json`, `~/.claude.json` and the Codex prompt at `~/.codex/prompts/convoy.md` (or `CODEX_HOME/prompts/convoy.md`). A live launch can also prepare harness-specific hook trust stores named by its card. Dry-run refuses the repo-file opt-in but is not universally read-only.
 

@@ -77,7 +77,8 @@ class Phase7ByoHarness(unittest.TestCase):
             argv = isolated_wt_argv("demo", seats, wt=WT)
         popen.assert_not_called()
         self.assertEqual(argv[0], WT)
-        self.assertEqual(argv[1:4], ["--window", "new", "nt"])
+        self.assertEqual((argv[1], argv[3]), ("-w", "new-tab"))  # the thread\'s own window
+        self.assertRegex(argv[2], r"^convoy-[0-9a-f]{8}$")
         self.assertIn(GROK, argv)
         self.assertIn(CLAUDE, argv)
         self.assertTrue(os.path.isabs(GROK))
@@ -86,7 +87,7 @@ class Phase7ByoHarness(unittest.TestCase):
         self.assertNotIn("-H", argv)
         self.assertEqual(argv.count(";"), 1)
         self.assertNotIn("--", argv)
-        self.assertNotIn("-w", argv)
+        self.assertNotEqual(argv[argv.index("-w") + 1], "0")
         self.assertNotIn("0", argv[1:4])
         joined = " ".join(argv).lower()
         self.assertNotIn("ola-brain", joined)
@@ -132,8 +133,8 @@ class Phase7ByoHarness(unittest.TestCase):
         self.assertEqual(d["pid"], 11)
         got = popen.call_args[0][0]
         self.assertEqual(got[0], WT)
-        self.assertIn("--window", got)
-        self.assertNotIn("-w", got)
+        self.assertIn("-w", got)
+        self.assertNotEqual(got[got.index("-w") + 1], "0")
         self.assertNotIn("--", got)
         joined = " ".join(got).lower()
         self.assertNotIn("ola-brain", joined)
@@ -153,9 +154,10 @@ class Phase7ByoHarness(unittest.TestCase):
         self.assertNotIn("-H", argv)
         self.assertIn(str(self.wt_g), argv)
         self.assertIn(str(self.wt_g2), argv)
-        self.assertEqual(argv[1:4], ["--window", "new", "nt"])
+        self.assertEqual((argv[1], argv[3]), ("-w", "new-tab"))  # the thread\'s own window
+        self.assertRegex(argv[2], r"^convoy-[0-9a-f]{8}$")
         self.assertNotIn("--", argv)
-        self.assertNotIn("-w", argv)
+        self.assertNotEqual(argv[argv.index("-w") + 1], "0")
         self.assertNotIn("ola-brain", " ".join(argv).lower())
 
     def test_refuse_ola_brain_as_exe(self):

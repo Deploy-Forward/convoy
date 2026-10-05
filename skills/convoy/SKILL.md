@@ -52,7 +52,7 @@ that `panes` shows live.
 
 `delivery` is `recorded` (feed only), `queued` (inbox), `native-queued` (native queue), `executed` (a fresh headless run), `refused` or `error`. `delivered` stays false on the card: only the target's own proven token-citing receipt establishes delivery.
 
-To reach an open neuron, use `convoy send --id <neuron-id> "<text>"` (or MCP `send` with the named chair), then wait for that neuron's receipt. A plain addressed `hook note` queues nothing and does not wake the target. Use `hook note "re token <token>: ..." --as-me --to <sender>` to acknowledge or report; never type into its TUI or resume its live session.
+To reach an open neuron, use `convoy send --id <neuron-id> "<text>"` (or MCP `send` with the named chair), then wait for that neuron's receipt. A plain addressed `hook note` queues nothing and does not wake the target. Answer a message with `convoy reply <token> "..."` (a note to the sender citing the token, the receipt that counts and clears your pending row; it needs environment, token or pane-host proof of your session), and report results with `convoy report "..."`; never type into its TUI or resume its live session.
 
 ## `/convoy --start [<repo>]` (CLI: `convoy start [<repo>]`)
 

@@ -20,6 +20,7 @@ from convoy.convoy import bind, ensure_id, seat, update_seat
 from convoy.graph import build_graph, neighborhood
 from convoy.layer import feed_since, hook
 from convoy.lifecycle import join, seated_ack, swap
+from unittest.mock import patch
 
 
 def _run_cli(root, *argv):
@@ -181,9 +182,9 @@ class PlaceAndLead(unittest.TestCase):
         self.root = Path(tempfile.mkdtemp())
         ensure_id(self.root)
         bind(self.root, "t1")
-        seat(self.root, "claude", "a-t1")
-        seat(self.root, "codex", "b-t1")
-        seat(self.root, "grok", "c-t1")
+        seat(self.root, "claude", "a-t1", resume="native-a-t1")
+        seat(self.root, "codex", "b-t1", resume="native-b-t1")
+        seat(self.root, "grok", "c-t1", resume="native-c-t1")
         hook(self.root, "note", "a->b", instance_id="a-t1", to="b-t1")
         hook(self.root, "note", "b->a", instance_id="b-t1", to="a-t1")
 
@@ -229,7 +230,8 @@ class PlaceAndLead(unittest.TestCase):
     def test_cli_lead_to_chair_requires_author_and_stamps(self):
         rc, out = _run_cli(self.root, "lead", "--to", "b-t1")
         self.assertEqual(rc, 1)
-        rc, out = _run_cli(self.root, "lead", "--to", "b-t1", "--as", "a-t1")
+        with patch("convoy.cli.identify", return_value={"ok": True, "chair": "a-t1", "via": "environment"}):
+            rc, out = _run_cli(self.root, "lead", "--to", "b-t1", "--as", "a-t1")
         self.assertEqual(rc, 0)
         self.assertEqual(out["lead_chair"], "b-t1")
         rc, out = _run_cli(self.root, "lead")

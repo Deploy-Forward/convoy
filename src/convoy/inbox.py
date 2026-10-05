@@ -142,17 +142,21 @@ def _consumed_tokens(rows: list[dict[str, Any]]) -> set[str]:
 
 
 def reply_index(feed_rows) -> dict[str, dict[str, str]]:
-    """One pass, proven authors only. Keep the latest receipt per chair/token."""
-    from .layer import _VERIFIED_METHODS
-    import re
+    """One pass, proven authors only. Keep the latest receipt per chair/token.
+
+    Proven means conductor.RECEIPT_PROOF (environment, token or pane-host), the same set that
+    counts delivery, so clearing a pending row and counting a receipt never disagree. A
+    citation is either spelling, `token=<t>` or `re token <t>` (wake_dispatch.cited_tokens)."""
+    from .conductor import RECEIPT_PROOF
+    from .wake_dispatch import cited_tokens
     answers = {}
     for reply in feed_rows:
         author = reply.get("from")
         if (not isinstance(author, str) or not author or reply.get("author_claimed") or
-            reply.get("verified_by") not in _VERIFIED_METHODS or
+            reply.get("verified_by") not in RECEIPT_PROOF or
             reply.get("kind") not in ("note", "synapse", "send")):
             continue
-        tokens = set(re.findall(r"\btoken=([a-fA-F0-9]{32})\b", str(reply.get("summary") or "")))
+        tokens = set(cited_tokens(str(reply.get("summary") or "")))
         extra = reply.get("reply_tokens")
         if isinstance(extra, list):
             tokens.update(t for t in extra if isinstance(t, str))
@@ -432,6 +436,103 @@ def stop_block(root: Path, session_id: str) -> dict[str, Any] | None:
     return {"decision": "block", "reason": delivery_context(messages)}
 
 
+STAMP_DECISIONS_RELATIVE = Path(".convoy") / "hook-stamps.json"
+STAMP_RETRY_S = 600      # a decision that can change (a failed read, a refused replace) is retried after this
+STAMP_KEEP = 256         # newest decisions kept
+
+
+def _stamp_decisions(root: Path) -> dict[str, Any]:
+    try:
+        data = json.loads((Path(root) / STAMP_DECISIONS_RELATIVE).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _seat_state(seat: dict[str, Any]) -> str:
+    """What a decision depended on in the seat: a recorded id or a pane-host body changing makes
+    the decision stale, including a hosted pid that stopped answering (one cheap handle probe,
+    never a process-table read)."""
+    hosted = seat.get("harness_pid") is not None and str(seat.get("process_state") or "") != "exited"
+    if hosted:
+        from .pane_host import pid_alive
+        hosted = pid_alive(seat.get("harness_pid"))
+    return "|".join([str(seat.get("resume") or ""), str(seat.get("harness_pid") or ""), "live" if hosted else ""])
+
+
+def _record_stamp_decision(root: Path, key: str, decision: str, retry_s: float | None,
+                           seat_state: str = "", budget: float | None = None) -> None:
+    now = time.time()
+    data = _stamp_decisions(root)
+    data[key] = {"decision": decision, "ts": now, "until": now + retry_s if retry_s else None,
+                 "seat": seat_state}
+    if budget is not None:
+        data[key]["budget"] = float(budget)
+    keep = sorted(data.items(), key=lambda kv: (kv[1] or {}).get("ts") or 0 if isinstance(kv[1], dict) else 0)
+    data = dict(keep[-STAMP_KEEP:])
+    path = Path(root) / STAMP_DECISIONS_RELATIVE
+    try:
+        tmp = path.with_name(path.name + "." + uuid.uuid4().hex + ".tmp")
+        tmp.write_text(json.dumps(data, separators=(",", ":")), encoding="utf-8")
+        os.replace(tmp, path)
+    except OSError:
+        pass   # a lost decision costs one more read, never a wrong stamp
+
+
+def _within_budget(budget: float, failed_budget: Any) -> bool:
+    """A failed read suppresses a later hook only when that hook's budget is no larger: a failed
+    2 s inbox read must never stop the Stop hook's longer read. A decision with no recorded
+    budget is unknown, never zero, so it suppresses nothing."""
+    try:
+        return failed_budget is not None and budget <= float(failed_budget)
+    except (TypeError, ValueError):
+        return False
+
+
+def stamp_from_hook(root: Path, seat: dict[str, Any], observed: Any, *, allow_replace: bool = False,
+                    procs: list[dict[str, Any]] | None = None, read_error: str | None = None,
+                    timeout: float | None = None) -> dict[str, Any] | None:
+    """The one gate every hook stamps a chair's resume through. Returns the updated seat or None.
+
+    The harness is the body that runs this hook, read from its own ancestry; a nested body (a
+    `codex exec` run by a neuron) or no body stamps nothing. The table is read only for an id the
+    seat does not hold, once, with one attempt bounded by timeout (`procs` / `read_error` reuse
+    the table or the failure of a read the hook already made, so it never reads twice), and each refusal is remembered per (chair, hash of the id) in .convoy/hook-stamps.json:
+    while the seat's recorded id and pane-host body are unchanged, for good when it cannot change
+    and for STAMP_RETRY_S when it can (a failed read, a refused replace). A failed read records its
+    budget and holds only against a hook whose budget is no larger, so the Stop hook still reads
+    after a failed inbox read. allow_replace: the Stop hook's exact-worktree case; observe_resume adds the
+    pane-host and cooldown refusals."""
+    import hashlib
+    from .harness_contract import canonical_harness_id
+    from .panes import HOOK_PROBE_TIMEOUT_S, hook_body
+    sid = str(seat.get("session_id") or "").strip()
+    new_id = str(observed or "").strip() if isinstance(observed, str) else ""
+    if not sid or not new_id or new_id == str(seat.get("resume") or "").strip():
+        return None
+    key = sid + ":" + hashlib.sha256(new_id.encode("utf-8")).hexdigest()[:16]
+    known = _stamp_decisions(root).get(key)
+    state = _seat_state(seat)
+    budget = HOOK_PROBE_TIMEOUT_S if timeout is None else float(timeout)
+    if isinstance(known, dict) and known.get("seat", "") == state and (
+            known.get("until") is None or time.time() < float(known["until"])) and (
+            known.get("decision") != "no-read" or _within_budget(budget, known.get("budget"))):
+        return None
+    body = hook_body(procs=procs, read_error=read_error, timeout=budget)
+    if body.get("error"):
+        _record_stamp_decision(root, key, "no-read", STAMP_RETRY_S, state, budget=budget)
+        return None
+    harness = canonical_harness_id(body["harness"]) if body.get("harness") else None
+    if not harness or body.get("nested") is not False:
+        _record_stamp_decision(root, key, "no-top-level-body", None, state)
+        return None
+    replace = allow_replace and harness == "codex" and canonical_harness_id(seat.get("to")) == "codex"
+    updated = observe_resume(root, sid, new_id, to=harness, replace=replace)
+    if updated is None:
+        _record_stamp_decision(root, key, "refused", STAMP_RETRY_S if replace else None, state)
+    return updated
+
+
 def hook_pretooluse(cwd: str | Path | None = None) -> dict[str, Any]:
     """Drain this worktree's inbox into a PreToolUse/UserPromptSubmit card.
 
@@ -442,9 +543,11 @@ def hook_pretooluse(cwd: str | Path | None = None) -> dict[str, Any]:
     root = resolve_root(start) or start
     # Read the payload once: stdin is a stream and the second read is empty.
     payload = _hook_payload_from_stdin()
+    from .panes import HOOK_PROBE_TIMEOUT_S
     from .sessions import proven_session_chair
+    seen: dict[str, Any] = {}
     try:
-        proven_root, proven_seat = proven_session_chair(start)
+        proven_root, proven_seat = proven_session_chair(start, seen=seen, probe_timeout=HOOK_PROBE_TIMEOUT_S)
     except ValueError as exc:
         return {"hookSpecificOutput": {"hookEventName": _hook_event_name(payload), "additionalContext": "Convoy inbox refuses: " + str(exc)}}
     if proven_root is not None:
@@ -473,13 +576,15 @@ def hook_pretooluse(cwd: str | Path | None = None) -> dict[str, Any]:
     if sid:
         # Every Grok and Claude hook payload carries the session id, and
         # Grok also exports GROK_SESSION_ID (user guide 10-hooks.md:256, :492).
-        # Stamp it on the chair this cwd matched. Null until observed; an id
-        # already on the row is never overwritten, and the feed never sees it.
+        # Stamp it on the chair this cwd matched, through the same gate as
+        # the Stop hook (stamp_from_hook). Null until observed; an id already
+        # on the row is never overwritten here, and the feed never sees it.
         observed = payload.get("session_id") or payload.get("sessionId")
         if not observed and str((seat or {}).get("to") or "").strip().startswith("grok"):
             observed = os.environ.get("GROK_SESSION_ID")
         try:
-            observe_resume(root, sid, observed, to=str((seat or {}).get("to") or ""))
+            stamp_from_hook(root, seat or {}, observed, procs=seen.get("procs"),
+                            read_error=seen.get("error"), timeout=HOOK_PROBE_TIMEOUT_S)
         except Exception:   # an id stamp must never break a hook
             pass
     if event == "PostToolUse" and sid:

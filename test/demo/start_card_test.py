@@ -106,6 +106,10 @@ class Where(Fixture):
         self.assertEqual(where["thread"], {"id": self.cid, "name": "synthetic-thread"})
         self.assertEqual(where["lead"], CHAIR_A)
 
+    def test_a_lead_with_no_seated_chair_reads_dangling(self):
+        set_lead(self.root, "cursor")
+        self.assertIn("lead: dangling cursor", self.card()["lines"][0])
+
     def test_a_root_with_no_upstream_reports_unknown_not_zero(self):
         git(self.root, "branch", "--unset-upstream")
         where = self.card()["where"]
@@ -274,7 +278,7 @@ class TheReviewedRendering(Fixture):
         self.assertLessEqual(len(line), 110)
         self.assertTrue(line.startswith("where: ..."), line)
         self.assertIn(self.cid, line)
-        self.assertTrue(line.endswith("lead " + CHAIR_A), line)
+        self.assertTrue(line.endswith("lead: " + CHAIR_A), line)
 
     def test_a_long_branch_gives_way_before_the_lead(self):
         from unittest import mock
@@ -282,7 +286,7 @@ class TheReviewedRendering(Fixture):
         with mock.patch("convoy.start_card.LINE_MAX", 110):
             line = self.card()["lines"][0]
         self.assertLessEqual(len(line), 110)
-        self.assertTrue(line.endswith("lead " + CHAIR_A), line)
+        self.assertTrue(line.endswith("lead: " + CHAIR_A), line)
         self.assertIn(self.cid, line)
 
     def test_a_detached_head_says_where_it_is(self):

@@ -418,9 +418,8 @@ class Phase7IsolatedWtArgv(unittest.TestCase):
         seats = self._seats(3)
         argv = isolated_wt_argv("demo", seats, wt=r"C:\Windows\System32\wt.exe")
         self.assertEqual(argv[0], r"C:\Windows\System32\wt.exe")
-        self.assertEqual(argv[1], "--window")
-        self.assertEqual(argv[2], "new")
-        self.assertNotIn("-w", argv)
+        self.assertEqual(argv[1], "-w")
+        self.assertRegex(argv[2], r"^convoy-[0-9a-f]{8}$")  # the thread's own window
         self.assertNotEqual(argv[2], "0")
         self.assertIn(argv[3], ("nt", "new-tab"))
         self.assertNotIn("nw", argv)
@@ -482,9 +481,8 @@ class Phase7IsolatedWtArgv(unittest.TestCase):
         with self.assertRaises(ValueError):
             isolated_wt_argv(0, seats)
         argv = isolated_wt_argv("demo", seats, wt=r"C:\abs\wt.exe")
-        self.assertEqual(argv[1], "--window")
-        self.assertEqual(argv[2], "new")
-        self.assertNotIn("-w", argv)
+        self.assertEqual(argv[1], "-w")
+        self.assertRegex(argv[2], r"^convoy-[0-9a-f]{8}$")
         self.assertIn(argv[3], ("nt", "new-tab"))
 
     def test_no_live_spawn(self):
@@ -494,18 +492,19 @@ class Phase7IsolatedWtArgv(unittest.TestCase):
         self.assertIn(";", argv)
         self.assertEqual(argv.count("-V"), 1)
         self.assertNotIn("--", argv)
-        self.assertIn("--window", argv)
-        self.assertEqual(argv[argv.index("--window") + 1], "new")
+        self.assertIn("-w", argv)
+        self.assertRegex(argv[argv.index("-w") + 1], r"^convoy-[0-9a-f]{8}$")
 
     def test_n1_one_nt_no_split(self):
         argv = isolated_wt_argv("demo", self._seats(1), wt=r"C:\\abs\\wt.exe")
-        self.assertEqual(argv[1:4], ["--window", "new", "nt"])
+        self.assertEqual((argv[1], argv[3]), ("-w", "new-tab"))  # the thread\'s own window
+        self.assertRegex(argv[2], r"^convoy-[0-9a-f]{8}$")
         self.assertNotIn(";", argv)
         self.assertNotIn("-V", argv)
         self.assertNotIn("-H", argv)
         self.assertNotIn("split-pane", argv)
         self.assertNotIn("--", argv)
-        self.assertNotIn("-w", argv)
+        self.assertNotEqual(argv[argv.index("-w") + 1], "0")
 
     def test_duplicate_to_one_pane(self):
         exe = r"C:\\abs\\grok.exe"
@@ -543,13 +542,14 @@ class Phase7IsolatedWtArgv(unittest.TestCase):
             {"to": "grok", "session_id": "sess-grok-2", "resume": "sess-grok-2", "worktree": "wt-grok-2", "exe": r"C:\\abs\\grok.exe"},
         ]
         argv = isolated_wt_argv("demo", seats, wt=r"C:\\abs\\wt.exe")
-        self.assertEqual(argv[1:4], ["--window", "new", "nt"])
+        self.assertEqual((argv[1], argv[3]), ("-w", "new-tab"))  # the thread\'s own window
+        self.assertRegex(argv[2], r"^convoy-[0-9a-f]{8}$")
         self.assertEqual(argv.count("--resume"), 3)
         semis = [i for i, a in enumerate(argv) if a == ";"]
         self.assertEqual(len(semis), 2)
         self.assertEqual(argv[semis[0]:semis[0] + 3], [";", "split-pane", "-V"])
         self.assertEqual(argv[semis[1]:semis[1] + 3], [";", "split-pane", "-H"])
-        self.assertNotIn("-w", argv)
+        self.assertNotEqual(argv[argv.index("-w") + 1], "0")
         self.assertNotIn("--", argv)
         self.assertIn("wt-grok-1", argv)
         self.assertIn("wt-grok-2", argv)

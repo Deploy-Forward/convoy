@@ -169,6 +169,14 @@ def runner_kind(run: Runner) -> str | None:
     return getattr(run, "__name__", None)
 
 
+CODEX_NO_SESSION_WHY = "no Codex session id recorded (Convoy's Codex hooks not trusted or not yet run)"
+# `codex queue` exiting 0 means the queue accepted the message, not that a turn started: a row was
+# once found in Codex's own store for a dead pane. Only the neuron's own receipt proves delivery.
+CODEX_QUEUE_ACCEPTED_WHY = ("codex queue accepted the message; that is not proof a turn started, "
+                            "and only the neuron's own receipt proves delivery")
+CODEX_QUEUE_FAILED_WHY = "codex queue did not run or exited non-zero; the row waits in the inbox"
+
+
 def try_codex_queue(thread: str, body: str) -> dict[str, Any] | None:
     """Native Codex live-seat notify. Surface proven; delivery unproven."""
     exe = shutil.which("codex") or shutil.which("codex.CMD") or shutil.which("codex.cmd")
@@ -258,6 +266,14 @@ def deliver_to_live_seat(
     path_name = "codex-queue" if native else "inbox"
     item = enqueue(root, sid, body, to=to, label=label, path_name=path_name, token=token)
     delivery = native["delivery"] if native else "queued"
+    # Codex has no inbox hook that fires while it is idle: only `codex queue` can start a turn.
+    # Say what the wake path did, never that the neuron woke.
+    wake: dict[str, Any] = {}
+    if _native_harness_bin(to) == "codex":
+        if native:
+            wake = {"wake": "codex-queue-accepted", "why": CODEX_QUEUE_ACCEPTED_WHY}
+        else:
+            wake = {"wake": "inbox-only", "why": CODEX_NO_SESSION_WHY if not resume_token else CODEX_QUEUE_FAILED_WHY}
     runner = native["runner"] if native else "inbox"
     state = git_state(Path(packed.get("worktree") or root))
     extra = {
@@ -303,6 +319,7 @@ def deliver_to_live_seat(
         "pointers": packed,
         "stdin": body,
         "convoy_id": cid,
+        **wake,
     }
 
 

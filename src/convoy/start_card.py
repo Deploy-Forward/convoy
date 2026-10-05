@@ -111,10 +111,16 @@ def _head(cwd: Path | str) -> tuple[str | None, str | None]:
     return branch, None
 
 
+def _lead_status(root: Path) -> str:
+    """none | dangling | held, from the same reader `convoy lead` uses."""
+    from .lifecycle import lead_state
+    return lead_state(root)["status"]
+
+
 def _where(root: Path) -> dict[str, Any]:
     where: dict[str, Any] = {"repo": str(root), "branch": None, "detached_at": None, "ahead": None, "behind": None,
                              "dirty": None, "thread": {"id": read_id(root), "name": read_thread(root)},
-                             "lead": read_lead(root)}
+                             "lead": read_lead(root), "lead_status": _lead_status(root)}
     top = _git(root, "rev-parse", "--show-toplevel")
     if top is None or not _same_path(top.strip(), root):
         return where  # not a repo, or a folder inside someone else's: its git state is unknown
@@ -281,7 +287,9 @@ def _where_line(w: dict[str, Any]) -> str:
     upstream = ("ahead " + str(w["ahead"]) + ", behind " + str(w["behind"])) if w["ahead"] is not None \
         else "upstream unknown"
     cid = str(w["thread"]["id"] or "unknown")
-    lead = "; lead " + str(w["lead"] or "unknown")
+    status = w.get("lead_status")
+    lead = "; lead: " + ("none" if not w["lead"] or status == "none" else
+                         "dangling " + str(w["lead"]) if status == "dangling" else str(w["lead"]))
     named = " on " + head + " (" + upstream + "), dirty " + yes[w["dirty"]] + "; thread " \
         + str(w["thread"]["name"] or "unknown") + " (" + cid + ")" + lead
     bare = " on " + head + " (" + upstream + "), dirty " + yes[w["dirty"]] + "; thread " + cid + lead

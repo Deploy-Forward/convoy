@@ -352,21 +352,30 @@ class Phase7Attach(unittest.TestCase):
         self.assertEqual(by["claude"]["week_pct"], 69)
         self.assertFalse(by["claude"]["limited"])
 
-    def test_lead_conductor_grok_bot(self):
+    def test_lead_conductor_is_the_lead_chair_or_null(self):
         rc0, d0 = _run(self.root, "lead")
         self.assertEqual(rc0, 0)
-        self.assertEqual(d0["conductor"], "grok-bot")
+        self.assertIsNone(d0["conductor"], "no lead chair: the conductor is null, never the hosted constant")
         self.assertIsNone(d0["lead"])
-        rc, d = _run(self.root, "lead", "--to", "grok")
+        # the legacy harness lead names a harness only when a chair of it sits here
+        seat(self.root, "claude", "claude-chair-1", worktree=str(self.wt_c), resume="native-claude-chair-1")
+        proven = {"ok": True, "chair": "claude-chair-1", "via": "environment"}
+        with mock.patch("convoy.cli.identify", return_value=proven):
+            rc, refused = _run(self.root, "lead", "--to", "grok")
+        self.assertEqual(rc, 1)
+        self.assertEqual(refused["error"], "no chair of grok on this thread")
+        seat(self.root, "grok", "grok-chair-1", worktree=str(self.wt_g), resume="native-grok-chair-1")
+        with mock.patch("convoy.cli.identify", return_value=proven):
+            rc, d = _run(self.root, "lead", "--to", "grok")
         self.assertEqual(rc, 0)
         self.assertTrue(d["ok"])
         self.assertEqual(d["lead"], "grok")
-        self.assertEqual(d["conductor"], "grok-bot")
+        self.assertEqual(d["conductor"], "grok-chair-1")
         self.assertEqual(d["convoy_id"], read_id(self.root))
         rc2, d2 = _run(self.root, "lead")
         self.assertEqual(d2["lead"], "grok")
         att = attach(self.root, probe_fn=lambda to: {"usage_remaining": None, "limited": False, "raw": None})
-        self.assertEqual(att["conductor"], "grok-bot")
+        self.assertEqual(att["conductor"], "grok-chair-1")
         self.assertEqual(att["lead"], "grok")
 
 if __name__ == "__main__":

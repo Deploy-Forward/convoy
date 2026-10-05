@@ -31,7 +31,7 @@ class ContractShipsAndCopies(unittest.TestCase):
         text = contract_text()
         self.assertTrue(CONTRACT_PATH.is_file())
         self.assertEqual(contract_sha(), hashlib.sha256(text.encode("utf-8")).hexdigest())
-        for rule in (".convoy/", ".ola/", "never type into a pane", "hook note", "--to grok-bot", "replies", "token",
+        for rule in (".convoy/", ".ola/", "never type into a pane", "convoy reply <token>", "replies", "token",
                      "delivered", "the incident cited in `context.py`", "not built yet"):
             self.assertIn(rule, text, rule)
         self.assertNotIn("\U0001f600", text)  # no emoji anywhere in a contract
@@ -99,7 +99,12 @@ class Replies(unittest.TestCase):
         neuron_note(self.root, "unrelated", instance_id="chair-1", to="grok-bot")
         r = replies(self.root, "grok-bot", token=tok)
         self.assertEqual([x["summary"] for x in r["rows"]], ["ack " + tok + " done"])
-        self.assertTrue(r["delivered"])
+        # A claimed note (no verified author) is a row, never a receipt: unverified
+        # authorship never clears a pending item.
+        self.assertFalse(r["delivered"])
+        hook(self.root, "note", "ack " + tok + " proven", instance_id="chair-1", to="grok-bot",
+             verified_by="environment")
+        self.assertTrue(replies(self.root, "grok-bot", token=tok)["delivered"])
 
     def test_replies_wait_returns_on_the_first_landing_row(self):
         from convoy.conductor import replies
@@ -142,4 +147,116 @@ class Replies(unittest.TestCase):
         # Since 2026-09-28: the block is a pointer; convoy-listen carries the
         # ack-with-a-note-citing-the-token rule (and convoy-operate how to
         # answer the conductor).
-        self.assertIn("convoy-listen (wait, drain your inbox, acknowledge with a note citing the token)", text)
+        self.assertIn("convoy-listen (wait, drain your inbox, acknowledge with `convoy reply <token> \"...\"`)", text)
+
+
+class ReceiptsAreProvenByTheSession(unittest.TestCase):
+    """A receipt is a note proven by environment, token or pane-host, exactly what `convoy reply`
+    requires; a worktree or cwd match alone never counts. A chair is a body that can run the CLI; an MCP-only actor is a conductor,
+    and conductors never author notes (rule 4)."""
+
+    def setUp(self):
+        self.root = Path(tempfile.mkdtemp()); ensure_id(self.root); bind(self.root, "rp")
+
+    def test_only_environment_or_token_proof_counts_as_delivered(self):
+        from convoy.conductor import replies
+        tok = "c" * 32
+        for method, counted in (("worktree", False), ("cwd", False), ("pane-host", True), ("environment", True),
+                                ("token", True)):
+            with self.subTest(method=method):
+                root = Path(tempfile.mkdtemp()); ensure_id(root); bind(root, "rp-" + method)
+                hook(root, "note", "token=" + tok + " done", instance_id="chair-1", to="grok-bot", verified_by=method)
+                self.assertIs(replies(root, "grok-bot", token=tok)["delivered"], counted)
+
+    def test_the_contract_says_the_citing_note_must_be_proven(self):
+        from convoy.conductor import contract_text
+        text = contract_text()
+        rule6 = next(line for line in text.splitlines() if line.startswith("6. "))
+        self.assertIn("environment, token or pane-host", rule6)
+        self.assertNotIn("does not yet require a verified receipt", text)
+        row = next(line for line in text.splitlines() if line.startswith("| `delivered`"))
+        self.assertIn("environment, token or pane-host", row)
+
+    def test_the_mcp_instructions_carry_the_new_rule_and_the_files_real_sha(self):
+        from convoy import conductor, mcp_http
+        # The file as git stores it (LF): a Windows checkout with core.autocrlf has CRLF on
+        # disk, and the cited sha must not depend on the checkout.
+        shipped = hashlib.sha256(conductor.CONTRACT_PATH.read_bytes().replace(b"\r\n", b"\n")).hexdigest()
+        self.assertEqual(conductor.contract_sha(), shipped, "the cited sha is the shipped file's sha")
+        init = mcp_http.handle_rpc(self.root, {"jsonrpc": "2.0", "id": 1, "method": "initialize",
+                                               "params": {"protocolVersion": "2025-03-26", "capabilities": {},
+                                                          "clientInfo": {"name": "t", "version": "0"}}})
+        ins = init["result"]["instructions"]
+        self.assertIn("(sha " + shipped[:12] + ")", ins)
+        rule6 = next(line for line in conductor.contract_text().splitlines() if line.startswith("6. "))
+        self.assertIn(rule6, ins)
+
+
+class OneProofSetForReceipts(unittest.TestCase):
+    """Counting delivery (replies.delivered), answering (`convoy reply`/`report`) and clearing a
+    pending inbox row (inbox.reply_index) use ONE proof set: environment, token or pane-host.
+    A worktree or cwd match alone never counts and never clears. Both spellings of a citation,
+    `token=<t>` and `re token <t>`, count."""
+
+    def setUp(self):
+        self.root = Path(tempfile.mkdtemp()); ensure_id(self.root); bind(self.root, "one-bar")
+        for sid, harness in (("asker", "claude"), ("worker", "cursor-agent")):
+            wt = Path(tempfile.mkdtemp())
+            seat(self.root, harness, sid, worktree=str(wt))
+
+    def queued(self):
+        from convoy.synapse import fake_runner, send_one
+        from convoy.inbox import enqueue, pending
+        card = send_one(self.root, "worker", "synthetic ask", runner=fake_runner,
+                        sender={"chair": "asker", "verified_by": "environment"})
+        token = next(r["token"] for r in reversed(feed_since(self.root, "1970-01-01T00:00:00Z"))
+                     if r.get("kind") == "synapse")
+        if not pending(self.root, "worker"):
+            enqueue(self.root, "worker", "synthetic ask", to="cursor-agent", token=token)
+        rows = pending(self.root, "worker")
+        self.assertEqual([r["token"] for r in rows], [token])
+        return token
+
+    def state(self, token):
+        from convoy.conductor import replies
+        from convoy.inbox import pending
+        return replies(self.root, "asker", token=token)["delivered"], len(pending(self.root, "worker"))
+
+    def test_the_proof_set_is_environment_token_or_pane_host(self):
+        from convoy.conductor import RECEIPT_PROOF
+        from convoy import route
+        self.assertEqual(set(RECEIPT_PROOF), {"environment", "token", "pane-host"})
+        self.assertEqual(set(route.VERIFIED), set(RECEIPT_PROOF))
+
+    def test_a_pane_host_proven_reply_counts_and_clears(self):
+        from convoy.route import reply
+        token = self.queued()
+        card = reply(self.root, token, "done", me={"ok": True, "chair": "worker", "via": "pane-host"})
+        self.assertTrue(card["ok"], card)
+        self.assertEqual(self.state(token), (True, 0))
+
+    def test_a_worktree_only_reply_neither_counts_nor_clears(self):
+        token = self.queued()
+        hook(self.root, "note", "token=" + token + " done", instance_id="worker", to="asker", verified_by="worktree")
+        self.assertEqual(self.state(token), (False, 1))
+
+    def test_cursor_agent_under_a_pane_host_delivers_with_the_re_token_spelling(self):
+        token = self.queued()
+        hook(self.root, "note", "re token " + token + ": done", instance_id="worker", to="asker",
+             verified_by="pane-host")
+        self.assertEqual(self.state(token), (True, 0))
+
+    def test_the_contract_teaches_seats_to_answer_with_convoy_reply(self):
+        from convoy.conductor import contract_text
+        text = contract_text()
+        section = text.split("## One way seats answer", 1)[1].split("###", 1)[0]
+        self.assertIn('convoy reply <token> "', section)
+        self.assertNotIn("hook note", section)
+        self.assertNotIn("from its worktree", section)
+
+    def test_the_skills_teach_convoy_reply(self):
+        repo = Path(__file__).resolve().parents[2]
+        for rel in ("skills/convoy/SKILL.md", "plugin/convoy/skills/convoy/SKILL.md"):
+            text = (repo / rel).read_text(encoding="utf-8")
+            self.assertIn("convoy reply <token>", text, rel)
+            self.assertNotIn('hook note "re token <token>', text, rel)

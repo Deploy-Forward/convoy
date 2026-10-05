@@ -138,13 +138,30 @@ def _last_seen(rows: list[dict[str, Any]], sid: str) -> str | None:
     return last
 
 
+
+def relaunch_prompt(root: Path, sid: str, *, token: str | None, incarnation: Any, now: str, since: str,
+                    worktree: Any) -> str:
+    """The re-armed boot prompt of a relaunched chair: catch up, drain, ack with the token its
+    join minted, continue; then the same identity tail as a join (lead, launcher, report and
+    reply). No wait or wake instruction: each harness receives by its own route (a hook, the
+    codex queue, or the drain above)."""
+    from .launcher import identity_tail
+    cmd = convoy_root_command(root)
+    return ("You are the occupant of Convoy seat '" + sid + "', relaunched at " + now +
+            " after your pane died. Run " + cmd + " feed --since " + since +
+            " then " + cmd + " inbox --drain --seat " + sid +
+            " and act on every row. Ack with " + cmd + " seated --seat " + sid +
+            (" --token " + token if token else " --token <your join token>") +
+            " --incarnation " + str(incarnation) +
+            ". Then continue the seat's work from " + str(worktree) + ". " + identity_tail(root, sid))
+
+
 def relaunch(root: Path | str, *, thread: str | None = None, runner: Runner | None = None,
              timeout: float = 0.0, seats: list[str] | None = None, take_over: bool = False,
              alive: Callable[[Any], bool] = pid_alive,
              sleep: Callable[[float], None] = time.sleep,
              evict_timeout: float = EVICT_TIMEOUT_SEC,
-             allow_unverified_launch: bool = False, write_repo_files: bool | None = None,
-             opt_in_route: str = "cli") -> dict[str, Any]:
+             allow_unverified_launch: bool = False, write_repo_files: bool | None = None) -> dict[str, Any]:
     """seats: relaunch only these chairs (their panes died; the others are
     alive and must not be duplicated). Default: every chair.
 
@@ -267,20 +284,13 @@ def relaunch(root: Path | str, *, thread: str | None = None, runner: Runner | No
                 if r.get("instance_id") == sid and r.get("kind") in ("join", "swap") and r.get("token"):
                     tok = str(r["token"])
             since = c["last_seen"] or EPOCH
-            prompt = ("You are the occupant of Convoy seat '" + sid + "', relaunched at " + now +
-                      " after your pane died. Run " + convoy_root_command(root) + " feed --since " + since +
-                      " then " + convoy_root_command(root) + " inbox --drain --seat " + sid +
-                      " and act on every row. Ack with " + convoy_root_command(root) + " seated --seat " + sid +
-                      (" --token " + tok if tok else " --token <your join token>") +
-                      " --incarnation " + str(c["next_incarnation"]) +
-                      ". Then continue the seat's work from " + str(c["worktree"]) +
-                      ". At the end of every turn start " + convoy_root_command(root) + " inbox --wait --seat " + sid +
-                      " as a background command.")
+            prompt = relaunch_prompt(root, sid, token=tok, incarnation=c["next_incarnation"], now=now,
+                                     since=since, worktree=c["worktree"])
             update_seat(root, sid, boot_prompt=prompt)
             c["boot_prompt_rearmed"] = True
             c["token_found"] = tok is not None
     up = bring_up(root, thread=bound, runner=runner, session_ids=sids, allow_unverified_launch=allow_unverified_launch,
-                  write_repo_files=write_repo_files, opt_in_route=opt_in_route)
+                  write_repo_files=write_repo_files)
     card["windows"] = up.get("windows") or []
     if up.get("error"):
         card["error"] = str(up["error"])

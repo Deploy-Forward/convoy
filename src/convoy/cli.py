@@ -14,13 +14,13 @@ from .install import install as install_harness
 from .onboard import onboard as run_onboard
 from .start import start as run_start
 from .context import pack
-from .convoy import attach, bind, ensure_id, list_seats, read_id, read_lead, seat, set_lead, CONDUCTOR
+from .convoy import attach, bind, ensure_id, list_seats, read_id, seat, CONDUCTOR
 from .crew import add as add_neuron, await_seated, crew
 from .glance import build_glance, run_tray
 from .graph import build_graph, neighborhood
 from .graph_html import render_html, resume_neuron
-from .identity import (CLAUDE_SETTINGS_RELATIVE, CODEX_HOOKS_RELATIVE, ensure_inbox_hooks, install_neuron_identity,
-                       person_files_missing)
+from .identity import (CLAUDE_SETTINGS_RELATIVE, CODEX_HOOKS_MIGRATION_NOTE, ensure_inbox_hooks, install_neuron_identity,
+                       person_files_missing, stale_codex_hooks)
 from .index import find_root, index_path, list_threads, prune_threads, routable_threads
 from .activity import neuron_activity
 from .panes import bodies, enumerate_processes, identify
@@ -30,7 +30,7 @@ from .rail import build_rail, root_for
 from .relaunch import relaunch
 from .repo import (REPO_FILES_RECORD, exclude_paths, is_minted_worktree, is_tracked, record_repo_files_opt_in,
                    repo_files_opted_in, withdraw_repo_files_opt_in)
-from .lifecycle import join, pass_lead, seated_ack, swap
+from .lifecycle import join, lead_state, lead_to_harness, pass_lead, seated_ack, swap
 from .focus import focus_seat
 from .widget import run_widget
 from .widget_service import auto_widget_service, convoy_home, ensure_widget_service
@@ -39,10 +39,11 @@ from .wt_walk import record_crew_window
 from .pane_host import close_managed_pane
 from .synapse import fake_runner, native_runner, send_many, send_one
 from .targeted_launch import active_pane_runner, launch_choices, launch_seat
+from .launcher import resolve_launcher
 from .usage import probe
 
 _SEAT_KEYS = ("model", "effort", "where", "title")
-_WRITE_REPO_FILES_HELP = ("also write the repo files a person could own (AGENTS.md, .codex/hooks.json) "
+_WRITE_REPO_FILES_HELP = ("also write the repo files a person could own (AGENTS.md) "
                           "outside a worktree Convoy minted")
 
 
@@ -82,6 +83,107 @@ def _proven_sender(root: Path, dry_run: bool) -> dict[str, Any] | None:
     if not isinstance(me, dict) or not me.get("chair"):
         return None
     return {"chair": me["chair"], "verified_by": me.get("via")}
+
+
+def _codex_worktree(root: Path, worktree: str | Path) -> bool:
+    """A worktree a codex chair on this thread sits in: the one rule for the .codex/hooks.json
+    migration note, as on a first run."""
+    from .bringup import _harness_bin
+    from .inbox import seats_for_worktree
+    return any(_harness_bin(str(s.get("to") or "")) == "codex" for s in seats_for_worktree(root, worktree))
+
+
+def _record_launcher(root: Path, session_ids: list[str] | None) -> dict[str, Any] | None:
+    """join --launch / launch / bring-up: resolve the launching session once, act on it
+    (attach an unseated one), and record launched_by on each chair this verb may spawn:
+    a pending boot prompt and no live pane host (a chair another launch already spawned is
+    never touched). The prompt must carry the launcher before the spawn, so the record is
+    written first and _settle_launcher undoes it on every chair the verb did not spawn.
+    None when no chair is pending."""
+    from .launcher import public_block, seat_launcher
+    from .lifecycle import record_launcher
+    from .targeted_launch import hosted_live, take_launch_claim
+    wanted = set(session_ids) if session_ids else None
+    fresh = [s for s in list_seats(root)
+             if (wanted is None or s.get("session_id") in wanted)
+             and str(s.get("boot_prompt") or "").strip() and not hosted_live(root, s["session_id"])]
+    if not fresh:
+        return None
+    # The launch claim first: only the invocation holding a chair's reservation records
+    # and settles it. A chair another launch holds is left alone and not spawned here.
+    claims: dict[str, Any] = {}
+    refused: dict[str, str] = {}
+    for s in fresh:
+        try:
+            claims[s["session_id"]] = take_launch_claim(root, s["session_id"])
+        except (OSError, ValueError) as exc:
+            refused[s["session_id"]] = "another launch holds this chair's claim: " + str(exc)
+    fresh = [s for s in fresh if s["session_id"] in claims]
+    if not fresh:
+        return {"recorded_on": [], "claim_refused": refused, "_previous": {}, "_claims": {}}
+    try:
+        info = seat_launcher(root, resolve_launcher(root))
+    except BaseException:
+        for path in claims.values():
+            path.unlink(missing_ok=True)
+        raise
+    previous = {s["session_id"]: ("launched_by" in s, s.get("launched_by"), s.get("launched_by_why")) for s in fresh}
+    for sid in previous:
+        record_launcher(root, sid, info.get("launched_by"), info.get("launched_by_why"))
+    return {**public_block(info), "recorded_on": list(previous), "warning": info.get("warning"),
+            "claim_refused": refused, "_previous": previous, "_claims": claims}
+
+
+def _settle_launcher(root: Path, recorded: dict[str, Any] | None, spawned: list[str]) -> None:
+    """Keep launched_by only on the chairs this verb spawned; put back what was there on
+    every other chair (a refused or skipped launch records nothing)."""
+    if not recorded:
+        return
+    from .lifecycle import record_launcher
+    # A reservation this invocation took and did not spawn on is released; a spawned
+    # chair's pane host adopts it.
+    for sid, path in (recorded.pop("_claims", None) or {}).items():
+        if sid not in spawned:
+            path.unlink(missing_ok=True)
+    previous = recorded.pop("_previous", {})
+    for sid, (had, by, why) in previous.items():
+        if sid in spawned:
+            continue
+        restored_why = (why if had else "no launch has spawned this chair yet") if by is None else None
+        record_launcher(root, sid, by, restored_why)
+    recorded["recorded_on"] = [sid for sid in previous if sid in spawned]
+
+
+def _spawn_settled(root: Path, recorded: dict[str, Any] | None, spawn, spawned_of) -> dict[str, Any]:
+    """Run the spawn, then settle launched_by whatever happens: an exception (a wt failure,
+    a Ctrl-C) settles with nothing spawned and propagates."""
+    spawned: list[str] = []
+    try:
+        card = spawn()
+        spawned = list(spawned_of(card))
+        return card
+    finally:
+        _settle_launcher(root, recorded, spawned)
+
+
+def _claimed_launch(root: Path, sid: str, recorded: dict[str, Any] | None, launch, *, dry: bool = False) -> dict[str, Any]:
+    """One chair's launch under the claim _record_launcher took. Another launch holding the
+    claim refuses without launching; holding it, the launch uses it (claimed=True)."""
+    refused = ((recorded or {}).get("claim_refused") or {}).get(sid)
+    if refused:
+        return {"ok": False, "session_id": sid, "error": "refuse duplicate launch: chair already claimed (" + refused + ")"}
+    holds = sid in ((recorded or {}).get("_claims") or {})
+    return _spawn_settled(root, recorded, lambda: launch(holds),
+                          lambda c: [sid] if c.get("ok") and not dry else [])
+
+
+def _with_launcher(card: dict[str, Any], recorded: dict[str, Any] | None) -> None:
+    if not recorded or not isinstance(card, dict):
+        return
+    warning = recorded.pop("warning", None)
+    card["launcher"] = {k: v for k, v in recorded.items() if not str(k).startswith("_")}
+    if warning:
+        card["warnings"] = list(card.get("warnings") or []) + [warning]
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -141,6 +243,12 @@ def main(argv: list[str] | None = None) -> int:
     c = sub.add_parser("context")
     c.add_argument("--instance-id")
 
+    rp = sub.add_parser("report", help="send your result to the chair that launched you, else to the lead; refuses with why when neither exists (routing is code, not a prompt)")
+    rp.add_argument("body")
+    ry = sub.add_parser("reply", help="answer one send by its token: a note to that send's sender citing the token, which is its delivery receipt")
+    ry.add_argument("token")
+    ry.add_argument("body")
+
     s = sub.add_parser("send")
     s.add_argument("--to", action="append", help="harness of the target chair (repeat for many); or use --id")
     s.add_argument("--id", dest="neuron_id", help="short neuron id from `convoy neurons --all` (n + 6 hex); resolves the thread root, harness and chair itself, so --root and --to are not needed")
@@ -156,7 +264,7 @@ def main(argv: list[str] | None = None) -> int:
     ib.add_argument("--seat")
     ib.add_argument("--drain", action="store_true")
     ib.add_argument("--hook-pretooluse", action="store_true", help="Grok/Claude hook JSON on stdout (reads hook_event_name from stdin; on Stop, blocks the stop with the waiting rows as the reason)")
-    ib.add_argument("--wait", action="store_true", help="block until a row is pending or --timeout; run it as a BACKGROUND command at the end of your turn so the arriving row wakes you (grok background-task completion wakes the agent)")
+    ib.add_argument("--wait", action="store_true", help="block until a row is pending or --timeout. --wait is for Claude and Grok background tasks: run it as a BACKGROUND command at the end of your turn so the arriving row wakes you. Codex is woken through its native queue: drain at turn start and never run --wait in the foreground")
     ib.add_argument("--timeout", type=float, default=3600.0, help="seconds for --wait (default 3600)")
 
     en = sub.add_parser("end", help="record task completion; --hook is the Codex/Claude turn-end heartbeat")
@@ -195,7 +303,7 @@ def main(argv: list[str] | None = None) -> int:
     jn.add_argument("--effort")
     jn.add_argument("--where", choices=["local", "cloud"], help="local (default) or cloud; cloud is refused unless convoy choices offers it for the harness")
     jn.add_argument("--as", dest="author", help="authoring seat (neuron-authored)")
-    jn.add_argument("--launch", action="store_true", help="launch exactly one fresh chair: a split of the active pane (tmux or Windows Terminal), or, on POSIX outside tmux with tmux installed, a detached tmux session")
+    jn.add_argument("--launch", action="store_true", help="launch exactly one fresh chair: inside tmux a split of your pane; on Windows the thread's own Windows Terminal window (wt -w convoy-<8 hex>: the first neuron opens it, later ones split inside it); on POSIX outside tmux with tmux installed, the thread's detached tmux session")
     jn.add_argument("--consent", help="one-time scoped consent returned by `convoy consent --grant`")
     jn.add_argument("--write-repo-files", action="store_true", help=_WRITE_REPO_FILES_HELP)
 
@@ -209,7 +317,7 @@ def main(argv: list[str] | None = None) -> int:
     cw.add_argument("--no-widget", action="store_true", help="do not start the widget service after --launch")
     cw.add_argument("--write-repo-files", action="store_true", help=_WRITE_REPO_FILES_HELP)
 
-    ad = sub.add_parser("add", help="one neuron: mint its worktree, join its chair, and split it into your terminal (tmux or Windows Terminal); a detached tmux session or a new window only where no split exists")
+    ad = sub.add_parser("add", help="one neuron: mint its worktree, join its chair, and launch it: inside tmux a split of your pane; on Windows the thread's own Windows Terminal window (wt -w convoy-<8 hex>: the first neuron opens it, later ones split inside it); elsewhere the thread's detached tmux session")
     ad.add_argument("harness", help="harness id (convoy choices lists them)")
     ad.add_argument("model", nargs="?", help="model id, or auto (the default): no model flag, the harness picks")
     ad.add_argument("--effort", help="effort, or auto (the default): no effort flag; validated against the harness's own keys")
@@ -226,8 +334,8 @@ def main(argv: list[str] | None = None) -> int:
 
     ch = sub.add_parser("choices", help="list installed harnesses, known worktrees, seats, and active-pane support")
 
-    ln = sub.add_parser("launch", description="Launch one already-joined fresh chair. The card's placement says where: split (a split of the active pane, in tmux or Windows Terminal) or detached (on POSIX outside tmux with tmux installed, a detached tmux session; the card's attach command opens it).",
-                        help="launch one already-joined fresh chair: a split of the active pane, or a detached tmux session")
+    ln = sub.add_parser("launch", description="Launch one already-joined fresh chair. The card's placement says where: split (inside tmux, a split of your pane), thread-window (Windows: the thread's own Windows Terminal window (wt -w convoy-<8 hex>: the first neuron opens it, later ones split inside it); the card names the window), or detached (on POSIX outside tmux with tmux installed, the thread's detached tmux session; the card's attach command opens it).",
+                        help="launch one already-joined fresh chair: a split of your tmux pane, the thread's own Windows Terminal window, or the thread's detached tmux session")
     ln.add_argument("--allow-unverified-launch", action="store_true", help="explicitly accept unverified harness launch eligibility for this launch")
     ln.add_argument("--seat", required=True, help="fresh join/swap chair session_id")
     ln.add_argument("--dry-run", action="store_true")
@@ -317,7 +425,7 @@ def main(argv: list[str] | None = None) -> int:
     sl.add_argument("--convoy-id")
 
     at = sub.add_parser("attach")
-    at.add_argument("convoy_id", nargs="?")
+    at.add_argument("thread", nargs="?", help="the thread: its cvy_ id, a unique prefix of it of at least 8 characters, its name, or its root path (--read-only takes the exact cvy_ id)")
     at.add_argument("--read-only", action="store_true", help="legacy catch-up only; does not seat this session")
     at.add_argument("--as-harness", help="assert the calling harness; never substitutes for native proof")
     ls = sub.add_parser("list", help="deterministic machine-wide thread picker")
@@ -331,8 +439,9 @@ def main(argv: list[str] | None = None) -> int:
     bn.add_argument("--thread", required=True)
 
     ld = sub.add_parser("lead")
-    ld.add_argument("--to", help="a chair session_id (identified neuron; needs --as) or, legacy, a harness name")
-    ld.add_argument("--as", dest="author", help="the neuron passing lead (neuron-authored; the conductor asks via stamp)")
+    ld.add_argument("--to", help="a chair session_id (identified neuron; needs --as) or, legacy, a harness name with a seated chair")
+    ld.add_argument("--as", dest="author", help="the seated chair passing lead: the current lead, or any seated chair while the lead is unset or dangling")
+    ld.add_argument("--thread", help="the thread to act on, as attach takes it (cvy_ id or a prefix of 8+ characters, thread name, or root path); same as --root <that root>")
 
     for name in ("bring-up", "open"):
         bu = sub.add_parser(name)
@@ -473,6 +582,9 @@ def main(argv: list[str] | None = None) -> int:
         return 0 if card.get("ok") else 1
     if args.cmd == "whoami":
         me = identify(root)
+        if me.get("chair"):
+            from .launcher import whoami_fields
+            me.update(whoami_fields(root, me["chair"]))
         print(json.dumps(me))
         return 0 if me.get("ok") else 1
     if args.cmd == "hook":
@@ -492,8 +604,12 @@ def main(argv: list[str] | None = None) -> int:
         if args.kind in STAMPED_KINDS and me and me.get("chair") == instance_id:
             verified_by = me.get("via")
         try:
+            to = args.to
+            if args.kind == "note":
+                from .wake_dispatch import receipt_address
+                to = receipt_address(root, args.summary, instance_id, to)
             row = hook(root, args.kind, args.summary, instance_id=instance_id,
-                       to=args.to, verified_by=verified_by)
+                       to=to, verified_by=verified_by)
         except ValueError as e:
             print(json.dumps({"ok": False, "error": str(e)}))
             return 1
@@ -644,16 +760,24 @@ def main(argv: list[str] | None = None) -> int:
                 card = join(root, args.to, session_id=args.session_id, worktree=args.worktree,
                             model=args.model, title=args.title, effort=args.effort, author=args.author,
                             where=args.where, calling_session=not args.launch)
+                recorded = None
                 if args.launch and not card.get("already"):
-                    launched = launch_seat(
+                    # Only after the join succeeded: a refused join attaches nobody.
+                    recorded = _record_launcher(root, [card["seat"]["session_id"]])
+                if args.launch and not card.get("already"):
+                    sid = card["seat"]["session_id"]
+                    launched = _claimed_launch(root, sid, recorded, lambda claimed: launch_seat(
                         root,
-                        card["seat"]["session_id"],
+                        sid,
                         runner=active_pane_runner,
                         consent=args.consent,
                         allow_unverified_launch=args.allow_unverified_launch,
                         write_repo_files=_opt_in(args),
-                    )
+                        claimed=claimed,
+                    ))
                     card["launch"] = launched
+                    _with_launcher(card, recorded)
+                    card["seat"] = next(s for s in list_seats(root) if s.get("session_id") == sid)
                     card["ok"] = bool(card.get("ok")) and bool(launched.get("ok"))
                     if launched.get("ok"):
                         card["next"] = "seated"
@@ -701,7 +825,7 @@ def main(argv: list[str] | None = None) -> int:
             return 1
         card = crew(root, seats, thread=args.thread, checkout=args.checkout,
                     runner=live_runner if args.launch else None, allow_unverified_launch=args.allow_unverified_launch,
-                    write_repo_files=_opt_in(args))
+                    write_repo_files=_opt_in(args), launcher=resolve_launcher(root))
         if card.get("ok") and args.launch:
             card["widget_service"] = auto_widget_service(disabled=bool(args.no_widget))
         print(json.dumps(card))
@@ -713,7 +837,8 @@ def main(argv: list[str] | None = None) -> int:
         card = add_neuron(root, args.harness, args.model, effort=args.effort, title=args.title, thread=args.thread,
                           checkout=args.checkout, runner=None if args.dry_run else active_pane_runner,
                           window_runner=None if args.dry_run else live_runner,
-                          allow_unverified_launch=args.allow_unverified_launch, write_repo_files=_opt_in(args))
+                          allow_unverified_launch=args.allow_unverified_launch, write_repo_files=_opt_in(args),
+                          launcher=resolve_launcher(root))
         print(json.dumps(card))
         return 0 if card.get("ok") else 1
     if args.cmd == "await-seated":
@@ -729,14 +854,17 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(card))
         return 0 if card.get("ok") else 1
     if args.cmd == "launch":
-        card = launch_seat(
+        recorded = None if args.dry_run else _record_launcher(root, [args.seat])
+        card = _claimed_launch(root, args.seat, recorded, lambda claimed: launch_seat(
             root,
             args.seat,
             runner=None if args.dry_run else active_pane_runner,
             consent=args.consent,
             allow_unverified_launch=args.allow_unverified_launch,
             write_repo_files=_opt_in(args),
-        )
+            claimed=claimed,
+        ), dry=bool(args.dry_run))
+        _with_launcher(card, recorded)
         print(json.dumps(card))
         return 0 if card.get("ok") else 1
     if args.cmd == "consent":
@@ -824,14 +952,15 @@ def main(argv: list[str] | None = None) -> int:
             record_repo_files_opt_in(args.worktree)
         person = repo_files_opted_in(args.worktree) or is_minted_worktree(args.worktree)
         local = CLAUDE_SETTINGS_RELATIVE.as_posix()
-        skip = ({local} if is_tracked(args.worktree, local) else set()) | (
-            set() if person else {CODEX_HOOKS_RELATIVE.as_posix()})
+        skip = {local} if is_tracked(args.worktree, local) else set()
         skills = install_neuron_identity(args.worktree, person_files=person)
         hooks = ensure_inbox_hooks(args.worktree, root=root if read_id(root) else None, skip=skip)
         missing = [] if person else person_files_missing(args.worktree)
         card = {**skills, "skills_ok": bool(skills.get("ok")), "hooks": hooks,
                 "would_write": sorted(set(missing) | (skip & {local})),
-                "notes": [TRACKED_SETTINGS_NOTE] if local in skip else [],
+                "notes": ([TRACKED_SETTINGS_NOTE] if local in skip else []) + (
+                    [CODEX_HOOKS_MIGRATION_NOTE] if _codex_worktree(root, args.worktree)
+                    and stale_codex_hooks(args.worktree) else []),
                 **({"withdrawn": withdrawn} if withdrawn is not None else {}),
                 "ok": bool(skills.get("ok")) and bool(hooks.get("ok"))}
         try:
@@ -853,7 +982,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.cmd == "attach":
         from .sessions import attach_session
         from .thread_list import format_list
-        card = attach(root, convoy_id=args.convoy_id) if args.read_only else attach_session(args.convoy_id, as_harness=args.as_harness)
+        card = attach(root, convoy_id=args.thread) if args.read_only else attach_session(args.thread, as_harness=args.as_harness)
         if "list" in card:
             print(format_list(card["list"]))
         print(json.dumps(card))
@@ -874,21 +1003,40 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(card))
         return 0 if card.get("ok") else 1
     if args.cmd == "lead":
+        if args.thread:
+            from .sessions import resolve_thread
+            try:
+                root = resolve_thread(args.thread)
+            except (OSError, ValueError) as e:
+                print(json.dumps({"ok": False, "error": str(e)}))
+                return 1
         if args.to:
             try:
+                # A lead change is authored by the proven calling chair (environment or token
+                # proof; a cwd match is not enough). --as asserts it and never overrides it.
+                me = identify(root)
+                proven = me.get("chair") if me.get("ok") and me.get("via") in ("environment", "token") else None
+                if not proven:
+                    raise ValueError("refuse lead change: cannot prove the calling chair (environment or token"
+                                     " proof); a cwd match is not enough")
+                if args.author and args.author != proven:
+                    raise ValueError("refuse lead change: --as " + args.author + " disagrees with this body's"
+                                     " proven chair " + proven)
                 is_chair = any(s.get("session_id") == args.to for s in list_seats(root))
                 if is_chair:
-                    if not args.author:
-                        raise ValueError("refuse lead pass to a chair without --as <author chair>")
-                    print(json.dumps(pass_lead(root, args.to, author=args.author)))
+                    print(json.dumps(pass_lead(root, args.to, author=proven)))
                 else:
-                    print(json.dumps(set_lead(root, args.to)))
+                    print(json.dumps(lead_to_harness(root, args.to, author=proven)))
                 return 0
             except ValueError as e:
                 print(json.dumps({"ok": False, "error": str(e)}))
                 return 1
-        lead_chair = next((n["session_id"] for n in build_graph(root)["nodes"] if n["kind"] == "chair" and n.get("lead")), None)
-        print(json.dumps({"conductor": CONDUCTOR, "lead": read_lead(root), "lead_chair": lead_chair, "convoy_id": read_id(root)}))
+        from .activity import neuron_id
+        state = lead_state(root)
+        cid = read_id(root)
+        print(json.dumps({"conductor": state["chair"], "lead": state["lead"], "lead_chair": state["chair"],
+                          "dangling": state["status"] == "dangling",
+                          "reachable_id": neuron_id(cid, state["chair"]), "convoy_id": cid}))
         return 0
     if args.cmd == "bind":
         try:
@@ -902,8 +1050,14 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps({"ok": False, "dry_run": True, "windows": [], "error": dry_opt_in_refusal(args.cmd, cli=True)}))
             return 1
         runner = None if args.dry_run else live_runner
-        card = bring_up(root, convoy_id=args.convoy_id, thread=args.thread, runner=runner, session_ids=args.seat,
-                        allow_unverified_launch=args.allow_unverified_launch, write_repo_files=_opt_in(args))
+        recorded = None if args.dry_run else _record_launcher(root, args.seat)
+        card = _spawn_settled(root, recorded, lambda: bring_up(
+            root, convoy_id=args.convoy_id, thread=args.thread, runner=runner, session_ids=args.seat,
+            allow_unverified_launch=args.allow_unverified_launch, write_repo_files=_opt_in(args),
+            exclude=(recorded or {}).get("claim_refused") or None),
+            lambda c: [str(w.get("session_id")) for w in c.get("windows") or []
+                       if isinstance(w, dict) and w.get("ok") and w.get("session_id")])
+        _with_launcher(card, recorded)
         print(json.dumps(card))
         if args.dry_run:
             existing = {s.get("session_id") for s in list_seats(root, convoy_id=card.get("convoy_id"))}
@@ -1037,6 +1191,13 @@ def main(argv: list[str] | None = None) -> int:
         # No explicit --root: the origin serves every thread the machine index
         # knows and each call names its thread (move 3). --root pins it.
         return serve(root if root_explicit else None, host=args.host, port=args.port)
+    if args.cmd in ("report", "reply"):
+        from .route import reply, report
+        me = identify(root)
+        card = (report(root, args.body, me=me) if args.cmd == "report"
+                else reply(root, args.token, args.body, me=me))
+        print(json.dumps(card))
+        return 0 if card.get("ok") else 1
     if args.cmd == "send":
         runner = native_runner if args.live else fake_runner
         allow_interactive_resume = not bool(args.live)

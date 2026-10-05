@@ -201,6 +201,31 @@ def proven_author(row: dict[str, Any]) -> str | None:
     return sender
 
 
+def receipt_address(root: Path | str, summary: str, author: str | None, to: str | None) -> str | None:
+    """The addressee of a note. A note citing a token sent to its author, naming nobody, goes
+    to that send's proven sender (one sender, not the author). A note citing a token someone else
+    sent to the author, addressed to the author itself, refuses: a receipt goes to the sender."""
+    tokens = cited_tokens(summary)
+    if not tokens or not author:
+        return to
+    from .layer import feed_path, feed_since
+    rows = feed_since(Path(root), "1970-01-01T00:00:00.000000Z") if feed_path(Path(root)).exists() else []
+    sends = {r["token"]: r for r in rows if r.get("kind") == "synapse" and r.get("token") in tokens}
+    if to is None:
+        # Only a send addressed to the author makes its note a receipt; a third party's
+        # "fyi token=T" stays unaddressed.
+        senders = [s for s in dict.fromkeys(proven_author(sends[t]) for t in tokens
+                                            if t in sends and sends[t].get("instance_id") == author)
+                   if s and s != author]
+        return senders[0] if len(senders) == 1 else None
+    if to == author:
+        for t in tokens:
+            row = sends.get(t)
+            if row and row.get("instance_id") == author and proven_author(row) != author:
+                raise ValueError("a receipt goes to the sender: --to " + (proven_author(row) or "<chair>"))
+    return to
+
+
 def wake_targets(row: dict[str, Any], sender_of: Callable[[str], str | None]) -> list[tuple[str, str, str]]:
     """(target, reason, token) for each chair this feed row wakes; empty for everything else."""
     kind = row.get("kind")

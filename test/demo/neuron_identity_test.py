@@ -63,8 +63,9 @@ class NeuronIdentity(unittest.TestCase):
             self.assertTrue((self.wt / d / "skills" / "convoy-end" / "SKILL.md").is_file(), d)
         # The plugin's convoy-end skill carries the end command; no copy is written into the worktree.
         self.assertFalse((self.wt / ".claude" / "commands" / "end.md").exists())
-        self.assertIn("Convoy files: don't commit .codex/hooks.json changes Convoy made",
-                      (self.wt / "AGENTS.md").read_text(encoding="utf-8"))
+        agents = (self.wt / "AGENTS.md").read_text(encoding="utf-8")
+        self.assertIn("never run `inbox --wait` in the foreground", agents)
+        self.assertNotIn(".codex/hooks.json", agents)
 
     def test_grok_agent_points_at_the_plugin_not_a_retired_skill(self):
         ensure_grok_agent(self.wt)

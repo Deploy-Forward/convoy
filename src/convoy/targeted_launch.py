@@ -14,6 +14,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import time
 import uuid
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping
@@ -30,7 +31,7 @@ from .bringup import (
     resume_target,
 )
 from .consent import consume_consent, request_consent
-from .convoy import list_seats, read_thread, update_seat
+from .convoy import list_seats, read_id, read_thread, update_seat
 from .resume_first import ensure_session_id
 from .harness_contract import effort_contract, harness_entries, harness_exec, model_catalog, where_options
 from .inbox import connect_mode
@@ -46,12 +47,15 @@ def terminal_capability(
     which: Which = shutil.which,
     platform_name: str | None = None,
 ) -> dict[str, Any]:
-    """Return the safe active-pane adapter, or an explicit refusal.
+    """Return the terminal adapter a launch goes through, or an explicit refusal.
 
     tmux is checked first because a tmux pane can be nested inside another
-    terminal and TMUX_PANE names the caller's exact pane.  Windows Terminal's
-    CLI can target only its most-recently-used window (``-w 0``), so the card
-    states that weaker targeting rule rather than claiming an exact window id.
+    terminal and TMUX_PANE names the caller's exact pane. On Windows, Windows
+    Terminal's CLI cannot split a specific pane: `-w 0 split-pane` splits whatever
+    pane has focus in the most recently used window, wherever the person last
+    clicked. So Windows never splits the caller's window: every launch targets the
+    thread's own named window (placement_capability names it), whether or not the
+    caller runs inside Windows Terminal.
     """
     values = os.environ if env is None else env
     platform = os.name if platform_name is None else platform_name
@@ -70,15 +74,14 @@ def terminal_capability(
             "close_reason": "created-pane-id-not-yet-captured",
         }
 
-    wt_session = str(values.get("WT_SESSION") or "").strip()
-    wt = which("wt") if platform == "nt" and wt_session else None
+    wt = which("wt") if platform == "nt" else None
     if wt:
         return {
-            "can_split": True,
-            "adapter": "windows-terminal",
+            "can_split": False,
+            "thread_window": True,
+            "adapter": "windows-terminal-thread",
             "executable": str(wt),
-            "target": "most-recent-window",
-            "target_semantics": "mru-window-active-pane",
+            "target_semantics": "named-thread-window",
             "can_close_exact": False,
             "close_reason": "windows-terminal-cli-has-no-close-pane-command",
         }
@@ -110,19 +113,56 @@ def terminal_capability(
     return refusal
 
 
-def tmux_session_name(thread: Any, seat: dict[str, Any], root: Path | str) -> str:
-    """`convoy-<thread>-<seat>-<6 hex>`, reduced to what tmux keeps in a target
-    name (it rewrites '.' and ':', and anything else is a quoting hazard).
+def thread_window_name(convoy_id: Any) -> str:
+    """The thread's own terminal window (Windows Terminal) or detached session (tmux):
+    `convoy-` + 8 hex of sha256(convoy_id). Short, safe in a wt window name and a tmux
+    target, never numeric (wt reads a number as a window id), never 0, deterministic."""
+    cid = str(convoy_id or "").strip()
+    if not cid:
+        raise ValueError("a thread window needs the thread's convoy_id")
+    return "convoy-" + hashlib.sha256(cid.encode("utf-8")).hexdigest()[:8]
 
-    The readable part folds ("a.b" and "a-b", thread "a" + title "b-c" and
-    thread "a-b" + title "c"), and two roots on one tmux server can share a
-    thread name, so the suffix hashes the root and the chair: two chairs never
-    share a session, and `attach` never opens the other neuron."""
-    who = str(seat.get("title") or seat.get("session_id") or seat.get("to") or "seat")
-    raw = "convoy-" + str(thread or "thread") + "-" + who
-    key = str(Path(root).resolve()) + "\0" + str(seat.get("session_id") or "")
-    digest = hashlib.sha256(key.encode("utf-8")).hexdigest()[:6]
-    return re.sub(r"[^A-Za-z0-9_-]+", "-", raw).strip("-") + "-" + digest
+
+# The thread window's tab shows the focused pane's title, so each pane title names the
+# thread first. " - " and not a middle dot: ASCII, and the nudge title rules read it.
+TITLE_SEP = " - "
+LABEL_MAX = 24
+
+
+def thread_label(thread: Any, folder: Any, convoy_id: Any) -> str:
+    """A short, ASCII label unique to the thread: its bound name, else the repo folder name,
+    then `-<4 hex of the window id>` (two repos with one folder name never share a label);
+    with neither name, the window's 8 hex. At most LABEL_MAX characters: the name is trimmed,
+    never the hex. Never a cvy_ id and never a path (either falls through)."""
+    window_hex = thread_window_name(convoy_id).removeprefix("convoy-")
+    suffix = "-" + window_hex[:4]
+    for raw in (thread, folder):
+        text = str(raw or "").strip()
+        if not text or text.lower().startswith("cvy_") or "/" in text or "\\" in text or ":" in text:
+            continue
+        name = re.sub(r"[^A-Za-z0-9._-]+", "-", text).strip("-")[:LABEL_MAX - len(suffix)].strip("-")
+        if name:
+            return name + suffix
+    return window_hex
+
+
+def root_thread_label(root: Path | str | None, thread: Any = None) -> str:
+    """thread_label for a root: its bound thread, its folder, its convoy_id."""
+    if root is None:
+        return thread_label(thread, "", thread or "thread")
+    return thread_label(read_thread(Path(root)), Path(root).resolve().name, read_id(Path(root)) or str(root))
+
+
+def thread_pane_title(label: str, seat: dict[str, Any]) -> str:
+    """`<thread label> - <chair title>`: what the thread window's tab shows for this pane."""
+    return label + TITLE_SEP + _pane_title(seat)
+
+
+def thread_window_live(root: Path, except_sid: Any = None) -> bool:
+    """Another chair of this thread has a live pane host, so the thread's window (or
+    tmux session) exists: a new neuron splits inside it instead of opening it."""
+    return any(hosted_live(root, str(s["session_id"])) for s in list_seats(root)
+               if s.get("session_id") and s.get("session_id") != except_sid)
 
 
 def tmux_attach_command(name: str) -> str:
@@ -138,15 +178,21 @@ def placement_capability(
     which: Which = shutil.which,
     platform_name: str | None = None,
 ) -> dict[str, Any] | None:
-    """The adapter this chair launches through: a split of the caller's pane,
-    else a detached tmux session named for this chair, else None."""
+    """The adapter this chair launches through: inside tmux a split of the caller's exact
+    pane; on Windows the thread's own named window; outside tmux the thread's own detached
+    tmux session; else None. `first` says whether this neuron opens the window (or
+    session) or splits inside it."""
     capability = terminal_capability(env=env, which=which, platform_name=platform_name)
     if capability.get("can_split"):
         return capability
+    first = not thread_window_live(root, except_sid=row.get("session_id"))
+    label = root_thread_label(root)
+    if capability.get("thread_window"):
+        return {**capability, "target": thread_window_name(read_id(root)), "first": first, "label": label}
     detached = capability.get("detached")
     if not detached:
         return None
-    return {**detached, "target": tmux_session_name(read_thread(root), row, root)}
+    return {**detached, "target": thread_window_name(read_id(root)), "first": first, "label": label}
 
 
 # Harnesses that accept a session id for a NEW conversation, and the flag
@@ -246,7 +292,7 @@ def active_pane_argv(
     root: Path | None = None,
 ) -> list[str]:
     """Build one terminal split (or detached tmux session) command containing one harness invocation."""
-    if not (capability.get("can_split") or capability.get("can_detach")):
+    if not (capability.get("can_split") or capability.get("can_detach") or capability.get("thread_window")):
         raise ValueError(str(capability.get("reason") or "terminal cannot split"))
     worktree = str(seat.get("worktree") or "").strip()
     if not worktree:
@@ -260,19 +306,17 @@ def active_pane_argv(
     if not terminal:
         raise ValueError("terminal adapter has no executable")
     adapter = capability.get("adapter")
-    if adapter == "windows-terminal":
-        return [
-            terminal,
-            "-w",
-            "0",
-            "split-pane",
-            "-V",
-            "--title",
-            _pane_title(seat),
-            "-d",
-            worktree,
-            *inner,
-        ]
+    if adapter == "windows-terminal-thread":
+        window = str(capability.get("target") or "").strip()
+        if not window or window == "0" or window.isdigit():
+            raise ValueError("refuse a Windows Terminal window that is not the thread's own: " + repr(window))
+        # The first neuron opens the thread's window as a tab; later ones split inside it.
+        # wt splits that window's focused pane: inside the thread's window that is fine,
+        # since it only holds this thread's neurons.
+        verb = ["new-tab"] if capability.get("first", True) else ["split-pane", "-V"]
+        title = thread_pane_title(str(capability.get("label") or window.removeprefix("convoy-")), seat)
+        return [terminal, "-w", window, *verb, "--title", title, "-d", worktree,
+                *[a.replace(";", "\\;") for a in inner]]
     if adapter == "tmux":
         pane = str(capability.get("target") or "").strip()
         if not pane:
@@ -292,8 +336,12 @@ def active_pane_argv(
         if not name:
             raise ValueError("detached tmux adapter has no session name")
         # tmux hands the command to the shell as ONE string: quoted here, so a
-        # worktree or boot prompt with spaces stays one argument.
-        return [terminal, "new-session", "-d", "-s", name, "-c", worktree, shlex.join(inner)]
+        # worktree or boot prompt with spaces stays one argument. One session per
+        # thread: the first neuron makes it, later ones split its current window.
+        if not capability.get("first", True):
+            return [terminal, "split-window", "-t", "=" + name + ":", "-c", worktree, shlex.join(inner)]
+        title = thread_pane_title(str(capability.get("label") or name.removeprefix("convoy-")), seat)
+        return [terminal, "new-session", "-d", "-s", name, "-n", title, "-c", worktree, shlex.join(inner)]
     raise ValueError("unsupported terminal adapter: " + str(adapter))
 
 
@@ -387,6 +435,17 @@ def read_launch_claim(root: Path, session_id: str) -> dict[str, Any] | None:
     return value if isinstance(value, dict) else None
 
 
+def hosted_live(root: Path, session_id: str) -> bool:
+    """A pane host recorded on this chair's launch claim is alive: the chair has a live
+    body another launch spawned. A reservation without a host pid, or a dead host, is not."""
+    claim = read_launch_claim(root, session_id) or {}
+    host = claim.get("host_pid")
+    if host is None:
+        return False
+    from . import pane_host
+    return bool(pane_host.host_alive(host, claim.get("host_started")))
+
+
 def take_launch_claim(root: Path, session_id: str, *, host_pid: int | None = None) -> Path:
     """One body per chair, taken with O_EXCL before anything is spawned.
 
@@ -397,27 +456,101 @@ def take_launch_claim(root: Path, session_id: str, *, host_pid: int | None = Non
     claim whose host is gone — otherwise every managed launch would refuse
     itself. A claim whose host_pid is alive is never taken: that is the
     occupancy refusal (it prevents two live bodies on one chair).
+
+    A reservation records the process that took it (reserver_pid and its start
+    time). A claim whose holder (its host, else its reserver) is dead has expired:
+    a new reservation adopts it, so an invocation that crashed between claim and
+    spawn never blocks the chair forever. A claim naming no holder cannot be judged
+    and still refuses.
     """
+    from . import pane_host
     path = _claim_path(Path(root), session_id)
     path.parent.mkdir(parents=True, exist_ok=True)
     payload: dict[str, Any] = {"session_id": session_id}
     if host_pid is not None:
         payload["host_pid"] = int(host_pid)
+        started = pane_host.process_started(host_pid)
+        if started is not None:
+            payload["host_started"] = started
+    else:
+        payload["reserver_pid"] = os.getpid()
+        started = pane_host.process_started(os.getpid())
+        if started is not None:
+            payload["reserver_started"] = started
+        payload["reserved_at"] = time.time()
     data = (json.dumps(payload, separators=(",", ":")) + "\n").encode("utf-8")
     try:
         fd = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     except FileExistsError as exc:
         if host_pid is None:
-            raise ValueError("refuse duplicate launch: chair already claimed") from exc
-        held = (read_launch_claim(root, session_id) or {}).get("host_pid")
-        from .pane_host import pid_alive
+            return _adopt_expired(path, data, exc)
+        claim = read_launch_claim(root, session_id) or {}
+        held = claim.get("host_pid")
 
-        if held is not None and pid_alive(held):
+        if held is not None and pane_host.host_alive(held, claim.get("host_started")):
             raise ValueError(
                 "refuse duplicate launch: chair " + str(session_id) +
                 " is already hosted by a live pane host (pid " + str(held) + ")")
         path.write_bytes(data)   # a reservation, or a host that is gone
         return path
+    try:
+        os.write(fd, data)
+    finally:
+        os.close(fd)
+    return path
+
+
+# A reservation is the launching CLI's; it exits right after wt returns, before the pane
+# host adopts the claim. A dead reserver inside this window is a handoff in flight.
+RESERVATION_GRACE_S = 30.0
+
+
+def _claim_expired(claim: dict[str, Any] | None, *, age_s: float | None = None) -> bool:
+    """The claim's holder is dead: its host when it names one (expired at once), else the
+    process that reserved it, and then only once the reservation is older than
+    RESERVATION_GRACE_S. A claim naming neither cannot be judged and is not expired."""
+    from . import pane_host
+    claim = claim or {}
+    if claim.get("host_pid") is not None:
+        return not pane_host.host_alive(claim["host_pid"], claim.get("host_started"))
+    if claim.get("reserver_pid") is not None:
+        if pane_host.host_alive(claim["reserver_pid"], claim.get("reserver_started")):
+            return False
+        try:
+            age = time.time() - float(claim["reserved_at"])
+        except (KeyError, TypeError, ValueError):
+            age = age_s
+        return age is not None and age > RESERVATION_GRACE_S
+    return False
+
+
+def _adopt_expired(path: Path, data: bytes, exc: BaseException) -> Path:
+    """Take over an expired claim, or refuse "already claimed". The judged bytes are
+    re-read before the unlink and must be identical (another adopter may have replaced
+    them), and the new claim is created with O_EXCL: of two adopters exactly one wins.
+    A Windows PermissionError on this path (a file in use) is the same refusal."""
+    refuse = "refuse duplicate launch: chair already claimed"
+    try:
+        judged = path.read_bytes()
+        mtime_age = time.time() - path.stat().st_mtime
+    except FileNotFoundError:
+        judged, mtime_age = b"", None
+    except OSError as err:
+        raise ValueError(refuse) from err
+    try:
+        claim = json.loads(judged.decode("utf-8-sig")) if judged else {}
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        claim = {}
+    if judged and not _claim_expired(claim if isinstance(claim, dict) else {}, age_s=mtime_age):
+        raise ValueError(refuse) from exc
+    try:
+        if judged:
+            if path.read_bytes() != judged:
+                raise ValueError(refuse) from exc
+            path.unlink()
+        fd = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    except (FileExistsError, FileNotFoundError, PermissionError) as err:
+        raise ValueError(refuse) from err
     try:
         os.write(fd, data)
     finally:
@@ -442,9 +575,13 @@ def launch_seat(
     trust_probe: Callable[[dict[str, Any]], bool] = grok_project_trusted,
     allow_unverified_launch: bool = False,
     write_repo_files: bool | None = None,
-    opt_in_route: str = "cli",
+    claimed: bool = False,
 ) -> dict[str, Any]:
     """Plan or launch one fresh join/swap chair.
+
+    claimed=True: the caller already holds this chair's launch reservation (the CLI takes it
+    before recording launched_by); it is used, not taken again, and the caller releases it
+    when the launch does not spawn.
 
     write_repo_files None writes every repo file only into a minted worktree (ensure_first_run);
     True is the person's --write-repo-files.
@@ -489,6 +626,10 @@ def launch_seat(
                 worktree=worktree,
             )
             row = update_seat(root, session_id, trust_worktree=True)
+        if runner is not None:
+            # The prompt's lead and launcher line is the thread as it is now, not at join.
+            from .lifecycle import refresh_identity
+            row = refresh_identity(root, row)
         capability = placement_capability(root, row, env=env, which=which, platform_name=platform_name)
         if capability is None:
             raise ValueError(
@@ -498,7 +639,7 @@ def launch_seat(
         effective = row
         first_run: dict[str, Any] | None = None
         if runner is not None:
-            first_run = ensure_first_run(row, root=root, write_repo_files=write_repo_files, opt_in_route=opt_in_route)
+            first_run = ensure_first_run(row, root=root, write_repo_files=write_repo_files)
             if first_run.get("ok") is False:
                 raise ValueError(str(first_run.get("error") or "first-run preparation failed"))
             effective = _seat_with_agent(root, row, first_run)
@@ -514,12 +655,15 @@ def launch_seat(
             "target_semantics": capability.get("target_semantics"),
             "can_close_exact": bool(capability.get("can_close_exact")),
             "close_reason": capability.get("close_reason"),
-            "placement": "split" if capability.get("can_split") else "detached",
+            "placement": ("split" if capability.get("can_split") else
+                          "thread-window" if capability.get("thread_window") else "detached"),
             "argv": argv,
             "harness_argv": harness_argv,
             "dry_run": runner is None,
         }
-        if not capability.get("can_split"):
+        if capability.get("thread_window"):
+            card["window"] = capability.get("target")
+        elif not capability.get("can_split"):
             card["attach"] = tmux_attach_command(str(capability.get("target")))
         if first_run is not None:
             card["first_run"] = {"would_write": list(first_run.get("would_write") or []),
@@ -528,7 +672,7 @@ def launch_seat(
         if runner is None:
             return card
 
-        claim = _claim(root, session_id)
+        claim = _claim_path(Path(root), session_id) if claimed else _claim(root, session_id)
         try:
             result = runner(argv)
         except Exception as exc:

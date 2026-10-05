@@ -17,9 +17,9 @@ from pathlib import Path
 from typing import Any
 
 from .cmd import convoy_root_command
-from .convoy import list_seats, read_thread, seat as write_seat, set_lead, update_seat
+from .convoy import list_seats, read_lead, read_thread, seat as write_seat, set_lead, update_seat
 from .harness_contract import validate_effort, validate_model, validate_where
-from .layer import hook
+from .layer import feed_since, hook
 
 
 def _mint_token() -> str:
@@ -33,10 +33,18 @@ def _require_seat(root: Path, session_id: str) -> dict[str, Any]:
     raise ValueError("unknown seat: " + str(session_id))
 
 
+_UNSET: Any = object()
+
+
 def _boot_prompt(root: Path, session_id: str, token: str, handoff: str) -> str:
     # The seated-ack delivery mechanism: an initial positional prompt
     # — NOT -p print mode; the session stays interactive. One line: read, ack,
     # continue. bring_up never packs, so the handoff pointer rides here.
+    # It names only files that exist: a thread started without a name has no
+    # thread.md, and a prompt pointing at one made the neuron's first command fail.
+    # Then who leads and who launched this chair (information, not rules), and the
+    # two commands that route in code: report and reply.
+    from .launcher import identity_tail
     thread_path = Path(root) / "thread.md"
     handoff_path = Path(handoff)
     if not handoff_path.is_absolute():
@@ -46,13 +54,43 @@ def _boot_prompt(root: Path, session_id: str, token: str, handoff: str) -> str:
         same = handoff_path.resolve() == thread_path.resolve()
     except OSError:
         same = str(handoff_path) == str(thread_path)
-    reads = str(thread_path) if same else str(thread_path) + " and " + str(handoff_path)
+    files = [p for p in ([thread_path] if same else [thread_path, handoff_path]) if p.is_file()]
+    reads = ("Read " + " and ".join(str(p) for p in files) + ". ") if files else ""
+    cmd = convoy_root_command(root)
     return (
         "You are the new occupant of Convoy seat '" + session_id + "'. "
-        "Read " + reads + ". Then run: "
-        + convoy_root_command(root) + " seated --seat " + session_id +
-        " --token " + token + " — then continue the seat's work."
+        + reads + "Then run: "
+        + cmd + " seated --seat " + session_id +
+        " --token " + token + " — then continue the seat's work. "
+        + identity_tail(root, session_id)
     )
+
+
+def refresh_identity(root: Path, row: dict[str, Any]) -> dict[str, Any]:
+    """Recompose the identity tail of a pending boot prompt from the thread as it is now,
+    right before a launch spawns it: the lead may have moved, or a swap changed the
+    chair's harness, since the prompt was written. Any prompt carrying the tail (join,
+    swap, relaunch) keeps its head. Returns the row with the prompt the spawn will use."""
+    from .launcher import identity_tail, tail_start
+    prompt = str(row.get("boot_prompt") or "")
+    sid = str(row.get("session_id") or "")
+    at = tail_start(prompt)
+    if not sid or at is None:
+        return row
+    fresh = prompt[:at] + identity_tail(root, sid)
+    if fresh != prompt:
+        update_seat(root, sid, boot_prompt=fresh)
+    return {**row, "boot_prompt": fresh}
+
+
+def record_launcher(root: Path, session_id: str, launched_by: str | None, why: str | None = None) -> dict[str, Any]:
+    """Record who launched a chair joined without one (`join` then `launch`/`bring-up`),
+    and recompose its one-shot boot prompt with the token its join or swap minted, so the
+    prompt names the launcher too. A chair with no token on the feed keeps its prompt."""
+    _require_seat(root, session_id)
+    changes: dict[str, Any] = {"launched_by": launched_by, "launched_by_why": why if launched_by is None else None}
+    row = update_seat(root, session_id, **changes)
+    return refresh_identity(root, row)
 
 
 def join(
@@ -66,10 +104,16 @@ def join(
     author: str | None = None,
     where: str | None = None,
     calling_session: bool = False,
+    launched_by: Any = _UNSET,
+    launched_by_why: str | None = None,
 ) -> dict[str, Any]:
     """Add a new chair: seat + boot prompt + kind=join row (token minted).
     where is local (default) or cloud; write_seat refuses a cloud chair the
-    harness cannot attach, before any token is minted."""
+    harness cannot attach, before any token is minted.
+
+    launched_by: the launcher's chair (a launch path resolved it), or None with
+    launched_by_why when the launcher could not be proven. Left unset, nothing is
+    recorded (a chair that joins itself, or a join that a later launch records)."""
     from .panes import identify
     from .harness_contract import canonical_harness_id
     # MCP callers and conductor-created crew chairs cannot borrow the
@@ -96,6 +140,9 @@ def join(
         raise ValueError("refuse join: chair already exists: " + sid)
     token = _mint_token()
     write_seat(root, to, sid, worktree=worktree, model=model, title=title, effort=effort, where=where)
+    if launched_by is not _UNSET:
+        update_seat(root, sid, launched_by=launched_by,
+                    **({"launched_by_why": launched_by_why} if launched_by is None else {}))
     seat_row = update_seat(root, sid, boot_prompt=_boot_prompt(root, sid, token, "thread.md"))
     hook(
         root, "join", "join " + sid + " (" + to + ")",
@@ -139,36 +186,122 @@ def swap(
     # Both tokens null on EVERY swap, same harness included: update_seat only
     # nulls vendor_session_id on a harness change, which left a grok->grok
     # swap resumable and made `launch` refuse it as "not fresh" (2026-09-03).
-    changes: dict[str, Any] = {"to": to, "resume": None, "vendor_session_id": None,
-                               "boot_prompt": _boot_prompt(root, session_id, token, str(hp))}
+    changes: dict[str, Any] = {"to": to, "resume": None, "vendor_session_id": None}
     if model:
         changes["model"] = model
     if effort:
         changes["effort"] = effort
-    seat_row = update_seat(root, session_id, **changes)
+    update_seat(root, session_id, **changes)
+    # The prompt is composed after the seat changed harness: the lead line reads the
+    # thread as it is now (a lead codex chair swapped to claude no longer leads).
+    seat_row = update_seat(root, session_id, boot_prompt=_boot_prompt(root, session_id, token, str(hp)))
     return {"ok": True, "seat": seat_row, "token": token, "row": row, "next": "bring-up"}
+
+
+def _harness(seat_row: dict[str, Any]) -> str:
+    return str(seat_row.get("to") or "").strip().lower()
+
+
+def lead_state(root: Path) -> dict[str, Any]:
+    """Who leads, and can anyone reach them.
+
+    A seated chair is a seat on this thread that is not detached. `.convoy/lead`
+    names a harness (or, older threads, a chair). status is "none" when it is
+    unset. When the latest kind=lead row names a chair that matches the lead,
+    that chair leads: "held" while it is seated, "dangling" once it detaches (no
+    other chair of its harness inherits it). Otherwise (no stamped chair) the
+    lead is "held" by its only matching seated chair, "held" with chair None
+    when several match, and "dangling" when none does."""
+    from .graph import _lead_chair
+    from .layer import feed_path
+    lead = read_lead(root)
+    seats = list_seats(root)
+    seated = [s for s in seats if not s.get("detached")]
+    matching = [s for s in seated if lead and lead in (str(s.get("session_id")), _harness(s))]
+    chair, status = None, "none"
+    if lead is not None:
+        rows = feed_since(root, "1970-01-01T00:00:00.000000Z") if feed_path(root).exists() else []
+        by_sid = {s["session_id"]: s for s in seats}
+        stamped = by_sid.get(_lead_chair(rows, set(by_sid)) or "")
+        if stamped is not None and lead in (stamped["session_id"], _harness(stamped)):
+            status = "dangling" if stamped.get("detached") else "held"
+            chair = None if stamped.get("detached") else stamped["session_id"]
+            matching = [stamped] if chair else []
+        else:
+            status = "held" if matching else "dangling"
+            chair = matching[0]["session_id"] if len(matching) == 1 else None
+    return {"lead": lead, "status": status, "chair": chair, "matching": matching, "seated": seated}
+
+
+def take_lead(root: Path, session_id: str, state: dict[str, Any]) -> dict[str, Any]:
+    """An attached chair takes a lead that is unset or dangling: a kind=lead
+    row from that chair to that chair, then the `.convoy/lead` harness."""
+    target = _require_seat(root, session_id)
+    harness = _harness(target)
+    was = "none" if state["status"] == "none" else "dangling " + str(state["lead"])
+    hook(root, "lead", "lead -> " + session_id + " (" + harness + "), was " + was,
+         instance_id=session_id, author=session_id, to=session_id,
+         extra={"lead": session_id, "harness": harness, "was": was})
+    set_lead(root, harness)
+    return {"chair": session_id, "harness": harness, "was": was, "line": "lead: taken (was " + was + ")"}
+
+
+def lead_to_harness(root: Path, harness: str, author: str) -> dict[str, Any]:
+    """The legacy `lead --to <harness>`: a pass to that harness's one seated chair,
+    under every pass_lead rule (the author must hold the lead unless it is unset or
+    dangling). No seated chair of it, or several, refuses."""
+    name = str(harness or "").strip().lower()
+    if not name:
+        raise ValueError("refuse empty lead")
+    chairs = sorted(s["session_id"] for s in lead_state(root)["seated"] if _harness(s) == name)
+    if not chairs:
+        raise ValueError("no chair of " + name + " on this thread")
+    if len(chairs) > 1:
+        raise ValueError(str(len(chairs)) + " chairs of " + name + " on this thread (" + ", ".join(chairs)
+                         + "); pass to one with --to <chair>")
+    return pass_lead(root, chairs[0], author=author)
 
 
 def pass_lead(root: Path, session_id: str, author: str) -> dict[str, Any]:
     """Pass lead status to an IDENTIFIED neuron (a chair), neuron-authored.
 
-    Stamps kind=lead (from=author, to=chair) so the graph can mark the lead
-    and every neuron's place card can name it; then writes the legacy
-    `.convoy/lead` harness file so bring-up keeps its meaning. The conductor
-    asks for a lead change via stamp; it never authors one (hook refuses)."""
+    The author must be a seated chair and the current lead chair; while the
+    lead is unset or dangling, any seated chair may take it. Stamps kind=lead
+    (from=author, to=chair) so the graph can mark the lead and every neuron's
+    place card can name it; then writes the legacy `.convoy/lead` harness file
+    so bring-up keeps its meaning. The conductor asks for a lead change via
+    stamp; it never authors one (hook refuses)."""
     sid = str(session_id or "").strip()
     who = str(author or "").strip()
     if not who:
         raise ValueError("refuse lead pass without an author")
     target = _require_seat(root, sid)
-    harness = str(target.get("to") or "").strip().lower()
+    state = lead_state(root)
+    seated = {s["session_id"]: s for s in state["seated"]}
+    if who not in seated:
+        raise ValueError("refuse lead pass: " + who + " is not a seated chair on this thread")
+    if sid not in seated:
+        raise ValueError("refuse lead pass: " + sid + " is not a seated chair on this thread")
+    # A lead change needs environment or token proof, which rests on the chair's recorded
+    # native session id; a chair without one could never pass the lead on.
+    if not (target.get("resume") or target.get("vendor_session_id")):
+        raise ValueError("refuse lead pass: " + sid + " has no recorded session id, so it could never pass "
+                         "the lead on; let it take a turn first")
+    if state["status"] == "held":
+        chair = state["chair"]
+        holds = who == chair if chair else any(s["session_id"] == who for s in state["matching"])
+        if not holds:
+            raise ValueError("refuse lead pass: " + who + " is not the current lead ("
+                             + str(chair or state["lead"]) + ")")
+    harness = _harness(target)
     row = hook(
         root, "lead", "lead -> " + sid + " (" + harness + ")",
         instance_id=sid, author=who, to=sid,
         extra={"lead": sid, "harness": harness},
     )
     out = set_lead(root, harness)
-    return {"ok": True, "lead_chair": sid, "lead": harness, "convoy_id": out.get("convoy_id"), "row": row}
+    return {"ok": True, "lead_chair": sid, "conductor": sid, "lead": harness, "convoy_id": out.get("convoy_id"),
+            "row": row}
 
 
 def seated_ack(root: Path, session_id: str, token: str,

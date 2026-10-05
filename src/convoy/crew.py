@@ -12,7 +12,8 @@ a chair connected only when its ack cites the token this mint issued; the
 time waited is measured on an injectable clock so the suite never sleeps.
 
 add is the one-neuron verb: the same validate -> mint -> join for one chair,
-then the TARGETED launch (a split of the caller's pane, or a detached tmux
+then the TARGETED launch (inside tmux a split of the caller's pane; on Windows the
+thread's own named Windows Terminal window; else the thread's detached tmux
 session) instead of a whole new window, which it uses only as the fallback.
 """
 from __future__ import annotations
@@ -23,7 +24,7 @@ import time
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
-from .bringup import Runner, _resolve_wt_bin, bring_up, isolated_wt_argv, pane_host_available
+from .bringup import Runner, bring_up, codex_hooks_warning, pane_host_available
 from .convoy import list_seats, read_id, read_thread
 from .harness_contract import (canonical_harness_id, harness_entries, validate_effort, validate_launch_eligibility,
                                validate_model, validate_where)
@@ -83,7 +84,7 @@ def crew(
     author: str | None = None,
     allow_unverified_launch: bool = False,
     write_repo_files: bool | None = None,
-    opt_in_route: str = "cli",
+    launcher: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Validate -> mint -> join each -> bring_up once. runner=None joins the
     chairs and shows the argv without spawning; live_runner pops the window.
@@ -114,9 +115,38 @@ def crew(
         return card
     sids = _mint_and_join(card, root, plan, checkout=checkout, mint_runner=mint_runner, author=author)
     if sids is None:
-        return card
-    return _bring_up_window(card, root, sids, bound, runner=runner, allow_unverified_launch=allow_unverified_launch,
-                            write_repo_files=write_repo_files, opt_in_route=opt_in_route)
+        return _warn_codex_hooks(card, plan)
+    _seat_launcher(card, root, launcher, sids)
+    return _warn_codex_hooks(_bring_up_window(card, root, sids, bound, runner=runner,
+                                              allow_unverified_launch=allow_unverified_launch,
+                                              write_repo_files=write_repo_files), plan)
+
+
+def _warn_codex_hooks(card: dict[str, Any], plan: list[dict[str, Any]]) -> dict[str, Any]:
+    """A codex chair whose plugin hooks the person has not trusted cannot be woken by a send:
+    no Stop hook records its session id, so `codex queue` has no thread to reach. Read-only."""
+    warning = codex_hooks_warning(p["harness"] for p in plan)
+    if warning and warning not in (card.get("warnings") or []):
+        card["warnings"] = list(card.get("warnings") or []) + [warning]
+    return card
+
+
+def _seat_launcher(card: dict[str, Any], root: Path, launcher: dict[str, Any] | None, sids: list[str]) -> None:
+    """Act on the resolved launcher once every chair has joined (a refused or failed verb
+    attaches nobody and moves no lead): the card's `launcher` block, a warning when it is
+    unknown, and launched_by on each joined chair, whose prompt then names it."""
+    if launcher is None or not sids:
+        return
+    from .launcher import public_block, seat_launcher
+    from .lifecycle import record_launcher
+    info = seat_launcher(root, launcher)
+    card["launcher"] = public_block(info)
+    if info.get("warning"):
+        card["warnings"] = list(card.get("warnings") or []) + [info["warning"]]
+    rows = {sid: record_launcher(root, sid, info.get("launched_by"), info.get("launched_by_why")) for sid in sids}
+    keys = ("launched_by", "launched_by_why", "boot_prompt")
+    card["seats"] = [{**s, **{k: rows[s["session_id"]].get(k) for k in keys}} if s.get("session_id") in rows else s
+                     for s in card.get("seats") or []]
 
 
 def _mint_and_join(card: dict[str, Any], root: Path, plan: list[dict[str, Any]], *, checkout: Path | str | None,
@@ -151,12 +181,12 @@ def _mint_and_join(card: dict[str, Any], root: Path, plan: list[dict[str, Any]],
 
 
 def _bring_up_window(card: dict[str, Any], root: Path, sids: list[str], bound: str | None, *, runner: Runner | None,
-                     allow_unverified_launch: bool, write_repo_files: bool | None, opt_in_route: str,
+                     allow_unverified_launch: bool, write_repo_files: bool | None,
                      retry: str = "launch --seat {sid}") -> dict[str, Any]:
     """Launch the joined chairs once through bring_up: one new window, N panes."""
     try:
         up = bring_up(root, thread=bound, runner=runner, session_ids=sids, allow_unverified_launch=allow_unverified_launch,
-                      write_repo_files=write_repo_files, opt_in_route=opt_in_route)
+                      write_repo_files=write_repo_files)
     except OSError as e:
         return _mark_partial(card, root, sids, "launch failed: " + str(e), retry=retry)
     card["windows"] = up.get("windows") or []
@@ -173,7 +203,8 @@ def _bring_up_window(card: dict[str, Any], root: Path, sids: list[str], bound: s
             if w.get(k):
                 warnings.append(str(w.get("session_id") or "?") + ": " + k + ": " + str(w[k]))
     if warnings:
-        card["warnings"] = warnings
+        # The window's own warnings first; one already on the card (the launcher's) stays.
+        card["warnings"] = warnings + [w for w in card.get("warnings") or [] if w not in warnings]
     if up.get("error"):
         card["error"] = str(up["error"])
     else:
@@ -204,17 +235,21 @@ def _auto(value: Any) -> str | None:
     return None if not text or text.lower() == "auto" else text
 
 
-def _placement(env: Mapping[str, str] | None, which: Which, platform_name: str | None) -> tuple[str, str]:
+def _placement(env: Mapping[str, str] | None, which: Which, platform_name: str | None,
+               window: str | None = None) -> tuple[str, str]:
     """Where one new neuron goes, decided before anything is written:
-    split | detached | new-window | none, with the reason the card shows."""
+    split | thread-window | detached | none, with the reason the card shows."""
     cap = terminal_capability(env=env, which=which, platform_name=platform_name)
     if cap.get("can_split"):
-        return "split", "inside " + str(cap.get("adapter")) + ": a split of the caller's active pane"
+        return "split", "inside tmux: a split of the caller's exact pane"
+    if cap.get("thread_window"):
+        return "thread-window", ("Windows Terminal: this thread's own window " + str(window) +
+                                 "; the first neuron opens it as a tab, later ones split inside it"
+                                 " (never the caller's window)")
     if cap.get("detached"):
-        return "detached", "not inside tmux; tmux is installed, so a detached tmux session"
+        return "detached", ("not inside tmux; tmux is installed, so this thread's own detached session " +
+                            str(window) + "; the first neuron makes it, later ones split inside it")
     nt = (os.name if platform_name is None else platform_name) == "nt"
-    if nt and which("wt"):
-        return "new-window", "not inside Windows Terminal (no WT_SESSION); bring-up opens a new window"
     # The pane host runs an interactive harness only inside a terminal. One
     # headless turn is a different verb, and it is not a seat.
     tail = "; a harness with headless turns can still take one through `convoy send --live`, which is not a seat"
@@ -232,14 +267,11 @@ def _dry(card: dict[str, Any], root: Path, p: dict[str, Any], bound: str | None,
     card["session_id"] = p["session_id"]
     card["worktree"] = seat["worktree"]
     try:
-        if card["placement"] == "new-window":
-            # rootless: the pure builder, which writes no launch record; live,
-            # each pane runs the Convoy pane host around this same harness argv.
-            card["argv"] = isolated_wt_argv(bound or "", [seat], wt=_resolve_wt_bin())
-            return card
         capability = placement_capability(root, seat, env=env, which=which, platform_name=platform_name) or {}
         card["argv"] = active_pane_argv(seat, capability, root=root)
-        if not capability.get("can_split"):
+        if capability.get("thread_window"):
+            card["window"] = capability.get("target")
+        elif not capability.get("can_split"):
             card["session_name"] = capability.get("target")
             card["attach"] = tmux_attach_command(str(capability.get("target")))
     except ValueError as e:
@@ -272,17 +304,18 @@ def add(
     author: str | None = None,
     allow_unverified_launch: bool = False,
     write_repo_files: bool | None = None,
-    opt_in_route: str = "cli",
     env: Mapping[str, str] | None = None,
     which: Which = shutil.which,
     platform_name: str | None = None,
     trust_probe: Callable[[dict[str, Any]], bool] = grok_project_trusted,
+    launcher: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """One neuron: validate -> place -> mint -> join -> launch.
 
     runner=None is a dry run: it writes nothing and reports the placement.
     Live, `runner` splits the caller's pane or starts a detached tmux session
-    (launch_seat), and `window_runner` is bring_up's new window, used only
+    (launch_seat). `window_runner` is kept for callers and unused: Windows
+    launches into the thread's own named window through `runner` too. It was bring_up's new window, used only
     where neither exists. Placement is decided before the first write, so
     "nowhere to launch" refuses with no chair and no worktree left behind. A
     spawn that fails AFTER the join leaves the chair joined and the card says
@@ -314,11 +347,20 @@ def add(
     except ValueError as e:
         card["error"] = str(e)
         return card
-    card["placement"], card["placement_reason"] = _placement(env, which, platform_name)
+    _warn_codex_hooks(card, plan)
+    from .targeted_launch import thread_window_name
+    window = thread_window_name(card["convoy_id"])
+    card["placement"], card["placement_reason"] = _placement(env, which, platform_name, window)
+    if card["placement"] == "thread-window":
+        card["window"] = window
     if card["placement"] == "none":
         card["error"] = card["placement_reason"]
         return card
     if runner is None:
+        if launcher is not None:
+            # A dry run attaches nobody; it says what a live add would do with the launcher.
+            card["launcher"] = {"kind": launcher.get("kind"), "chair": launcher.get("chair"),
+                                "would_attach": launcher.get("kind") == "unseated", "why": launcher.get("why")}
         return _dry(card, root, plan[0], bound, checkout=checkout, env=env, which=which, platform_name=platform_name)
     # The retry each path prints is the command that works on that path, with
     # the person's own opt-ins, so it is never refused for a flag left off.
@@ -327,15 +369,10 @@ def add(
     sids = _mint_and_join(card, root, plan, checkout=checkout, mint_runner=mint_runner, author=author)
     if sids is None:
         return card
-    if card["placement"] == "new-window":
-        # `launch` has no pane to split here; bring-up for this one chair does.
-        return _bring_up_window(card, root, sids, bound, runner=window_runner,
-                                allow_unverified_launch=allow_unverified_launch,
-                                write_repo_files=write_repo_files, opt_in_route=opt_in_route,
-                                retry="bring-up --seat {sid}" + flags)
+    _seat_launcher(card, root, launcher, sids)
     launched = launch_seat(root, sids[0], runner=runner, env=env, which=which, platform_name=platform_name,
                            trust_probe=trust_probe, allow_unverified_launch=allow_unverified_launch,
-                           write_repo_files=write_repo_files, opt_in_route=opt_in_route)
+                           write_repo_files=write_repo_files)
     card["launch"] = launched
     if launched.get("state") == "awaiting-user-consent":
         # The chair waits on the person, not on a retry: grant, then launch it.

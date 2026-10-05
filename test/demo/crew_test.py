@@ -136,7 +136,8 @@ class CrewMintsJoinsAndLaunchesOnce(unittest.TestCase):
         # ONE runner call, ONE window, N panes: nt then N-1 split-pane
         self.assertEqual(runner.call_count, 1)
         argv = runner.call_args[0][0]
-        self.assertEqual(argv[1:4], ["--window", "new", "nt"])
+        self.assertEqual((argv[1], argv[3]), ("-w", "new-tab"))  # the thread\'s own window
+        self.assertRegex(argv[2], r"^convoy-[0-9a-f]{8}$")
         self.assertEqual(argv.count("split-pane"), 2)
         dirs = [argv[i + 1] for i, a in enumerate(argv) if a == "-d"]
         self.assertEqual({_norm(d) for d in dirs}, {_norm(w) for w in wts})

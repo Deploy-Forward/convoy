@@ -15,7 +15,11 @@ the repository's
 - `.mcp.json` — HTTP MCP connection to your own Convoy on loopback, `http://127.0.0.1:8788/mcp`.
 - `skills/convoy/SKILL.md` — live-capability orchestration and consent rules.
 - `skills/convoy-end/SKILL.md` — explicit task-end and push authorization rules.
-- `hooks/hooks.json` — Codex `Stop` heartbeat (`convoy end --hook`; never pushes).
+- `codex-hooks.json` — Codex's two hooks, named by the manifest's `hooks` field: the `Stop`
+  heartbeat (`convoy end --hook`; never pushes; it also records the session id) and the
+  `PostToolUse` inbox (`convoy inbox --hook-pretooluse`). Codex keys them
+  `convoy@<marketplace>:codex-hooks.json:<event>:0:0`, so one `/hooks` review covers every project.
+  Neurons answer with `convoy reply <token>` and report with `convoy report`.
 - `assets/logo.svg` — the canonical Deploy Forward mark.
 
 There is deliberately no `.app.json`: Convoy has not declared a registered
@@ -37,9 +41,10 @@ plugin. It does not bypass Convoy's endpoint write gate or action-scoped
 consent, accept vendor trust prompts, steal occupied sessions, or inject
 keystrokes.
 
-The heartbeat hook requires the public `convoy` console script on the hook
+The hooks require the public `convoy` console script on the hook
 shell's PATH (`pipx install git+https://github.com/Deploy-Forward/convoy.git`,
-or `pip install .`). Codex still shows the exact hook for native review/trust;
+or `pip install .`). Codex still shows each hook for native review/trust
+(`/hooks` in Codex; trust both);
 plugin installation is intent to use it, not a bypass of Codex's hook trust
 rail. The automatic Stop hook records only a turn-end heartbeat. It never
 pushes. Use `$convoy-end --push` for the explicit completion action.

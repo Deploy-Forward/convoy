@@ -123,15 +123,16 @@ class HookWritersUseResolvedCommand(unittest.TestCase):
         self.assertIn("pipx", g["error"])
         self.assertFalse((self.wt / ".grok" / "hooks" / "convoy-inbox.json").exists())
 
-    def test_codex_and_claude_stop_hooks_share_end_heartbeat(self):
+    def test_claude_stop_hook_carries_end_heartbeat_and_codex_gets_no_project_file(self):
+        """Codex's Stop hook is the convoy plugin's (codex-hooks.json), trusted once for every
+        project; a project .codex/hooks.json is a new untrusted key in each worktree."""
         from convoy.identity import ensure_end_hooks
 
         with mock.patch.object(cmd, "_probe_end_command", _probe({"convoy end --hook"})):
             card = ensure_end_hooks(self.wt, root=self.root)
         self.assertTrue(card["ok"], card)
-        codex = json.loads((self.wt / ".codex" / "hooks.json").read_text(encoding="utf-8"))
+        self.assertFalse((self.wt / ".codex" / "hooks.json").exists())
         claude = json.loads((self.wt / ".claude" / "settings.local.json").read_text(encoding="utf-8"))
-        self.assertEqual(codex["hooks"]["Stop"][0]["hooks"][0]["command"], "convoy end --hook")
         self.assertEqual(claude["hooks"]["Stop"][0]["hooks"][0]["command"], "convoy end --hook")
         self.assertEqual(
             (self.wt / ".codex" / "convoy-root").read_text(encoding="utf-8").strip(),
@@ -168,37 +169,6 @@ if __name__ == "__main__":
     unittest.main()
 
 
-class CodexFreshInstallStampsUsage(unittest.TestCase):
-    """Audit 2026-09-06: the codex installer wrote Stop only, so a fresh codex
-    seat never stamped a kind=usage row. hooks.json now carries PostToolUse
-    with the inbox hook command (same handler, event from stdin)."""
-
-    def setUp(self):
-        # the resolver caches a success per process; an earlier test that saw a
-        # bare `convoy` on PATH must not decide this class's command
-        cmd._RESOLVED = None; cmd._END_RESOLVED = None
-        self.addCleanup(setattr, cmd, "_RESOLVED", None); self.addCleanup(setattr, cmd, "_END_RESOLVED", None)
-        self.wt = Path(tempfile.mkdtemp())
-        self.root = Path(tempfile.mkdtemp())
-        (self.root / ".convoy").mkdir()
-        (self.root / ".convoy" / "id").write_text("cvy_test\n", encoding="utf-8")
-
-    def test_codex_hooks_json_carries_post_tool_use_inbox_hook_once(self):
-        from convoy.identity import ensure_codex_end_hook
-        py = cmd._quote(sys.executable) + " -m convoy inbox --hook-pretooluse"
-        with mock.patch.object(cmd, "_probe_inbox_command", _probe({py})):
-            first = ensure_codex_end_hook(self.wt, root=self.root)
-            again = ensure_codex_end_hook(self.wt, root=self.root)
-        self.assertTrue(first["ok"] and again["ok"], first)
-        self.assertTrue(first["written"]); self.assertFalse(again["written"], "idempotent")
-        doc = json.loads((self.wt / ".codex" / "hooks.json").read_text(encoding="utf-8"))
-        self.assertIn("Stop", doc["hooks"])
-        post = doc["hooks"]["PostToolUse"]
-        self.assertEqual(len(post), 1)
-        self.assertEqual(post[0]["hooks"][0]["command"], py)
-        self.assertEqual(first["usage_hook_command"], py)
-
-
 class DeadHooksAreStrippedNotKept(unittest.TestCase):
     """Live 2026-09-09: a tracked .claude/settings.json carried bare `convoy inbox
     --hook-pretooluse`; resolution failed on the box and the installer left it,
@@ -230,8 +200,8 @@ class DeadHooksAreStrippedNotKept(unittest.TestCase):
         self.assertEqual([h["hooks"][0]["command"] for h in doc["hooks"]["PreToolUse"]], ["python -m ola_brain.cli guard"])
         self.assertNotIn("UserPromptSubmit", doc["hooks"], "an event left with only dead entries is dropped")
 
-    def test_grok_and_end_hook_files_lose_dead_convoy_entries(self):
-        from convoy.identity import ensure_grok_inbox_hook, ensure_codex_end_hook
+    def test_grok_hook_file_loses_dead_convoy_entries_and_codex_file_is_left_alone(self):
+        from convoy.identity import ensure_end_hooks, ensure_grok_inbox_hook
         g = self.wt / ".grok" / "hooks" / "convoy-inbox.json"; g.parent.mkdir(parents=True)
         g.write_text(json.dumps({"hooks": {"PreToolUse": [{"hooks": [{"type": "command", "command": "convoy inbox --hook-pretooluse"}]}]}}), encoding="utf-8")
         h = self.wt / ".codex" / "hooks.json"; h.parent.mkdir(parents=True)
@@ -240,11 +210,10 @@ class DeadHooksAreStrippedNotKept(unittest.TestCase):
             "PostToolUse": [{"hooks": [{"type": "command", "command": "convoy inbox --hook-pretooluse"}]}],
             "SessionStart": [{"hooks": [{"type": "command", "command": "node vendor.mjs"}]}],
         }}), encoding="utf-8")
+        before = h.read_bytes()
         with mock.patch.object(self._c, "_probe_inbox_command", return_value=False), \
              mock.patch.object(self._c, "_probe_end_command", return_value=False):
             rg = ensure_grok_inbox_hook(self.wt, root=self.root)
-            re_ = ensure_codex_end_hook(self.wt, root=self.root)
+            ensure_end_hooks(self.wt, root=self.root)
         self.assertFalse(rg["ok"]); self.assertFalse(g.exists(), "a wholly Convoy-owned dead file is removed")
-        self.assertFalse(re_["ok"])
-        doc = json.loads(h.read_text(encoding="utf-8"))
-        self.assertEqual(list(doc["hooks"]), ["SessionStart"], "vendor entry kept, Convoy's dead Stop and PostToolUse dropped")
+        self.assertEqual(h.read_bytes(), before, "Convoy no longer writes .codex/hooks.json; the card notes it")

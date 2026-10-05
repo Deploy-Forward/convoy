@@ -54,23 +54,18 @@ class TargetedLaunch(unittest.TestCase):
         bind(self.root, "launch-thread")
         self.worktree = Path(tempfile.mkdtemp())
 
-    def test_windows_terminal_requires_an_active_windows_terminal_session(self):
-        absent = terminal_capability(
-            env={}, which=_which("wt"), platform_name="nt"
-        )
-        self.assertFalse(absent["can_split"])
+    def test_windows_never_splits_the_callers_window_it_uses_the_threads_window(self):
+        # `wt -w 0` splits whatever pane has focus. With or without
+        # WT_SESSION, Windows launches into the thread's own named window instead.
+        for env in ({}, {"WT_SESSION": "vendor-window"}):
+            cap = terminal_capability(env=env, which=_which("wt"), platform_name="nt")
+            self.assertFalse(cap["can_split"])
+            self.assertTrue(cap["thread_window"])
+            self.assertEqual(cap["adapter"], "windows-terminal-thread")
+            self.assertFalse(cap["can_close_exact"])
+            self.assertIn("no-close-pane", cap["close_reason"])
+        absent = terminal_capability(env={}, which=_which(), platform_name="nt")
         self.assertEqual(absent["reason"], "no-supported-active-terminal")
-
-        present = terminal_capability(
-            env={"WT_SESSION": "vendor-window"},
-            which=_which("wt"),
-            platform_name="nt",
-        )
-        self.assertTrue(present["can_split"])
-        self.assertEqual(present["adapter"], "windows-terminal")
-        self.assertEqual(present["target"], "most-recent-window")
-        self.assertFalse(present["can_close_exact"])
-        self.assertIn("no-close-pane", present["close_reason"])
 
     def test_tmux_targets_the_callers_pane_and_wins_over_outer_terminal(self):
         cap = terminal_capability(
@@ -96,7 +91,7 @@ class TargetedLaunch(unittest.TestCase):
         self.assertNotIn("argv", cap)
 
     @mock.patch("convoy.bringup.shutil.which", return_value="C:\\Tools\\codex.exe")
-    def test_windows_argv_splits_one_pane_not_a_new_window(self, _which_harness):
+    def test_windows_argv_targets_the_threads_window_never_window_zero(self, _which_harness):
         row = join(
             self.root,
             "codex",
@@ -109,8 +104,10 @@ class TargetedLaunch(unittest.TestCase):
             which=_which("wt"),
             platform_name="nt",
         )
-        argv = active_pane_argv(row, cap)
-        self.assertEqual(argv[:4], ["C:\\Tools\\wt", "-w", "0", "split-pane"])
+        argv = active_pane_argv(row, {**cap, "target": "convoy-0a1b2c3d", "first": False})
+        self.assertEqual(argv[:4], ["C:\\Tools\\wt", "-w", "convoy-0a1b2c3d", "split-pane"])
+        with self.assertRaises(ValueError):
+            active_pane_argv(row, {**cap, "target": "0"})
         self.assertIn("-d", argv)
         self.assertIn(str(self.worktree), argv)
         self.assertEqual(sum(_base_name_portable(a) == "codex.exe" for a in argv), 1)

@@ -22,8 +22,9 @@ from pathlib import Path
 from typing import Any, Callable
 
 from .convoy import observe_resume, read_id
-from .inbox import _exclusive, pending, resolve_root, seats_for_worktree, stop_block
+from .inbox import _exclusive, pending, resolve_root, seats_for_worktree, stamp_from_hook, stop_block
 from .layer import STAMP_MAX_CHARS, feed_path, feed_since, hook, utc_now
+from .panes import STOP_PROBE_TIMEOUT_S
 from .pulse import write_pulse
 
 
@@ -274,7 +275,8 @@ def _spawn_waiter(root: Path, chair: str, incarnation: Any) -> dict[str, Any]:
 
 
 def _resolve_identity(
-    *, root: Path | str | None, cwd: Path, allow_missing_root: bool,
+    *, root: Path | str | None, cwd: Path, allow_missing_root: bool, seen: dict[str, Any] | None = None,
+    probe_timeout: float | None = None,
 ) -> tuple[Path | None, dict[str, Any] | None, str | None]:
     resolved: Path | None
     from .sessions import proven_session_chair
@@ -285,7 +287,8 @@ def _resolve_identity(
     else:
         resolved = resolve_root(cwd)
     try:
-        proven_root, proven_seat = proven_session_chair(cwd, resolved if root is not None else None)
+        proven_root, proven_seat = proven_session_chair(cwd, resolved if root is not None else None, seen=seen,
+                                                        probe_timeout=probe_timeout)
     except ValueError as exc:
         return resolved, None, str(exc)
     if proven_root is not None:
@@ -330,8 +333,14 @@ def end_task(
             return {"ok": True, "skipped": True, "reason": "not a Stop hook"}
         push = False
 
+    # The heartbeat is authored by the proven chair, so identity comes first. On the Stop hook
+    # its process read (when it needs one) is one attempt bounded by STOP_PROBE_TIMEOUT_S, and
+    # that one read, or its failure, is all the stamp gate below gets: at most one read per Stop.
+    # A failed read still falls back to this cwd's unique seat, so the heartbeat is written.
+    seen: dict[str, Any] = {}
     thread_root, seat, error = _resolve_identity(
-        root=root, cwd=worktree, allow_missing_root=automatic,
+        root=root, cwd=worktree, allow_missing_root=automatic, seen=seen,
+        probe_timeout=STOP_PROBE_TIMEOUT_S if automatic else None,
     )
     if error:
         return {"ok": False, "skipped": automatic, "error": error}
@@ -342,17 +351,6 @@ def end_task(
     if seat.get("detached"):
         return {"ok": True, "skipped": True, "reason": "detached; attach again"}
     harness = str(seat.get("to") or "").strip() or None
-    if automatic:
-        # This payload is where Convoy has held the vendor session id
-        # at every turn end since the beginning, and dropped it. The feed rule
-        # below is unchanged - the id is still only hash material there - but
-        # the SEAT learns it, matched by this cwd, never by recency. Null
-        # until observed; an id already on the row is never overwritten.
-        observe_resume(
-            thread_root, chair,
-            payload.get("session_id") or payload.get("sessionId"),
-            to=harness,
-        )
     key = _event_key(thread_root, chair, payload) if automatic else None
     if _seen(thread_root, key):
         return {"ok": True, "deduplicated": True, "chair": chair, "event_key": key, "hook": {}}
@@ -448,6 +446,24 @@ def end_task(
             thread_root, "heartbeat", text, instance_id=chair,
             extra=extra, author=chair,
         )
+    if automatic:
+        # After the heartbeat, so a slow or failing process read never loses it.
+        # This payload is where Convoy has held the vendor session id at every
+        # turn end, and the SEAT learns it, matched by this cwd, never by
+        # recency; the feed still sees it only as hash material. The gate
+        # (inbox.stamp_from_hook) reads the hook's own ancestry, once per id:
+        # no top-level body of the chair's harness, no stamp. A different id
+        # replaces the recorded one only for a codex chair alone in exactly
+        # this worktree (observe_resume adds the pane-host and cooldown refusals).
+        try:
+            exact = [s.get("session_id") for s in seats_for_worktree(thread_root, worktree)] == [chair]
+            stamped = stamp_from_hook(thread_root, seat, payload.get("session_id") or payload.get("sessionId"),
+                                      allow_replace=exact, procs=seen.get("procs"),
+                                      read_error=seen.get("error"), timeout=STOP_PROBE_TIMEOUT_S)
+            if stamped:
+                seat = stamped
+        except Exception:   # an id stamp must never break the Stop
+            pass
     card: dict[str, Any] = {
         "ok": ok,
         "chair": chair,
@@ -479,7 +495,7 @@ def arm_reason(root: Path, chair: str) -> str:
     return ("Convoy wake: this thread wakes you only through a waiter you run yourself, and none is "
             "armed for this chair. Run this as a background command (run_in_background), then end "
             "your turn: " + command + " . When it exits it names the wake: drain your inbox, act, "
-            "answer with a note citing the token, and arm it again before you stop.")
+            "answer with convoy reply <token> \"...\", and arm it again before you stop.")
 
 
 def _arm_state(root: Path, chair: str, seat: dict[str, Any], payload: dict[str, Any] | None) -> str:

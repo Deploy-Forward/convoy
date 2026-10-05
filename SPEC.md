@@ -53,7 +53,7 @@ Locked from the stress findings (audit trail: docs/audits/; further artifacts li
 - **`to` disambiguation (pre-existing key, two meanings).** On `note`/`conductor` rows `to` is the addressee. On `synapse`/`refuse` rows `to` remains what it always was: the send-target harness name. Readers filtering "rows addressed to me" must filter on kind `note`/`conductor` first; a bare `row["to"]=="claude"` filter also matches every send to the claude harness.
 - **`note` — the neuron-side write, symmetric to `stamp`.** `layer.neuron_note` / MCP tool `note` (args `summary`, `instance_id` required, `to` optional): kind `note`, same one-line ≤500 clamp as stamp (`truncated: true` on clamp), refuses anonymous or conductor-alias authors. This is the hosted-neuron write path; local neurons may keep using CLI `hook note`.
 - **Runner provenance on synapse rows.** Every synapse row stamps `runner` (`"native"`/`"fake"`/`"ola"` by function identity via `synapse.runner_kind`, else the runner's name) and `argv0` (from the card's argv, JSON `null` when absent) — so the SoT can distinguish a native vendor send from a fake ACK. Rows without these fields predate v2.1 and are not evidence of a native send.
-- **Build id on the wire.** `initialize` `serverInfo.version` is `<base>+<git describe --always --dirty>` (base 1.1.0) when the package sits in a git checkout (`-dirty` marks a patched-in-place deploy), the bare base version when unknown (never an invented sha). A hung/missing git degrades to the bare version — it must never stop the server (`OSError` and `SubprocessError` both caught). Scope honesty: one-call drift detection holds only for git-checkout deploys; the bare-version fallback is indistinguishable from a pre-v2.1 deploy.
+- **Build id on the wire.** `initialize` `serverInfo.version` is `<base>+<git describe --always --dirty>` (base 1.2.0) when the package sits in a git checkout (`-dirty` marks a patched-in-place deploy), the bare base version when unknown (never an invented sha). A hung/missing git degrades to the bare version — it must never stop the server (`OSError` and `SubprocessError` both caught). Scope honesty: one-call drift detection holds only for git-checkout deploys; the bare-version fallback is indistinguishable from a pre-v2.1 deploy.
 - **One process ↔ one bound root.** The public MCP stays bound to exactly one root (demo: <demo-root>). Other threads are CLI/file on their own `--root`; an empty MCP `feed` for an unbound thread is the contract working, not a product fail. No root selector on the public URL (arbitrary-path read hole). Rebinding demo to flip a test GREEN is refused.
 - **Public write-tool gate.** The RPC layer never exposes SoT write tools (`stamp`, `note`) on an ungated process: they are absent from `tools/list` and refused on `tools/call` unless `CONVOY_MCP_WRITE_TOOLS=1` is set (a gated/loopback deploy opts in). CLI and in-process `call_tool` are not gated. The public convoy.bot process stays read-only for the bus until a real writer gate (shared-secret/OAuth) exists; this gate stays RED on the wire until then.
 - **Chip front matter (conductor render contract).** The chip a neuron message surfaces with (`harness / model / effort / session% / week% / convoy_id / vendor session id / worktree / summary`) renders from two existing reads, no jsonl archaeology: the `note` row carries `summary`/`from`/`to`; the glance by-thread seat card carries `to` (harness), `model`, `effort`, `resume` (vendor id), `worktree`, `session_pct` (from the headless `claude -p /usage` probe via `usage.surface`); `week%` comes from glance **Overall** (locked: never duplicated per-thread). `effort` is a declared seat field (`seat --effort`, real-or-null) — validated per harness against `harness_effort.json` keys (grok `xhigh`, codex `extra-high`, pi `--thinking` levels; a refusal names the harness's real keys). Convoy applies it to argv when, and only when, the contract carries `cli_flag` + an `evidence` string (grok `--reasoning-effort`, claude `--effort`, agy `--effort`, pi `--thinking`); the seat row's `effort_applied` records which (`false` = recorded, not applied: codex, cursor-agent, hermes; `null` = no effort declared). `choices` carries `harnesses[].effort = {mode, keys, cli_flag, evidence, applied}`. Unknown `effort`/`resume`/`model` are omitted from the card, never "unknown". No probe ⇒ usage stays null.
@@ -80,7 +80,8 @@ is a resume MAP key, never seat identity.
   swap ever carries a vendor transcript; swap memory is Convoy state,
   always** → `bring_up` with a one-shot `boot_prompt` delivered as an
   initial POSITIONAL prompt (blessed exception; not `-p` — the session stays
-  interactive): read thread.md + handoff, echo the token.
+  interactive): read thread.md + handoff (each only when it exists), echo
+  the token.
 - **`seated --seat S --token T`**: proof-of-life — the replacement echoes the
   token as kind `seated` and the boot prompt clears. The outgoing pane must
   not close before this row exists; then "safe to close" + optional `hide`.
@@ -96,6 +97,170 @@ is a resume MAP key, never seat identity.
   `to`. `live_on_branch` dedupes by session_id: one chair is one agent.
 
 Unit: `test/demo/seat_lifecycle_test.py` (15 tests).
+
+### Launch identity: launched_by, attach-on-launch, report / reply
+
+A neuron is either the lead or not, and it knows which; when the lead did not
+launch it, it knows which neuron did. Live failure behind this: an unseated
+session ran `start` and `add codex` twice; both neurons, asked to report to the
+lead, found no lead and no record of who launched them, and their boot prompt
+pointed at a `thread.md` that did not exist.
+
+- **Launcher resolution** (`launcher.resolve_launcher`): every path that seats
+  and launches a neuron (`add`, `crew`, `join --launch`, `launch`, `bring-up` /
+  `open`) resolves the launching session once with `identify` (one attempt at
+  the process table, 30 s). Environment or token proof is strong; a cwd or
+  worktree path match, a pane-host record alone, a script with no harness and an
+  unreadable table are not. Read-only.
+- **launched_by** on the new seat row:
+  - launcher seated on this thread with strong proof: `launched_by: <its chair>`;
+  - launcher NOT seated but its native session id is proven (environment or
+    token): it is **attached first**, through the same code as `convoy attach`
+    (`sessions.attach_proven`): a new chair holding that native id, a kind
+    `seated` row, a kind `attach` row, and it **takes the lead when the lead is
+    none or dangling** (the attach rule; a held lead is kept). Then
+    `launched_by: <that chair>`. This changes who leads a fresh thread: the
+    session that launches the first neuron becomes the lead. The card's
+    `launcher` block says `attached: true`, `lead_taken`, `lead_was` and a line;
+  - no proof: `launched_by: null` with `launched_by_why`, a `warnings[]` line on
+    the card, no attach, no lead change. Never a guess.
+  The launcher is acted on only once the chair exists: `add`, `crew` and
+  `join --launch` attach and record after every join succeeded, so a refused
+  join or a failed mint attaches nobody and moves no lead (a dry `add` attaches
+  nobody and shows `would_attach`). `launch` and `bring-up` act before the spawn
+  (accepted: the chair exists and this session is launching it) and record on
+  the chairs that invocation spawns: the record is written before the spawn (the
+  prompt must carry it) on each chair with a pending boot prompt and no live pane
+  host, then put back on every chair the verb did not spawn. A refused launch
+  records nothing, and a chair another session already launched (its pane host is
+  alive) is skipped by `bring-up` (`skipped[]` on the card; never a second pane;
+  the card's `launched[]` names the chairs a pane was spawned for, and when every
+  chair named was skipped `ok` stays true with a plain `note`: nothing launched)
+  and keeps its `launched_by`; the card's `launcher.recorded_on` names only the
+  chairs spawned. The record is written only under the chair's launch claim: the
+  CLI takes the O_EXCL reservation first, so of two launches of one chair only
+  the claim holder records and settles (the other refuses, or bring-up skips the
+  chair with the reason), and the spawn runs inside try/finally, so a spawn that
+  raises (a wt failure, a Ctrl-C) settles with nothing spawned and releases the
+  reservation. A reservation records the process that took it (`reserver_pid`
+  and its start time); a claim whose holder (its host, else its reserver) is dead
+  has expired and the next launch adopts it (a reservation, whose launching CLI
+  exits right after wt returns, only once it is also older than 30 s, so the
+  handoff to the pane host is never taken over; a dead host expires at once; the
+  judged bytes are re-read before the unlink and the new claim is O_EXCL, so of
+  two adopters exactly one wins), so an invocation that crashed
+  between claim and spawn never blocks the chair (a claim naming no holder cannot
+  be judged and still refuses). A live pane host is its pid AND its start time (the claim
+  records `host_started`: the creation time on Windows, the start tick from
+  `/proc` on Linux; macOS gives none, and there the pid alone decides), so a pid
+  the OS reused for another process never reads as the host. A chair that joins itself records nothing. MCP verbs do
+  not resolve a launcher (the server cannot prove the caller's session) and
+  record nothing.
+- **Boot prompt** (`lifecycle._boot_prompt`), one line: the seat, `Read` only
+  the files that exist (`thread.md`, the handoff; a thread started without a name
+  has no `thread.md`, so none is named), the `seated` ack with its token, then
+  information only: `Lead: <chair> (neuron <id>, <harness>).`, or `Lead: you`,
+  or `Lead: none (<reason>)`. A lead is named only when a kind `lead` row names
+  that chair; a chair that merely matches the lead file's harness is never told
+  it leads (the reason then says which harness the lead file names); `Launched by: <chair> (neuron <id>).` or
+  `Launched by: unknown (<why>).`, or `Lead and launcher: ...` named once when
+  they are the same chair; and two commands: `Report results with: convoy --root
+  <root> report "..."` and `Answer a message with: convoy --root <root> reply
+  <token> "..."`. No routing rules in prose: routing is the code below. This
+  identity tail is composed again right before a spawn (`launch_seat`,
+  `bring_up`, `lifecycle.refresh_identity`), after a swap's seat change, so a
+  pending prompt names the lead and launcher as they are at launch. A relaunch
+  prompt (`relaunch.relaunch_prompt`) carries the same tail and no wait or wake
+  instruction: each harness receives by its own route.
+- **`whoami`** on a seated chair adds `lead` and `launched_by`, each
+  `{chair, neuron_id}` or null. The existing fields are unchanged.
+- **`report "<text>"`** (`route.report`): the caller's chair by `identify`,
+  with environment, token or pane-host proof (a cwd or worktree match refuses with why);
+  sends to its `launched_by` chair; when that is null, no
+  longer a seat, or detached, to the lead. The lead with no live launcher
+  refuses; no launcher and no lead refuses; both with `ok: false` and `why`. The
+  send is the ordinary send path (fake runner, sender = the proven chair), so
+  wake and delivery are those of `send`; the card adds `routed_to`, `route`
+  (`launcher` | `lead`) and `route_why` on a fallback.
+- **`reply <token> "<text>"`** (`route.reply`): the caller's chair by
+  environment, token or pane-host proof; finds the send carrying that token; refuses an unknown token and a caller that was not its recipient;
+  writes a `note` from the caller's chair, addressed to the send's proven
+  sender (through `receipt_address`), with `token=<token>` in the summary: the
+  receipt the sender's `replies` counts as delivered. `replies(token=)` counts
+  only a note whose author is proven by environment, token or pane-host
+  (`conductor.RECEIPT_PROOF`, the one proof set: `convoy reply`/`report` require
+  it and `inbox.reply_index` uses it to clear a pending row, so a cleared row and
+  a counted receipt never disagree), not claimed: a claimed note, or one placed
+  only by a worktree or cwd match, is a row, never a receipt. Both citation
+  spellings count everywhere: `token=<t>` and `re token <t>`. A cursor-agent,
+  agy, hermes or pi chair under a pane host delivers by pane-host proof. A chair is a body that can run the CLI; an MCP-only
+  actor is a conductor, and conductors never author notes (rule 4).
+  `conductor.md` (rule 6, the delivered row) says so, and the MCP instructions,
+  built from it, cite its sha (taken from the LF text, so a CRLF checkout cites
+  the same sha). The MCP `note` tool
+  writes claimed notes and its response says so (`receipt: false` and a
+  `receipt_note` naming `convoy reply <token>`).
+- **Tests never prove a real session.** The shared test guard
+  (`test/home_guard.py`) clears `panes.NATIVE_SESSION_ENV` and `CONVOY_ROOT` for
+  the run (restored at exit) and sets `launcher.TEST_DEFAULT_PROCS = []`, so a
+  launch under test reads no real process table; a test opts in with
+  `panes._TEST_PROCS` or `procs=`. It also clears the terminal placement
+  variables (`WT_SESSION`, `WT_PROFILE_ID`, `TMUX`, `TMUX_PANE`), and
+  `test/harness_guard.py` refuses any real `wt` or `tmux` spawn unless a test
+  opts in with `allow_real_terminal()`: an inherited `WT_SESSION` would make a
+  test split real panes in the developer's own window. A direct `python test/demo/x_test.py` run
+  imports no test package and is not covered.
+
+Unit: `test/demo/launch_identity_test.py`.
+
+### Placement: one terminal window per thread
+
+Windows Terminal's CLI cannot split a specific pane: `wt -w 0 split-pane` splits
+whichever pane has focus in the most recently used window, so a neuron landed
+wherever the person had last clicked. On Windows every launch on a thread (`add`,
+`launch`, `join --launch`, `crew --launch`, `bring-up`, `relaunch`) now targets
+the thread's own named window:
+
+- the name is `convoy-` + the first 8 hex of sha256(convoy_id)
+  (`targeted_launch.thread_window_name`): deterministic, short, safe, never
+  numeric (wt reads a number as a window id), never `0`;
+- the first neuron opens it: `wt -w <name> new-tab --title T -d DIR <host argv>`;
+  a later one splits inside it: `wt -w <name> split-pane -V ...`. "First" means
+  no other chair of the thread has a live pane host (its claim's pid and start
+  time match a running process);
+- never window `0`, never the caller's window: `WT_SESSION` decides nothing, and
+  the wt argv validator refuses any target other than `-w convoy-<8 hex>`;
+- the card says `placement: thread-window` and `window: <name>`;
+- the window's tab shows the focused pane's `--title`, so every pane title in the
+  thread window is `<thread label> - <chair title>`, and so is the tmux session's
+  window name (`new-session -n`). The label is the bound thread name, else the
+  repo folder name, plus `-<4 hex of the window id>` so it is unique per thread
+  (two repos with one folder name never share it); with neither name it is the
+  window's 8 hex. ASCII letters, digits and `. _ -`, at most 24 characters (the
+  name is trimmed, never the hex), never a `cvy_` id or a path
+  (`targeted_launch.thread_label`). The separator is ` - `, ASCII (a middle dot
+  was not checked in WT);
+- a composed title proves a chair to `nudge` and the wt walk only as that chair's
+  OWN exact title (its thread's label plus its own title, `pane_title` on the
+  seat row nudge reads). Another thread's label never proves it; a composed title
+  never matches through the old `<seat title> - ` prefix rule (so a chair titled
+  like a label matches no pane); two matching windows are ambiguous and refused;
+- `split-pane` into an existing named window splits that window's focused pane
+  (Microsoft's documented behaviour for `-w <name> split-pane`). Inside the
+  thread's window that is one of this thread's own neurons, which is fine;
+- Live-verified on Windows Terminal 1.24.11911.0: `wt -w convoy-livechk1 new-tab --title first -d <home> <absolute powershell.exe> -NoExit -Command ...`, then `wt -w convoy-livechk1 split-pane -V --title second -d <home> <absolute powershell.exe> ...`. Result: one separate window holding both panes side by side, the working window untouched, no Help dialog.
+- still forbidden: `--` before the harness exe (pops GUI Help) and `-w 0`. The
+  earlier live note that `-w <thread-name>` popped Help came from a different
+  argv shape (the thread's own name as the window, in the old `--window new`
+  era), not from `-w convoy-<name> new-tab|split-pane -d DIR <absolute exe>`.
+
+tmux keeps splitting the caller's exact pane when the launch runs inside tmux
+(`TMUX_PANE` names it). Outside tmux, with tmux installed, one detached session
+per thread mirrors the window: the same `convoy-<8 hex>` name, `new-session -d -s`
+for the first neuron and `split-window -t =<name>:` for later ones; the card's
+`attach` opens it.
+
+Unit: `test/demo/thread_window_test.py`, `test/demo/convoy_add_test.py`.
 
 ### Bodies: panes + whoami (detect → identify → send)
 
@@ -140,6 +305,38 @@ A `send` card says what happened to the message, never more:
   target** (`seated`, or a `note` from that chair answering the addressed
   row) proves delivery; a card cannot author that. Readers: the receipt is on
   the bus, not in the return value.
+- `wake` and `why` (codex chairs only) say what the wake path did, never that
+  the neuron woke. `wake: "codex-queue-accepted"`: `codex queue` exited 0 for
+  the chair's recorded session id. Accepted is not a turn started (a queued row
+  was once found in Codex's own store for a dead pane), and only the neuron's
+  own receipt proves delivery. `wake: "inbox-only"`: the row waits in the inbox
+  and nothing woke the pane; `why` says whether no Codex session id was
+  recorded (the plugin's hooks not trusted or not yet run) or `codex queue` did
+  not run or exited non-zero. A dry-run card carries neither field. The id is
+  recorded by the plugin's Stop hook, and only when the hook's own process
+  ancestry shows a top-level body of the chair's harness (a nested `codex
+  exec` stamps nothing; the ancestry is read only when the payload's id differs
+  from the recorded one, and after the Stop heartbeat is written). A hook reads
+  the process table at most once, in one attempt: the identity check and this
+  gate share that read, and a failed read is not retried in the same hook. The
+  Stop hook's read is bounded at a fixed 3 s, about 1.5x the slowest real read,
+  so the read plus interpreter start plus the git snapshot fit under the
+  plugin's 5 s hook timeout (worst case about 3.6 s); the inbox hook's at 2 s; the Stop heartbeat is written by the cwd's one chair even when
+  the read fails. Callers outside a hook keep 3 attempts of 150 s. Each refusal is
+  remembered per chair and id hash in `.convoy/hook-stamps.json` while the
+  seat's recorded id and live pane-host body are unchanged: for good when it
+  cannot change, for 10 minutes when it can (a failed read, a refused replace).
+  A failed read records its budget and holds only against a hook whose budget
+  is no larger: a failed 2 s inbox read never stops the Stop hook's 3 s read,
+  and a failed Stop read holds against both. A first id is stamped even while a
+  pane host owns a live body for the chair; that refusal is for a replace only.
+  The Stop hook and the inbox hook stamp through this one gate. A different id replaces the recorded one only when
+  all hold: a top-level codex body, the payload cwd is exactly the chair's
+  worktree and no other chair sits there, no pane host owns a live body for the
+  chair, and no replace for that chair in the last 10 minutes. A refused flap
+  writes one `resume-flap` row ("two codex bodies in one worktree?"). A replace
+  writes a `resume-changed` row carrying only hashes of the two ids; the
+  incarnation is the pane host's and is never touched.
 
 Current delivery path to an open neuron: `send` queues the inbox row;
 `hook note` alone does not reach or wake its target. Use `send --id <neuron-id>`
@@ -195,9 +392,37 @@ is connected to it. `convoy graph` answers both from `seats.jsonl` +
   authored, conductor aliases refused) and then writes the legacy
   `.convoy/lead` harness file so bring-up keeps its meaning. The latest
   `lead` row naming an existing chair is the lead; graph marks it
-  (`lead: true`, a `lead` edge). `lead --to <harness>` without a chair match
-  stays the legacy harness write. Bare `lead` reports both `lead` (harness)
-  and `lead_chair`.
+  (`lead: true`, a `lead` edge). `lead --to <harness>` is a pass to that
+  harness's one seated chair under the same rules ("no chair of <harness> on
+  this thread" when none, and a refusal naming them when several). The
+  author of every lead change is the proven calling chair (environment or
+  token proof; a cwd match is not enough); `--as` asserts it and refuses when
+  it disagrees. A pass to a chair with no recorded session id refuses (it
+  could never pass the lead on). Bare `lead` reports `lead` (harness), `lead_chair`,
+  `dangling` and `reachable_id`.
+- **The lead is reachable or none:** onboard and start never set a lead; a
+  new thread's lead is null and the start card's where line says `lead:
+  none`. A seated chair is a seat that is not detached. The lead is
+  dangling when `.convoy/lead` names a harness with no seated chair, or when
+  the chair the latest `lead` row names has detached (another chair of its
+  harness does not inherit it); the where line then says `lead: dangling
+  <harness>`. Only
+  the current lead chair passes the lead; while it is unset or dangling, any
+  seated chair may take it. `convoy attach` takes an unset or dangling lead
+  for the attaching chair (a kind `lead` row from and to that chair; the
+  card's `lead_taken.line` says `lead: taken (was none|dangling <harness>)`)
+  and keeps a lead held by a seated chair. `reachable_id` is the lead
+  chair's neuron id as `convoy list` shows it, or null. The lead and attach
+  cards print `conductor` as the lead chair or null, never the hosted
+  constant.
+- **A receipt goes to the sender:** a note citing a token sent to its
+  author, with no addressee, is addressed to that send's proven sender; a
+  third party citing the token stays unaddressed; a note citing a token
+  someone else sent to its author, addressed to the author itself, refuses.
+- **One thread resolver** (attach, `detach --thread`, `lead --thread`): the
+  exact `cvy_` id wins; otherwise a thread name, a root path or a unique
+  `cvy_` prefix of at least 8 characters, and any string that could mean two
+  threads refuses with `matches N threads: <ids>`.
 - **Not in this increment:** resume-by-neuron launch (`resume --neuron`),
   cross-thread edges (`fork` / `parent_convoy_id`), `observed` attestation.
   Graph is read-only by construction.
@@ -481,7 +706,7 @@ Args: `thread=` or `convoy_id=`. Opens every seated neuron for that thread **vis
 
 Each window: `to`, `session_id`, `resume` (vendor id passed to `--resume`; never null if ok; never invented), `resume_key` (`cvr_` + sha256(convoy_id + "\0" + thread + "\0" + to + "\0" + worktree).hexdigest()[:16] — **four** fields; hash is the map key, resume is the harness argument; because `to` and `worktree` are hashed, the key CHANGES when a seat's harness or checkout changes, so it is a resume map key and never a stable seat identity — `session_id` is the seat), `worktree`, `rect` `{x,y,w,h}`, plus CLI extras `argv`, `ok`. Lookup by thread+to returns the same resume. No PTY dump. A historical snapshot marked HTTP MCP RED; use canonical lock for current status. CLI: `python -m convoy bring-up` / `open` `[convoy_id] [--thread T] [--dry-run]`.
 
-First-run Claude bypass warning is ungated by `bring_up` / `ensure_first_run`. Anthropic ignores `skipDangerousModePermissionPrompt` in project `{worktree}/.claude/settings.json` — that key only works in the **user** file `~/.claude/settings.json`. Merge `skipDangerousModePermissionPrompt: true` into `~/.claude/settings.json` (create `~/.claude/` if missing; merge, do not clobber other keys). Do **not** set `permissions.defaultMode` on the user global file (that would make ALL Claude sessions on the machine bypass). No settings file Convoy writes in a worktree carries `permissions` or `skipDangerousModePermissionPrompt`: a project `permissions.defaultMode` would apply to every Claude session opened there, and the launch argv already carries the mode. The worktree's `.claude/settings.local.json` (never the tracked `.claude/settings.json`) holds the inbox and Stop hooks and `autoCompactEnabled: true`: a neuron runs unattended and must compact on its own, and project settings take precedence over the user file. The user file gets `skipDangerousModePermissionPrompt` only when the key is missing, and a file that does not parse is left alone and reported. Never write `autoCompactEnabled` to `~/.claude/settings.json`; the person's own sessions keep their choice. Also merge `~/.claude.json` `projects[worktree].hasTrustDialogAccepted = true` for both slash spellings of the worktree path. Never write `~/.claude` if the worktree **is** the home dir. Grok/codex no-op on Claude settings. Not a user paste. Not a step-by-step TUI guide. User once-gates only: attach `https://convoy.bot/mcp`, and vendor CLI login. `roster.present` is `shutil.which` on the MCP process PATH, not an already-open desktop terminal. Interactive bash skips `.profile`, so `~/.local/bin` (claude, codex) can be installed and still `command not found` while grok (`.bashrc`) works. `roster` and `bring_up` / `ensure_first_run` call `ensure_interactive_path`, which writes an idempotent `# >>> convoy harness PATH >>>` block into `~/.bashrc` (`$HOME/.local/bin` and `$HOME/.grok/bin`). No-op on Windows (WT inherits user PATH). Does not source a foreign PID; already-open terminals still need `source ~/.bashrc` or a new shell. Roster JSON includes `path` (`path_ok`, `path_written`, `path_bashrc`, `path_host`). Folder trust, Claude Bypass Permissions, `role.md` persona, isolated WT tiling, and agent-driven verify are Convoy's job. Dry-run still calls `ensure_first_run` (cards show `first_run.prepared`, `home_written`, `settings_home`, `trust_written`; `settings` stays the project path) and must not Popen `wt`. Claude live argv keeps `--permission-mode bypassPermissions` and `--allow-dangerously-skip-permissions`. Persona is `role.md` in the worktree, not CLI `--append-system-prompt`. Repo files: `mint_worktrees` writes `<worktree>/.convoy/minted.json` only when it creates the worktree, and `is_minted_worktree` is true only when that marker names this folder, git resolves the folder's common dir to the recorded one, and the recorded checkout still lists the worktree. A launch (`bring-up`, `open`, `launch`, `join --launch`, `crew`, `relaunch`, the widget relaunch) and `skills` write every repo file there; anywhere else, often the person's own repo, they write only the Convoy-named files git excludes (`.claude/settings.local.json`, the `convoy-root` pointers, `.grok/hooks/convoy-inbox.json`, the convoy-end copies, the grok agent) and list `AGENTS.md` and `.codex/hooks.json` as `would_write`, with a card note that a Codex neuron there cannot receive until the person opts in. `would_write` and the note are read from disk; the note names the route that works where it is read (`--write-repo-files`, MCP `write_repo_files: true` behind the write gate, or a `convoy skills --write-repo-files` command to ask for). An opt-in is recorded in `.convoy/repo-files.json`, bound to its folder and git common dir and added to info/exclude, and honoured by later launches until `skills --no-write-repo-files` removes it; a dry `bring-up` / `open` / `relaunch`, CLI (`--dry-run --write-repo-files`) or MCP `bring_up` / `open` (`dry_run: true` with `write_repo_files: true`), refuses the opt-in and writes nothing. A `.claude/settings.local.json` git tracks is never written. The card's `trust_stores_written` names each home trust store a launch wrote. `terminals` is a listing and writes nothing.
+First-run Claude bypass warning is ungated by `bring_up` / `ensure_first_run`. Anthropic ignores `skipDangerousModePermissionPrompt` in project `{worktree}/.claude/settings.json` — that key only works in the **user** file `~/.claude/settings.json`. Merge `skipDangerousModePermissionPrompt: true` into `~/.claude/settings.json` (create `~/.claude/` if missing; merge, do not clobber other keys). Do **not** set `permissions.defaultMode` on the user global file (that would make ALL Claude sessions on the machine bypass). No settings file Convoy writes in a worktree carries `permissions` or `skipDangerousModePermissionPrompt`: a project `permissions.defaultMode` would apply to every Claude session opened there, and the launch argv already carries the mode. The worktree's `.claude/settings.local.json` (never the tracked `.claude/settings.json`) holds the inbox and Stop hooks and `autoCompactEnabled: true`: a neuron runs unattended and must compact on its own, and project settings take precedence over the user file. The user file gets `skipDangerousModePermissionPrompt` only when the key is missing, and a file that does not parse is left alone and reported. Never write `autoCompactEnabled` to `~/.claude/settings.json`; the person's own sessions keep their choice. Also merge `~/.claude.json` `projects[worktree].hasTrustDialogAccepted = true` for both slash spellings of the worktree path. Never write `~/.claude` if the worktree **is** the home dir. Grok/codex no-op on Claude settings. Not a user paste. Not a step-by-step TUI guide. User once-gates only: attach `https://convoy.bot/mcp`, and vendor CLI login. `roster.present` is `shutil.which` on the MCP process PATH, not an already-open desktop terminal. Interactive bash skips `.profile`, so `~/.local/bin` (claude, codex) can be installed and still `command not found` while grok (`.bashrc`) works. `roster` and `bring_up` / `ensure_first_run` call `ensure_interactive_path`, which writes an idempotent `# >>> convoy harness PATH >>>` block into `~/.bashrc` (`$HOME/.local/bin` and `$HOME/.grok/bin`). No-op on Windows (WT inherits user PATH). Does not source a foreign PID; already-open terminals still need `source ~/.bashrc` or a new shell. Roster JSON includes `path` (`path_ok`, `path_written`, `path_bashrc`, `path_host`). Folder trust, Claude Bypass Permissions, `role.md` persona, isolated WT tiling, and agent-driven verify are Convoy's job. Dry-run still calls `ensure_first_run` (cards show `first_run.prepared`, `home_written`, `settings_home`, `trust_written`; `settings` stays the project path) and must not Popen `wt`. Claude live argv keeps `--permission-mode bypassPermissions` and `--allow-dangerously-skip-permissions`. Persona is `role.md` in the worktree, not CLI `--append-system-prompt`. Repo files: `mint_worktrees` writes `<worktree>/.convoy/minted.json` only when it creates the worktree, and `is_minted_worktree` is true only when that marker names this folder, git resolves the folder's common dir to the recorded one, and the recorded checkout still lists the worktree. A launch (`bring-up`, `open`, `launch`, `join --launch`, `crew`, `relaunch`, the widget relaunch) and `skills` write every repo file there; anywhere else, often the person's own repo, they write only the Convoy-named files git excludes (`.claude/settings.local.json`, the `convoy-root` pointers, `.grok/hooks/convoy-inbox.json`, the convoy-end copies, the grok agent) and list `AGENTS.md` as `would_write`, read from disk. No launch writes `.codex/hooks.json`: Codex keys a project hook by its absolute path, so each worktree's file is a key nobody trusted, while the convoy plugin's `codex-hooks.json` (named by the manifest's `hooks` field, in `plugins/convoy` and in Deploy-Forward/plugins) is keyed `convoy@<marketplace>:codex-hooks.json:<event>:0:0` (`convoy@convoy` from this repository's marketplace, `convoy@deploy-forward` from the published one) and trusted once. A `.codex/hooks.json` carrying Convoy entries an older Convoy wrote is left as it is, with a card note to remove them. `add` and `crew` cards for a codex chair carry a warning while `codex_hooks_trusted` (read-only; `$CODEX_HOME/config.toml` when set) reads the enabled `convoy@*` plugin's keys as untrusted, disabled (`enabled = false`) or unknown (the config does not parse: "codex hook trust unknown: <reason>", never "not trusted"). An opt-in is recorded in `.convoy/repo-files.json`, bound to its folder and git common dir and added to info/exclude, and honoured by later launches until `skills --no-write-repo-files` removes it; a dry `bring-up` / `open` / `relaunch`, CLI (`--dry-run --write-repo-files`) or MCP `bring_up` / `open` (`dry_run: true` with `write_repo_files: true`), refuses the opt-in and writes nothing. A `.claude/settings.local.json` git tracks is never written. The card's `trust_stores_written` names each home trust store a launch wrote. `terminals` is a listing and writes nothing.
 
 
 
@@ -495,7 +720,7 @@ Unit GREEN: `test/demo/phase_install_test.py`.
 
 #### `hide` (aliases `minimize`, `background`)
 
-Default synapse (`send`) is headless: it never pops a TUI and never calls `live_runner` / `CREATE_NEW_CONSOLE`. `bring_up` / `open` is the only show command (HTTP `dry_run` still defaults true so a public URL cannot pop windows; CLI `bring-up` without `--dry-run` uses `live_runner`, which Popen's **one** `wt.exe` whose ArgumentList is `isolated_wt_argv` — FileName is wt, not in the list; `--window new`; first command `nt`; n=2 one `-V`; n=3 `-V` then `-H`; absolute exe positional after `-d DIR`; never `--` before the exe; never `-w 0`; never per-seat `CREATE_NEW_CONSOLE` + `MoveWindow`; never `WM_CLOSE`). Isolated spawn is a new WINDOW not a new PROCESS. Dry-run still calls `ensure_first_run` and must not Popen `wt`. Never ola-brain / side-chat / UltraCode-Shim. `hide` / `minimize` / `background` minimize neuron windows (Win32 `SW_MINIMIZE` = 6; optional `mode=hide` is `SW_HIDE` = 0). Sessions keep running. Not `taskkill`. Never kills `grok.exe` / `claude.exe` / `Grok Bot.exe`. Conductor grok-bot is not a window. `restore` is `bring_up`, not this tool. HTTP MCP attach is still RED.
+Default synapse (`send`) is headless: it never pops a TUI and never calls `live_runner` / `CREATE_NEW_CONSOLE`. `bring_up` / `open` is the only show command (HTTP `dry_run` still defaults true so a public URL cannot pop windows; CLI `bring-up` without `--dry-run` uses `live_runner`, which Popen's **one** `wt.exe` whose ArgumentList is `isolated_wt_argv` — FileName is wt, not in the list; `-w convoy-<8 hex>` (the thread's own window, see "Placement: one terminal window per thread"); first command `new-tab`, or `split-pane` when the window already holds a live neuron; n=2 one `-V`; n=3 `-V` then `-H`; absolute exe positional after `-d DIR`; never `--` before the exe; never `-w 0`; never per-seat `CREATE_NEW_CONSOLE` + `MoveWindow`; never `WM_CLOSE`). Isolated spawn is a new WINDOW not a new PROCESS. Dry-run still calls `ensure_first_run` and must not Popen `wt`. Never ola-brain / side-chat / UltraCode-Shim. `hide` / `minimize` / `background` minimize neuron windows (Win32 `SW_MINIMIZE` = 6; optional `mode=hide` is `SW_HIDE` = 0). Sessions keep running. Not `taskkill`. Never kills `grok.exe` / `claude.exe` / `Grok Bot.exe`. Conductor grok-bot is not a window. `restore` is `bring_up`, not this tool. HTTP MCP attach is still RED.
 
 ### Front matter in this chat, never invented
 
@@ -930,8 +1155,8 @@ Knowledge layer = `context.pack` pointers (`thread.md`, `role.md`, brief, handof
 - **RED live (parent):** bind this Grok Bot thread, two attach stamps, `feed --since`, resume hop body. Not done on the demo host yet.
 - **RED live resume hop:** `send --live --instance-id <demo-grok-session> PHASE7_ATTACH` kept that session_id (no sibling mint) but `ok` false, TimeoutExpired 120s. ola-brain invoked `grok.EXE -p ... -c` (continue latest in cwd), not a successful turn body. Hostile. Bring-up must not use grok `-p` or `-c`.
 - **GREEN unit:** `test/demo/phase7_bringup_test.py`. `resume_argv` is native `[grok, --resume, session_id]` / `[claude, --resume, session_id]`, cwd=worktree. Not ola-brain, not `side-chat`, not grok `-p`/`-c`/`--output-format`. Dry-run `bring-up` / `open` returns two windows, distinct tile rects on 1920x1080, conductor grok-bot is not a window, `resume` equals registered `session_id` (never minted). `resume_key = "cvr_" + sha256(convoy_id + "\0" + thread + "\0" + to + "\0" + worktree).hexdigest()[:16]`; same convoy_id+thread+to+worktree → same key; a different thread, a different harness, or a different worktree each give a different key (`phase7_bringup_test.py` `test_resume_key_same_inputs_same_hash_different_thread_differs` asserts all of them). Lookup by thread+to returns the same resume. Missing session_id refuses that seat. MCP JSON cards exist in CLI (`bring_up` / `terminals`); attach/read can be partial GREEN, native `send` remains RED.
-- **GREEN unit (first-run ungate):** `test/demo/phase7_first_run_test.py`. Anthropic ignores project `skipDangerousModePermissionPrompt`; user-level `~/.claude/settings.json` is required for that one key (do not set user-global `defaultMode`). `ensure_first_run` writes thread `{worktree}/.claude/settings.local.json` (inbox and Stop hooks + `autoCompactEnabled: true`, never in the home file; no permission keys in any project file), merges `skipDangerousModePermissionPrompt: true` into `~/.claude/settings.json` (create dir if missing; merge existing home keys), and persists `~/.claude.json` `projects[worktree].hasTrustDialogAccepted=true` for slash/backslash worktree keys. Refuses if worktree is home. Home preparation is harness-specific, not a universal no-op. A dry run refuses the `--write-repo-files` / `write_repo_files` opt-in before writing person-ownable repo files. Without that opt-in it still prepares first-run home and Convoy files: `~/.bashrc`, convoy-end copies, the `AGENTS.md` pointer in a Convoy-minted worktree, the Grok agent, and `.git/info/exclude` entries. Claude also prepares `~/.claude/settings.json`, `~/.claude.json` trust and auto-compact in untracked `.claude/settings.local.json`. Hook files and hook trust stores are skipped. Dry-run `bring_up` records `first_run.prepared`, `home_written`, `settings_home`, `trust_written` and does not Popen `wt`; it is not a promise of no writes anywhere. Live Claude argv adds `--allow-dangerously-skip-permissions` (no duplicate) plus `--permission-mode bypassPermissions`. `isolated_wt_argv` is a pure argv builder. Live GREEN on WT 1.24.11911.0 (demo host): `--window new`, first command `nt`, n=3 one `-V` then one `-H`, absolute exe positional after `-d DIR` (never `--` before the exe; that pops GUI Help), never `-w 0`, never `-w <thread-name>` (Help), literal `;`. No live WT spawn in unit tests.
-- **GREEN unit (isolated live_runner wire):** `bring_up` + `live_runner` spawn **one** `wt.exe` per named thread. Argv matches `isolated_wt_argv`. Never per-seat `CREATE_NEW_CONSOLE`, never `MoveWindow`, never `WM_CLOSE` (a close-on-fail test once closed an unrelated terminal session, because `--window new` shares one `WindowsTerminal.exe` process). Duplicate-launch guard: do not add the same seat twice (same worktree+to, or same resume_key/session_id). Not one pane per harness name — two grok hops on different worktrees (wt-grok-1 vs wt-grok-2) are two panes (n=3 claude+grok+grok: `--window new`, `nt`, `; split-pane -V`, `; split-pane -H`). Grok Bot conductor is never a window. Titles `{to}-{i}`.
+- **GREEN unit (first-run ungate):** `test/demo/phase7_first_run_test.py`. Anthropic ignores project `skipDangerousModePermissionPrompt`; user-level `~/.claude/settings.json` is required for that one key (do not set user-global `defaultMode`). `ensure_first_run` writes thread `{worktree}/.claude/settings.local.json` (inbox and Stop hooks + `autoCompactEnabled: true`, never in the home file; no permission keys in any project file), merges `skipDangerousModePermissionPrompt: true` into `~/.claude/settings.json` (create dir if missing; merge existing home keys), and persists `~/.claude.json` `projects[worktree].hasTrustDialogAccepted=true` for slash/backslash worktree keys. Refuses if worktree is home. Home preparation is harness-specific, not a universal no-op. A dry run refuses the `--write-repo-files` / `write_repo_files` opt-in before writing person-ownable repo files. Without that opt-in it still prepares first-run home and Convoy files: `~/.bashrc`, convoy-end copies, the `AGENTS.md` pointer in a Convoy-minted worktree, the Grok agent, and `.git/info/exclude` entries. Claude also prepares `~/.claude/settings.json`, `~/.claude.json` trust and auto-compact in untracked `.claude/settings.local.json`. Hook files and hook trust stores are skipped. Dry-run `bring_up` records `first_run.prepared`, `home_written`, `settings_home`, `trust_written` and does not Popen `wt`; it is not a promise of no writes anywhere. Live Claude argv adds `--allow-dangerously-skip-permissions` (no duplicate) plus `--permission-mode bypassPermissions`. `isolated_wt_argv` is a pure argv builder. Live GREEN on WT 1.24.11911.0 (demo host), before the one-window-per-thread placement: `--window new`, first command `nt`, n=3 one `-V` then one `-H`, absolute exe positional after `-d DIR` (never `--` before the exe; that pops GUI Help), never `-w 0`, `-w <thread-name>` popped Help, literal `;`. Superseded by "Placement: one terminal window per thread" (`-w convoy-<8 hex>`), live-verified on WT 1.24.11911.0 (named-window new-tab then split-pane -V: one separate window, both panes, no Help); `--` before the exe and `-w 0` stay forbidden. No live WT spawn in unit tests.
+- **GREEN unit (isolated live_runner wire):** `bring_up` + `live_runner` spawn **one** `wt.exe` per named thread, into that thread's own window. Argv matches `isolated_wt_argv`. Never per-seat `CREATE_NEW_CONSOLE`, never `MoveWindow`, never `WM_CLOSE` (a close-on-fail test once closed an unrelated terminal session, because `--window new` shares one `WindowsTerminal.exe` process). Duplicate-launch guard: do not add the same seat twice (same worktree+to, or same resume_key/session_id). Not one pane per harness name — two grok hops on different worktrees (wt-grok-1 vs wt-grok-2) are two panes (n=3 claude+grok+grok: `-w convoy-<8 hex>`, `new-tab`, `; split-pane -V`, `; split-pane -H`). Grok Bot conductor is never a window. Titles `{to}-{i}`.
 - Unit tests BYO fake abs binaries under `test/fakes/`; never vendor login; live WT is Windows-only.
 
 - **GREEN live isolated n-pane TDD:** `<demo-root>/.convoy/tdd-panes.jsonl`. One new CASCADIA per combo, splits inherited: n=2 grok+grok, n=2 claude+grok, n=3 claude+grok+grok, n=2 claude+claude. An unrelated terminal window was left untouched. `--version`, `-w <name>`, and `--` before exe popped WT Help 1.24.11911.0 (RED, dialog closed).
@@ -1006,7 +1231,7 @@ def send_one(root, to, body, instance_id=None, dry_run=False, **kw):
 - CLI: `init`, `id`, `bind --thread KEY`, `seat --to H --session-id S [--worktree P] [--model M] [--resume R]`, `seats [--convoy-id ID]`, `attach [convoy_id]`, `bring-up`/`open` `[convoy_id] [--thread T] [--dry-run]`, `terminals`.
 - `send_one` guard: harness name, seat already exists under this convoy, no `instance_id` → refuse spawn. Dry-run still cannot mint a session_id. Cards include `convoy_id` from `read_id(root)` (JSON null if none).
 - Successful `attach` calls Phase 2 `hook(kind="attach")` and returns `thread`, `ts`, `since` (prior attach ts or null), `feed` (`feed_since` when since set, else `[]`). Failed attach does not stamp. Pointers = `pack(root)` only.
-- `src/convoy/bringup.py`: `resume_argv(seat)` emits native argv (`grok/claude --resume <id>`, `codex resume <id>`, and no resume flag when vendor id is unknown on first-run). `ensure_first_run` writes thread `.claude/settings.local.json` (hooks and `autoCompactEnabled: true`; no permission keys), merges user-level `skipDangerousModePermissionPrompt` into `~/.claude/settings.json`, and marks `~/.claude.json` trust (`projects[worktree].hasTrustDialogAccepted=true` for both slash spellings). `isolated_wt_argv` builds WT argv (`--window new`, no `--` before exe; Claude live `--permission-mode bypassPermissions` and `--allow-dangerously-skip-permissions`; no spawn). `bring_up` with a runner fires **one** `isolated_wt_argv` via `live_runner` (Popen FileName=wt, ArgumentList=argv[1:]; never per-seat `CREATE_NEW_CONSOLE` / `MoveWindow` / `WM_CLOSE`). Default runner no-op; dry-run still ungates first-run. `tile_rects` still on window cards. `terminals` metadata, no PTY, no first run. ola-brain / side-chat / UltraCode-Shim is not in argv and not an MCP tool name.
+- `src/convoy/bringup.py`: `resume_argv(seat)` emits native argv (`grok/claude --resume <id>`, `codex resume <id>`, and no resume flag when vendor id is unknown on first-run). `ensure_first_run` writes thread `.claude/settings.local.json` (hooks and `autoCompactEnabled: true`; no permission keys), merges user-level `skipDangerousModePermissionPrompt` into `~/.claude/settings.json`, and marks `~/.claude.json` trust (`projects[worktree].hasTrustDialogAccepted=true` for both slash spellings). `isolated_wt_argv` builds WT argv (`-w convoy-<8 hex>`, no `--` before exe; Claude live `--permission-mode bypassPermissions` and `--allow-dangerously-skip-permissions`; no spawn). `bring_up` with a runner fires **one** `isolated_wt_argv` via `live_runner` (Popen FileName=wt, ArgumentList=argv[1:]; never per-seat `CREATE_NEW_CONSOLE` / `MoveWindow` / `WM_CLOSE`). Default runner no-op; dry-run still ungates first-run. `tile_rects` still on window cards. `terminals` metadata, no PTY, no first run. ola-brain / side-chat / UltraCode-Shim is not in argv and not an MCP tool name.
 
 ### Definition of done
 
@@ -1064,7 +1289,7 @@ This tree at `f40b01a` — the landed public checkout of `Deploy-Forward/convoy`
 | `src/convoy/glance.py` | `build_overall` / `build_by_thread` / `build_glance` / `discover_threads`, optional `run_tray`. Read-only view, not a second source of truth. |
 | `src/convoy/harness_contract.py` | Loads `harness_effort.json`: `canonical_harness_id`, `harness_exec`, `usage_probe_key`, `usage_remaining_null_until_live_probe`. |
 | `src/convoy/harness_effort.json` | The harness/effort contract data. |
-| `src/convoy/identity.py` | Writes the `convoy-end` copies into a seat worktree and, in a minted worktree or with `--write-repo-files`, the `AGENTS.md` pointer to the Convoy plugin skills and `.codex/hooks.json`; in the same case removes retired `neuron-identity` / `neuron-receive` copies Convoy wrote and writes the one user-global file, `~/.codex/prompts/convoy.md`. Never writes user-global `~/.grok` / `~/.claude` skills. |
+| `src/convoy/identity.py` | Writes the `convoy-end` copies into a seat worktree and, in a minted worktree or with `--write-repo-files`, the `AGENTS.md` pointer to the Convoy plugin skills (never `.codex/hooks.json`; the plugin carries Codex's hooks); in the same case removes retired `neuron-identity` / `neuron-receive` copies Convoy wrote and writes the one user-global file, `~/.codex/prompts/convoy.md`. Never writes user-global `~/.grok` / `~/.claude` skills. |
 | `src/convoy/harness_skills/convoy-end/` | Packaged mirror of the skill text `identity.py` copies; canonical copy is top-level `skills/convoy-end/` (byte-equality test enforces the pair). |
 | `src/convoy/install.py` | Opt-in vendor install. Refuses unknown or wrapped harnesses and non-vendor hosts. Dry by default. |
 | `src/convoy/layer.py` | `hook()`, `feed_since()`, `conductor_stamp()`, `utc_now()`, `feed_path()`, `SCHEMA_VERSION = 2`. The module writes the feed; branch / worktree / usage reach a row as `extra` from the caller, not from here. Feed contract v2.1 adds `neuron_note` plus an **attributed** `from` and an addressee `to` — see that section, which is the source of truth for it (attributed, not authenticated: the bus records a claimed `instance_id`). |
@@ -1074,7 +1299,7 @@ This tree at `f40b01a` — the landed public checkout of `Deploy-Forward/convoy`
 | `src/convoy/synapse.py` | `fake_runner` (default), `native_runner` (`--live`: vendor binary on PATH, wrapper names refused, `cwd=worktree`), `send_one` / `send_many`. Live mode is native on both CLI and MCP. Wrapper names (`ola-brain`, side-chat, UltraCode-Shim) are refused as a harness. |
 | `src/convoy/usage.py` | `probe()`, `normalize_usage_remaining()`, `surface()`. Unknown remaining is JSON `null`; never invent `0`; grok remaining is always `null`. |
 | `test/run.py` + `test/demo/` | 22 test modules, 184 tests, all passing at `f40b01a`. |
-| `pyproject.toml` | `convoy` 1.1.0, packages under `src`, requires-python >= 3.11. |
+| `pyproject.toml` | `convoy` 1.2.0, packages under `src`, requires-python >= 3.11. |
 
 We do not:
 

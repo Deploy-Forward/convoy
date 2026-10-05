@@ -7,8 +7,8 @@ only things injected are what a CI box cannot have: the vendor usage probe, the
 window spawn, and first-run home writes. Minting, joining, the seated acks,
 delegation, the feed and the rail are the shipped code.
 
-  1 LAUNCH      the harness that onboards first conducts: `.convoy/lead` names
-                it and the onboard card says so. Never set twice.
+  1 LAUNCH      onboard names no lead: a harness with no chair is nobody to
+                reach. The lead stays unset until a chair attaches or is passed it.
   2 CONNECT     `onboard --to claude --to codex --to grok --thread demo`
                 binds ONE thread: convoy_id, thread, root on the card.
   3 POINT       `--checkout-root <path> --github no`: local folder, same memory.
@@ -149,12 +149,12 @@ class HappyPath(unittest.TestCase):
         self.assertTrue(str(ob["convoy_id"]).startswith("cvy_"), ob["convoy_id"])
         self.assertEqual(Path(ob["root"]).resolve(), self.root.resolve())
         self.assertEqual(ob["github"], "no")
-        # whoever launched first conducts: the first harness named, recorded once
-        self.assertEqual(ob["lead"], {"harness": "claude", "set": True})
-        self.assertEqual((self.root / ".convoy" / "lead").read_text(encoding="utf-8").strip(), "claude")
+        # onboard names no lead: no chair of any named harness exists yet
+        self.assertEqual(ob["lead"], {"harness": None, "set": False})
+        self.assertFalse((self.root / ".convoy" / "lead").exists())
         again = self.run_cli("onboard", "--to", "codex", "--thread", "demo")
-        self.assertEqual(again["lead"], {"harness": "claude", "set": False}, "a second onboard never steals lead")
-        self.assertEqual(self.run_cli("lead")["lead"], "claude")
+        self.assertEqual(again["lead"], {"harness": None, "set": False}, "a second onboard sets no lead either")
+        self.assertIsNone(self.run_cli("lead")["lead"])
 
         # 4 SUMMON: one worktree per seat, two chairs, one window
         cw = self.run_cli("crew", "--seat", "codex", "--seat", "grok,effort=high", "--thread", "demo", "--launch", "--allow-unverified-launch")
@@ -205,7 +205,7 @@ class HappyPath(unittest.TestCase):
         self.assertTrue(rail["ok"], rail)
         self.assertEqual(rail["thread"], "demo")
         self.assertEqual(rail["convoy_id"], ob["convoy_id"])
-        self.assertEqual(rail["lead"], "claude")
+        self.assertIsNone(rail["lead"])
         self.assertEqual(rail["feed"]["since"], "10m")
         self.assertEqual(rail["feed"]["events"], len(fd["events"]))
         self.assertEqual(rail["seats"], {"total": 2, "connected": 2, "pending": 0, "stale": 0})

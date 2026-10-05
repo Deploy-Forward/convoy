@@ -12,6 +12,10 @@ test/demo/__init__.py and test/run.py call install(), so `python test/run.py`
 and `python -m unittest test.demo.<module>` both carry it. It guards this
 process only, not the Python children a test starts. harness_guard_test.py
 pins it.
+
+It also refuses a real terminal host (wt, tmux): a split there opens a pane in the
+operator's own window. A gated live test opts in with allow_real_terminal(); the
+fakes in test/fakes still run. native_session_isolation_test.py pins it.
 """
 from __future__ import annotations
 
@@ -22,13 +26,22 @@ import sys
 import unittest
 
 HARNESSES = frozenset({"claude", "codex", "grok", "cursor-agent", "agy", "hermes", "pi"})
+# Terminal hosts: a real one opens panes in the operator's own window (an inherited
+# WT_SESSION made placement split the running terminal). Refused unless a test opts in
+# with allow_real_terminal(); the fakes still run.
+# convoy-pane-host is the body a pane runs; started for real it hosts a harness child.
+TERMINALS = frozenset({"wt", "windowsterminal", "tmux", "convoy-pane-host"})
 _SHIMS = frozenset({".exe", ".cmd", ".bat", ".ps1"})
 _SHELLS = frozenset({"cmd", "sh", "bash", "powershell", "pwsh"})
 _SHELL_FLAGS = frozenset({"/c", "/k", "-c", "-command", "-file"})
 _FAKES = os.path.normcase(os.path.realpath(os.path.join(os.path.dirname(__file__), "fakes"))) + os.sep
 
 # The running test's id, and every spawn the hook stopped, as (test id, binary).
-_state: dict = {"test": None, "blocked": []}
+# One state per process: this module loads under two names (harness_guard, test.harness_guard),
+# and an opt-in made through either must reach the one hook install() added.
+_state: dict = unittest.__dict__.setdefault("_convoy_harness_guard_state",
+                                           {"test": None, "blocked": [], "terminals_allowed": False})
+_state.setdefault("terminals_allowed", False)
 
 
 def _name(program: str) -> str:
@@ -78,8 +91,44 @@ def _programs(command) -> list[str]:
     return words[:1]
 
 
+def _real_terminal(program: str) -> str | None:
+    """A real terminal host a spawn would start; None for anything else or a fake. A bare
+    name is refused even when which() finds nothing: Windows still resolves wt through its
+    app execution alias, and a test may have patched shutil.which."""
+    if _name(program) not in TERMINALS or _state["terminals_allowed"]:
+        return None
+    found = program
+    if not os.path.dirname(program):
+        try:
+            found = shutil.which(program) or program
+        except Exception:
+            found = program
+    try:
+        if os.path.normcase(os.path.realpath(found)).startswith(_FAKES):
+            return None
+    except (OSError, ValueError, TypeError):
+        pass
+    return program
+
+
+class allow_real_terminal:
+    """Opt in, for one block, to starting a real wt or tmux (a gated live test only)."""
+
+    def __enter__(self):
+        self._was = _state["terminals_allowed"]
+        _state["terminals_allowed"] = True
+        return self
+
+    def __exit__(self, *exc):
+        _state["terminals_allowed"] = self._was
+        return False
+
+
 def _real_harness(program: str, env) -> str | None:
     """The real harness binary a spawn would start; None for anything else, a fake, or a name not on PATH."""
+    terminal = _real_terminal(program)
+    if terminal:
+        return terminal
     if _name(program) not in HARNESSES:
         return None
     if not os.path.dirname(program):
@@ -109,8 +158,13 @@ def _hook(event: str, args: tuple) -> None:
     for program in _programs(command):
         binary = _real_harness(program, env)
         if binary:
+            if _name(program) in TERMINALS:
+                # Name the whole command: which seat a test tried to open a real pane for.
+                shown = command if isinstance(command, str) else " ".join(map(str, command))
+                binary = binary + " [" + shown[:300] + "]"
             _state["blocked"].append((_state["test"], binary))
-            raise PermissionError("the test suite never starts a real harness CLI: " + binary)
+            raise PermissionError("the test suite never starts a real harness CLI or terminal host"
+                                  " (opt in with harness_guard.allow_real_terminal()): " + binary)
 
 
 def _fail_if_blocked(test: unittest.TestCase, since: int) -> None:
@@ -118,7 +172,7 @@ def _fail_if_blocked(test: unittest.TestCase, since: int) -> None:
     started = [binary for who, binary in _state["blocked"][since:] if who == test.id()]
     if started:
         raise test.failureException(
-            "tried to start the operator's real harness CLI (blocked): " + ", ".join(started)
+            "tried to start the operator's real harness CLI or terminal host (blocked): " + ", ".join(started)
             + ". Use test/fakes, or mock the call.")
 
 

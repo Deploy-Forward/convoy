@@ -76,7 +76,7 @@ probe: Any = CachedProbe(_live_probe, ttl_s=60.0)
 PROTOCOL_LATEST = "2025-03-26"
 PROTOCOL_SUPPORTED = frozenset({PROTOCOL_LATEST, "2024-11-05"})
 SERVER_NAME = "convoy"
-_BASE_VERSION = "1.1.0"
+_BASE_VERSION = "1.2.0"
 
 
 def _server_version(repo_dir: Path | None = None) -> str:
@@ -445,7 +445,7 @@ TOOLS: list[dict[str, Any]] = [
     },
     {
         "name": "note",
-        "description": "Neuron note: ONE compact line into the thread feed (kind=note) with a claimed from — the writing seat's instance_id (the bus does not authenticate authorship), never grok-bot or an alias of it (conductor lines are stamp). The row says author_claimed=true and leaves device and verified_by null. Optional to addresses one seat or grok-bot. Same one-line clamp as stamp; this is the hosted-neuron write path.",
+        "description": "Neuron note: ONE compact line into the thread feed (kind=note) with a claimed from — the writing seat's instance_id (the bus does not authenticate authorship), never grok-bot or an alias of it (conductor lines are stamp). The row says author_claimed=true and leaves device and verified_by null. Optional to addresses one seat or grok-bot. Same one-line clamp as stamp; this is the hosted-neuron write path. A claimed note is never a delivery receipt; the chair's own CLI reply (convoy reply TOKEN) is.",
         "inputSchema": _schema(
             {
                 "summary": {"type": "string", "description": "Compact one-line note"},
@@ -600,7 +600,7 @@ TOOLS: list[dict[str, Any]] = [
     },
     {
         "name": "launch",
-        "description": "Launch one already-joined fresh chair: a split of the active pane (tmux or Windows Terminal), or, on POSIX outside tmux with tmux installed, a detached tmux session the person opens with the card's attach command; the card's placement says which. This SPAWNS a process, so it is behind the write gate and refused on a public deploy without spawning anything. consent carries the user's explicit yes when the host asks for it. Never a token.",
+        "description": "Launch one already-joined fresh chair: inside tmux a split of the caller's pane; on Windows the thread's own Windows Terminal window (wt -w convoy-<8 hex>; never window 0); on POSIX outside tmux with tmux installed, the thread's detached tmux session the person opens with the card's attach command; the card's placement says which. This SPAWNS a process, so it is behind the write gate and refused on a public deploy without spawning anything. consent carries the user's explicit yes when the host asks for it. Never a token.",
         "inputSchema": _schema(
             {"seat": {"type": "string", "description": "chair session_id from join"},
              "consent": {"type": "string"}},
@@ -670,7 +670,7 @@ for _t in TOOLS:
                                           "description": "Explicitly accept unverified harness launch eligibility for this launch; does not bypass authorization or consent"}
     if _t.get("name") in {"bring_up", "open", "launch", "crew"}:
         _props["write_repo_files"] = {"type": "boolean", "default": False,
-                                      "description": "Also write the repo files a person could own (AGENTS.md, .codex/hooks.json) outside a worktree Convoy minted; write gate only"}
+                                      "description": "Also write the repo files a person could own (AGENTS.md) outside a worktree Convoy minted; write gate only"}
     for _k, _v in _THREAD_PROPS.items():
         _props.setdefault(_k, _v)
 del _t, _props, _k, _v
@@ -1131,17 +1131,19 @@ def _call_tool_at(root: Path, name: str, args: dict[str, Any]) -> dict[str, Any]
             )
         except ValueError as e:
             return {"ok": False, "error": str(e)}
-        return {"ok": True, "schema_version": SCHEMA_VERSION, **row}
+        # Said on every note so no caller mistakes it for an answer the sender can count.
+        return {"ok": True, "schema_version": SCHEMA_VERSION, **row, "receipt": False,
+                "receipt_note": ("a claimed note does not count as a delivery receipt; the chair's own "
+                                 "`convoy reply <token> \"...\"` (environment or token proof of its session) does")}
     if name in ("bring_up", "open", "launch", "crew"):
         # write_repo_files writes files a person could own into their repo: a strict boolean, and
-        # only behind the write gate. Without it the card names the route that works here.
+        # only behind the write gate. Without it the card's would_write names what was left out.
         wrf = args.get("write_repo_files", False)
         if not isinstance(wrf, bool):
             return {"ok": False, "error": "write_repo_files must be a boolean"}
         if wrf and not _write_tools_enabled():
             return {"ok": False, "error": _gate_text(name + " write_repo_files=true")}
-        repo_files = {"write_repo_files": True if wrf else None,
-                      "opt_in_route": "mcp" if _write_tools_enabled() else "ask"}
+        repo_files = {"write_repo_files": True if wrf else None}
     if name in ("bring_up", "open"):
         dry = _opt_bool(args, "dry_run", True)
         if dry and repo_files["write_repo_files"]:

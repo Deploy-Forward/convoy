@@ -18,6 +18,8 @@ from .layer import _is_conductor_alias, feed_since, parse_since
 CONTRACT_PATH = Path(__file__).resolve().parent / "conductor.md"
 CONTRACT_RELATIVE = Path(".convoy") / "conductor.md"
 REPLIES_WAIT_MAX_S = 600.0
+# The proof a receipt needs: the citing note's author proven by its own session.
+RECEIPT_PROOF = ("environment", "token", "pane-host")
 EPOCH = "1970-01-01T00:00:00.000000Z"
 
 
@@ -88,7 +90,7 @@ def replies(root: Path | str, conductor: str, *, since: str | None = None, token
 
     since: rows addressed to the conductor with ts > since; `cursor` is the newest ts
     returned, else `since` unchanged. token: rows citing that token in their summary,
-    with `delivered` = any row is a note from a chair. wait: hold up to wait seconds
+    with `delivered` = any row is a note from a chair proven by environment, token or pane-host. wait: hold up to wait seconds
     (capped) and return on the first landing row; `waited_s` says how long it held."""
     r = Path(root)
     since_iso = parse_since(since) if since else EPOCH
@@ -120,5 +122,9 @@ def replies(root: Path | str, conductor: str, *, since: str | None = None, token
                            "waited_s": round(time.monotonic() - started, 3)}
     if token:
         out["token"] = token
-        out["delivered"] = any(x.get("kind") == "note" and x.get("from") for x in rows)
+        # A receipt is a note whose author is proven (environment, token or pane-host: the
+        # one proof set RECEIPT_PROOF, also what `convoy reply` requires and what clears a
+        # pending inbox row), not claimed. A worktree or cwd match alone never counts.
+        out["delivered"] = any(x.get("kind") == "note" and x.get("from") and not x.get("author_claimed")
+                               and x.get("verified_by") in RECEIPT_PROOF for x in rows)
     return out

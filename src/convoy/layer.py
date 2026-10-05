@@ -177,8 +177,9 @@ def neuron_note(root: Path, summary: str, instance_id: str | None = None, to: st
         raise ValueError("refuse anonymous note: instance_id (the writing seat) is required")
     text, truncated = _compact(summary, "note")
     extra: dict[str, Any] = {"truncated": True} if truncated else {}
+    from .wake_dispatch import receipt_address
     return hook(root, "note", text, instance_id=author, extra=extra or None,
-                to=_blank_to_none(to), local_writer=False)
+                to=receipt_address(root, text, author, _blank_to_none(to)), local_writer=False)
 
 
 _RELATIVE = re.compile(r"^(\d+)([smhd])$")

@@ -55,6 +55,14 @@ class EndHeartbeat(unittest.TestCase):
         patch = mock.patch("convoy.end._spawn_waiter", return_value={"spawned": True, "pid": 1})
         patch.start()
         self.addCleanup(patch.stop)
+        # The hook runs under a codex body: its ancestry names the harness that may stamp.
+        from convoy import panes
+        procs = [{"pid": 900, "ppid": 700, "cmdline": "python -m convoy end --hook"},
+                 {"pid": 700, "ppid": 1, "cmdline": "codex"}]
+        for name, value in (("_TEST_PROCS", procs), ("_TEST_PID", 900)):
+            body = mock.patch.object(panes, name, value)
+            body.start()
+            self.addCleanup(body.stop)
 
     def _feed(self):
         path = self.root / ".convoy" / "feed.jsonl"
@@ -118,11 +126,19 @@ class EndHeartbeat(unittest.TestCase):
         self.assertIsNone(rows["claude-elsewhere"]["resume"],
                           "only the chair whose worktree matched may learn an id")
 
-        # Null until observed, and once observed never churned: a second Stop
-        # from the same life must not rewrite the row.
-        end_task(root=self.root, hook_payload={**payload, "session_id": "vendor-observed-2", "turn_id": "t-2"})
+        # Null until observed, and a second Stop from the same life does not
+        # churn the row.
+        end_task(root=self.root, hook_payload={**payload, "turn_id": "t-1b"})
         rows = {r["session_id"]: r for r in list_seats(self.root)}
         self.assertEqual(rows["codex-end-test"]["resume"], "vendor-observed-1")
+        # A codex Stop from this exact worktree with another id is a restarted
+        # Codex: the live body is the one taking turns, so its id replaces the
+        # old one and the incarnation moves on.
+        end_task(root=self.root, hook_payload={**payload, "session_id": "vendor-observed-2", "turn_id": "t-2"})
+        rows = {r["session_id"]: r for r in list_seats(self.root)}
+        self.assertEqual(rows["codex-end-test"]["resume"], "vendor-observed-2")
+        self.assertIsNone(rows["codex-end-test"].get("incarnation"), "the incarnation is the pane host's")
+        self.assertIsNone(rows["claude-elsewhere"]["resume"])
 
     def test_stop_hook_never_writes_session_id_to_feed(self):
         """The feed rule is unchanged: the id goes on the seat row, and
@@ -249,7 +265,8 @@ class StopBlocksAndPulses(unittest.TestCase):
         return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
 
     def _stop(self, turn="t1", **kw):
-        payload = {"hook_event_name": "Stop", "cwd": str(self.wt), "session_id": "s", "turn_id": turn}
+        # The chair's own recorded id: a different one is a restarted Codex (observe_resume).
+        payload = {"hook_event_name": "Stop", "cwd": str(self.wt), "session_id": "rollout-session-1", "turn_id": turn}
         return end_task(root=self.root, hook_payload=payload, git_runner=FakeGit(), **kw)
 
     def test_stop_with_pending_rows_blocks_with_reason(self):
@@ -267,7 +284,7 @@ class StopBlocksAndPulses(unittest.TestCase):
         self.assertEqual(len(self.spawned), 1, self.spawned)
         output = io.StringIO()
         payload = json.dumps({"hook_event_name": "Stop", "cwd": str(self.wt),
-                              "session_id": "s", "turn_id": "t2"})
+                              "session_id": "rollout-session-1", "turn_id": "t2"})
         with mock.patch("sys.stdin", io.StringIO(payload)), redirect_stdout(output):
             code = main(["--root", str(self.root), "end", "--hook"])
         self.assertEqual(code, 0)

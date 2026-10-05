@@ -62,7 +62,11 @@ def pane_belongs_to(
     if name and len(name) >= 8 and name.lower() not in GENERIC_TITLES and name.lower() in low:
         return "worktree"
     s = str(seat.get("title") or "").strip().lower()
-    if s and s not in GENERIC_TITLES:
+    own = str(seat.get("pane_title") or "").strip().lower()
+    if own and low == own:
+        return "seat-title"   # the chair's own exact title in its thread window
+    from .nudge import is_thread_pane_title
+    if s and s not in GENERIC_TITLES and not is_thread_pane_title(low):
         if low == s or low.startswith(s + " - ") or low.startswith(s + " | "):
             return "seat-title"
     if crew_hwnd is not None and hwnd is not None and int(hwnd) == int(crew_hwnd):

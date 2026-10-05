@@ -76,7 +76,9 @@ convoy --root <thread-root> skills --worktree <worktree>
 ```
 
 In a worktree Convoy did not mint, `skills` refreshes only the Convoy-named
-files; add `--write-repo-files` for `AGENTS.md` and `.codex/hooks.json`.
+files; add `--write-repo-files` for `AGENTS.md`. Convoy writes no
+`.codex/hooks.json`: Codex runs Convoy's hooks from the convoy plugin, once the
+person trusts them with `/hooks` in Codex.
 
 The card's `hooks.resolved_via` is one of `console-script` (the installed
 `convoy` is on PATH — the best case), `interpreter` (this Python can
@@ -98,7 +100,9 @@ Read (no writes to thread state):
 - `list [--json] [--all] [--since <window>]` — deterministic numbered thread blocks and full neuron rows. Default: present threads updated/active within 14 days. Temp and absent roots are always named as skipped, never removed. `--all` includes hidden/older usable roots with reasons. Unknown fields stay unknown; detached is not dead. The read-only MCP `list` exposes the same card to authenticated callers, not the anonymous product edge.
 - `threads [--prune]` — every Convoy thread this machine knows. `--prune` drops rows whose root is under the OS temp dir or is absent and reports every dropped row (never silent).
 - `panes` — every body of every neuron on this thread, from the OS process table; never a token.
-- `whoami` — which chair is this process? Walks process ancestry to the harness.
+- `whoami` — which chair is this process? Walks process ancestry to the harness. On a seated chair it adds `lead` and `launched_by` (`{chair, neuron_id}` or null).
+- `report "<text>"` — send your result to the chair that launched you (`launched_by`), else to the lead; refuses with `why` when neither exists. Needs environment, token or pane-host proof of your session.
+- `reply <token> "<text>"` — answer one send: a note to its proven sender citing the token, which is the delivery receipt `replies` counts. Refuses an unknown token or a caller that was not the recipient.
 - `graph [--neuron <chair>] [--html [--out <file>]]` — read-only ontology of the thread.
 - `seats [--convoy-id <id>]` — seat rows.
 - `feed --since <10m|2h|1d|45s|ISO>` — events in a window; the card echoes `since_iso`.
@@ -121,18 +125,18 @@ Write (thread state):
 The ignored-file guard checks incoming paths immediately before fast-forward. An ignored file created concurrently after that check can still be overwritten by Git; this remaining race is not an atomic preservation guarantee. No stash/reset or implicit file deletion is used.
 
 An indexed thread root outranks the main checkout only when its known index update is within 14 days. Older, future or unknown dates do not prove freshness. When only linked worktrees match, the picker shows their actual numbered rows, newest first, rather than an empty collapsed list. Refresh performs one non-interactive fetch followed by local `git merge --ff-only @{upstream}`; it never creates a merge commit or performs a second network round trip through `pull`.
-- `attach [<cvy_id>|<exact thread name>] [--as-harness H]` — link the calling native session to the chosen thread using the same process/native identity proof as `whoami`. Pick numbers are display-only: pass the block's `cvy_` id. No choice prints the list and refuses to guess; unavailable/conflicting identity refuses without creating a chair. One native session belongs to one thread: detach before switching. Repeating returns `already: true` and per-chair catch-up; a bare local self-join reuses the chair. Explicit names, titles, other worktrees and `join --launch` still provision a new neuron. An unavailable non-temp indexed root makes ownership unknown and refuses; temp roots remain in the index but are excluded from attachment, with reasons in `ownership_skipped`. No pane or vendor usage probe is launched by attach. `--as-harness` asserts, never overrides, the proven harness. Legacy catch-up-only callers use `attach [<cvy_id>] --read-only` (still records an attach event, but never seats the caller).
-- `detach [--thread <cvy_id|name>]` — prove the calling chair, write its rolling handoff and append detached state. No history deletion, pane close or session kill. Pending rows remain on disk but cannot wake the detached chair; sends refuse `detached; attach again`. Attach reactivates the same proven chair.
-- `onboard --to <harness> [--to ...] [--thread <name>] [--checkout-root <path|git-url>] [--github yes|no]` — name installed harnesses and bind; a URL is cloned once under `$CONVOY_HOME/checkouts/<owner>/<repo>` (`.convoy/` and `thread.md` go into that clone's `.git/info/exclude`). Whoever launched first conducts: the first harness named on the first onboard becomes `lead`; a later onboard reports it and never steals it.
+- `attach [<thread>] [--as-harness H]` — link the calling native session to the chosen thread using the same process/native identity proof as `whoami`. `<thread>` is the exact `cvy_` id, a unique prefix of it of at least 8 characters (`cvy_` counts), the exact thread name, or the thread's root path; an ambiguous prefix refuses with `matches N threads: <ids>`. `detach --thread` and `lead --thread` resolve the same way. Pick numbers are display-only: pass the block's `cvy_` id. No choice prints the list and refuses to guess; unavailable/conflicting identity refuses without creating a chair. One native session belongs to one thread: detach before switching. Repeating returns `already: true` and per-chair catch-up; a bare local self-join reuses the chair. Explicit names, titles, other worktrees and `join --launch` still provision a new neuron. An unavailable non-temp indexed root makes ownership unknown and refuses; temp roots remain in the index but are excluded from attachment, with reasons in `ownership_skipped`. No pane or vendor usage probe is launched by attach. `--as-harness` asserts, never overrides, the proven harness. Legacy catch-up-only callers use `attach [<cvy_id>] --read-only` (still records an attach event, but never seats the caller).
+- `detach [--thread <thread>]` — prove the calling chair, write its rolling handoff and append detached state. No history deletion, pane close or session kill. Pending rows remain on disk but cannot wake the detached chair; sends refuse `detached; attach again`. Attach reactivates the same proven chair.
+- `onboard --to <harness> [--to ...] [--thread <name>] [--checkout-root <path|git-url>] [--github yes|no]` — name installed harnesses and bind; a URL is cloned once under `$CONVOY_HOME/checkouts/<owner>/<repo>` (`.convoy/` and `thread.md` go into that clone's `.git/info/exclude`). Onboard names no lead: a new thread's `lead` is unset until a session attaches (it takes the lead) or a seated chair passes it; a later onboard reports a standing lead and never changes it.
 - `seat --to <harness> --session-id <chair> [--worktree <path>] [--model M] [--resume <vendor-id>] [--title T] [--effort E]` — register a seated neuron.
 - `join --to <harness> [--worktree <path>] [--title T] [--as <chair>] [--launch] [--consent <id>]` — register one fresh chair.
 - `crew --seat <harness>[,model=M][,effort=E][,where=local|cloud][,title=T] [--seat ...] [--checkout <path>] [--launch]` — N neurons at once: validates every seat first, mints one worktree per local seat, joins every chair with a boot prompt, and (with `--launch`) brings them up in ONE window. Launched is not connected: the card's `seated` snapshot says `pending`.
-- `add <harness> [<model>|auto] [--effort E] [--title T] [--checkout <path>] [--dry-run]` — one neuron: mints its worktree, joins its chair, and launches it as a split of your terminal (tmux or Windows Terminal). Outside one it falls back to a detached tmux session (POSIX) or a new Windows Terminal window (Windows), and refuses before any write when there is neither. Model and effort are auto unless given: no flag, the harness picks. The card's `placement` is `split`, `detached`, `new-window` or `none`; a failed launch leaves the chair joined with a `recovery` verb that works on that path.
+- `add <harness> [<model>|auto] [--effort E] [--title T] [--checkout <path>] [--dry-run]` — one neuron: mints its worktree, joins its chair, and launches it inside tmux as a split of your exact pane; on Windows into the thread's own Windows Terminal window (`wt -w convoy-<8 hex>`: the first neuron opens it, later ones split inside it, never your working window); on POSIX outside tmux into the thread's one detached tmux session. It refuses before any write when there is no terminal to use. Model and effort are auto unless given: no flag, the harness picks. The card's `placement` is `split`, `thread-window`, `detached` or `none`; a failed launch leaves the chair joined with a `recovery` verb that works on that path.
 - `await-seated --seat <chair> [--seat ...] [--timeout <s>]` — observe the acks: per chair `connected` (its own `seated` row cites the minted token) | `pending` | `stale`, with the seconds waited.
 - `swap --seat <chair> --to <harness> --handoff <.convoy/handoff/<chair>-<ts>.md> --as <chair>` — replace the occupant, keep the chair.
 - `seated --seat <chair> --token <token>` — proof-of-life echo from the new occupant.
-- `lead --to <chair> --as <you>` — pass lead to a chair.
-- `hook note "<text>" [--as-me] --to <chair>` — leave a note for a chair (or `grok-bot`).
+- `lead [--thread <thread>] [--to <chair> [--as <you>]]` — read the lead (`lead`, `lead_chair`, `dangling`, `reachable_id`), or pass it to a seated chair. The author is the proven calling chair (environment or token proof); `--as` asserts it and refuses when it disagrees. Only the current lead passes it; `--to <harness>` passes to that harness's one seated chair under the same rule; while the lead is unset or dangling (it names a harness with no seated chair), any seated chair may take it. `convoy attach` takes an unset or dangling lead for the attaching chair. On the lead and attach cards, `conductor` is the lead chair or null; the hosted `grok-bot` is named only where that hosted conductor is meant.
+- `hook note "<text>" [--as-me] --to <chair>` — leave a note for a chair (or `grok-bot`). A receipt that cites a send token (`re token <t>` or `token=<t>`) sent to you, with no `--to`, goes to that send's proven sender (a third party citing it stays unaddressed); one addressed to its own author refuses (`a receipt goes to the sender: --to <chair>`).
 - `stamp "<summary>" [--agent A] [--model M] [--effort E] [--transcript <pointer>]` — conductor stamp.
 - `send --to <chair|harness> "<body>" [--live] [--dry-run] [--instance-id <chair>]` — synapse. `--to <chair>` (a session_id, e.g. `codex-1-demo`) queues into that chair's inbox in its own worktree (`delivery: queued`, `delivered: false`); `--to <harness>` with a chair already on that harness refuses (naming a vendor is not naming a neuron); default runner records a feed row (`delivery: recorded`); `--live` runs a fresh headless vendor session (`executed`).
 - `inbox [--seat <chair>] [--drain | --hook-pretooluse]` — list or drain the live-seat inbox. The hook command is always `convoy inbox --hook-pretooluse` (never a baked interpreter path).
@@ -146,7 +150,7 @@ Launch / panes:
 - `consent --grant <request-id>` — grant a prior consent request after the user explicitly approves it.
 - `close --seat <chair> [--consent <id>]` — request closure of one Convoy-managed pane.
 - `nudge --seat <chair> [--keys <exact>] [--target <tmux-pane>] [--dry-run] [--consent <id>]` — wake an idle chair on this machine. Identifies the pane first (live body from `panes` plus a unique WT title or tmux target). Live send needs a consent card that names that pane and the exact keys. `delivery: nudged`, never `delivered`. Refuses when the pane cannot be proven. Write-gated on MCP.
-- `bring-up` / `open [--thread <name>] [--dry-run]` — bulk show of seated neurons in one new terminal window.
+- `bring-up` / `open [--thread <name>] [--dry-run]` — bulk show of seated neurons in the thread's own terminal window (`wt -w convoy-<8 hex>`).
 - `hide` / `minimize` / `background [--dry-run]` — bulk hide.
 - `resume --neuron <chair> --go` — spawn once in the chair's worktree; refuses when a live body holds the chair.
 
@@ -253,7 +257,7 @@ checkout) every file in the table goes in. Anywhere else, often your own repo, a
 launch and `skills` write only the Convoy-named files git excludes
 (`.claude/settings.local.json`, the `convoy-root` pointers,
 `.grok/hooks/convoy-inbox.json`, the convoy-end copies, and for a launch of a
-grok seat the grok agent). `AGENTS.md` and `.codex/hooks.json` are written there
+grok seat the grok agent). `AGENTS.md` is written there
 only after an opt-in: `--write-repo-files` on the CLI, `write_repo_files: true`
 on MCP `bring_up` / `open` / `launch` / `crew` behind the write gate (never on a
 dry run: a dry `bring-up` / `open` / `relaunch` on the CLI, or a dry MCP
@@ -273,7 +277,7 @@ The card names each home trust store a launch wrote (`trust_stores_written`).
 | --- | --- | --- | --- | --- |
 | `grok` | `grok` | `grok -m <model?> --agent <path?> --resume <vendor-id?>` | Writes PATH ungate block; writes the `AGENTS.md` plugin-skills pointer (minted worktree, or `--write-repo-files`); writes Convoy-owned `--agent` file; writes project PreToolUse hook (`convoy inbox --hook-pretooluse`). | Native CLI on PATH. Named live seats queue (`delivery: queued`); never steals `--resume`. |
 | `claude` | `claude` | `claude --resume <vendor-id?>` | Writes PATH ungate block; writes the `AGENTS.md` plugin-skills pointer (minted worktree, or `--write-repo-files`); writes `.claude/settings.local.json` (inbox hooks + Stop heartbeat + auto-compact; no permission keys), merges user `~/.claude/settings.json` skip key, and writes `~/.claude.json` trust project keys. | Native CLI on PATH. Named live seats queue (`delivery: queued`); never steals `--resume`. |
-| `codex` | `codex` | `codex resume <vendor-id?>` (**not** `--resume`) | Writes PATH ungate block; writes `.agents/skills/convoy-end`; writes the `AGENTS.md` plugin-skills pointer and project `.codex/hooks.json` Stop heartbeat (minted worktree, or `--write-repo-files`; in a real repo without them a Codex seat cannot receive). No Claude permission-ungate writes. | Native CLI on PATH. Named live seats queue; may `codex queue` (`delivery: native-queued`). |
+| `codex` | `codex` | `codex resume <vendor-id?>` (**not** `--resume`) | Writes PATH ungate block; writes `.agents/skills/convoy-end`; writes the `AGENTS.md` plugin-skills pointer (minted worktree, or `--write-repo-files`). No `.codex/hooks.json`: the convoy plugin's `codex-hooks.json` (in [`plugins/convoy`](plugins/convoy) here and in Deploy-Forward/plugins, named by the manifest's `hooks` field) carries the Stop heartbeat and PostToolUse inbox hook, keyed `convoy@<marketplace>:codex-hooks.json:<event>:0:0` (`convoy@convoy` from this repository's marketplace); `add` / `crew` cards warn until the person trusts them with `/hooks`. No Claude permission-ungate writes. | Native CLI on PATH. A send `codex queue`s (`delivery: native-queued`, `wake: "codex-queue-accepted"`: accepted, not a turn started) once the plugin's Stop hook has recorded the session id; before that it is `queued`, `wake: "inbox-only"`, with `why`. |
 | `cursor-agent` | `cursor-agent` | `cursor-agent --resume <vendor-id?>` | Writes PATH ungate block; writes the `AGENTS.md` plugin-skills pointer (minted worktree, or `--write-repo-files`); writes Grok/Claude inbox hook files (swap-safe). Drain via `convoy inbox --drain` (no vendor hook proven). | Native CLI on PATH. Named live seats queue (`delivery: queued`); never steals `--resume`. |
 | `agy` | `agy` | `agy --conversation <vendor-id?>` (live `--help` 2026-09-01: no `--resume`) | Writes PATH ungate block; writes the `AGENTS.md` plugin-skills pointer (minted worktree, or `--write-repo-files`); inbox hook files as above. | Native CLI on PATH. Named live seats queue (`delivery: queued`); never steals `--resume`. |
 | `hermes` | `hermes` | `hermes --resume <vendor-id?>` (live `--help` 2026-09-01) | Writes PATH ungate block; writes the `AGENTS.md` plugin-skills pointer (minted worktree, or `--write-repo-files`); inbox hook files as above. | Native CLI on PATH. Named live seats queue (`delivery: queued`); never steals `--resume`. |
@@ -290,10 +294,10 @@ Notes tied to code/tests:
 
 ### Bring-up and pane invariants
 
-- Isolated WT only: one `wt --window new` spawn, one tab, split panes joined with literal `";"` argv elements.
-- Bulk bring-up never uses `-w 0` or `-w <thread>`; targeted launch may use
-  `-w 0` only after the user explicitly requests `--launch` from an active
-  Windows Terminal session. Never `--` before harness exe; never per-seat
+- Every WT launch on a thread targets the thread's own window, `-w convoy-<8 hex of
+  sha256(convoy_id)>`: `new-tab` for the first neuron, `split-pane -V` inside it after
+  that, panes in one spawn joined with literal `";"` argv elements. Never `-w 0`, never
+  the caller's window, never `--` before the harness exe; never per-seat
   `CREATE_NEW_CONSOLE`; never close on fail with `WM_CLOSE`.
 - Two same-harness seats on different worktrees are two panes; duplicates collapse by worktree/resume/session key.
 - `Ctrl+Shift+W` should only drop one split pane at a time (or no-op when there is no split pane left).
@@ -321,11 +325,12 @@ Supported active-pane adapters:
 
 | Host | Detection | Targeting |
 | --- | --- | --- |
-| Windows Terminal | Windows, `WT_SESSION`, and `wt` on PATH | `wt -w 0 split-pane`; targets the most-recent WT window and its active pane |
+| Windows Terminal | Windows and `wt` on PATH | `wt -w convoy-<8 hex> new-tab \| split-pane -V`; the thread's own window (WT_SESSION decides nothing) |
 | tmux on macOS/Linux | `TMUX`, `TMUX_PANE`, and `tmux` on PATH | `tmux split-window -t <caller-pane>`; exact caller pane |
 
 On macOS or Linux outside tmux, with tmux installed, `launch` and `join --launch`
-start a detached tmux session (`convoy-<thread>-<title>-<hash>`) instead of
+join the thread's one detached tmux session (`convoy-<8 hex>`; the first neuron
+creates it with `new-session -d`, later ones `split-window -t =<name>:`) instead of
 refusing. The card says `placement: detached` and gives `attach`
 (`tmux attach -t =<session>`). The session is created synchronously, so a
 refused `new-session` is reported as not launched. The MCP `launch` tool, behind

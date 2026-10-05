@@ -40,7 +40,7 @@ environment as the task's interpreter. After cutover, loopback and
 `https://convoy.bot/mcp` must agree:
 
 ```text
-serverInfo.version = 1.1.0+<merged sha>
+serverInfo.version = 1.2.0+<merged sha>
 tools/list = the derived public set (see below)
 onboard listed = false
 direct onboard call = write tool disabled
@@ -194,8 +194,8 @@ $Delta = @(Compare-Object -ReferenceObject $ExpectedPublic -DifferenceObject @($
 if ($Delta.Count) { $Delta | Format-Table | Out-String | Write-Error; throw 'public/loopback tool-set mismatch' }
 ```
 
-Also call `initialize`. A checkout deployment should report `1.1.0+<git
-description>`; a bare `1.1.0` from an installed package is not SHA evidence.
+Also call `initialize`. A checkout deployment should report `1.2.0+<git
+description>`; a bare `1.2.0` from an installed package is not SHA evidence.
 If loopback proof fails, roll back to `$Previous` with the same interpreter and
 deployment mode, restart the named supervisor, and repeat the proof before
 touching the Worker.

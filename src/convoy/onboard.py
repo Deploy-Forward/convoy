@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from .bringup import ensure_first_run, ensure_interactive_path
-from .convoy import bind, ensure_id, read_github, read_id, read_lead, read_thread, set_github, set_lead
+from .convoy import bind, ensure_id, read_github, read_id, read_lead, read_thread, set_github
 from .harness_contract import canonical_harness_id, harness_entries
 from .install import HARNESSES, _which
 from .repo import Runner, checkout_path_for, clone, is_repo_url
@@ -266,15 +266,12 @@ def onboard(
         set_github(target_root, True if repo is not None else bool(github))
     if declared_checkout and convoy_id is None:
         convoy_id = ensure_id(target_root)
-    # Frame 1 of the happy path: whoever launched first conducts. The first
-    # harness named on the FIRST onboard of this root becomes lead; a later
-    # onboard reports the standing lead and never steals it (lead passes are
-    # neuron-authored via `lead --to <chair> --as`).
+    # Onboard never names a lead: a harness named here has no chair yet, so a
+    # lead set now would be one nobody can reach. A new thread's lead is unset
+    # until a chair attaches (it takes the lead) or a seated chair passes it
+    # (`lead --to <chair> --as`). A standing lead is reported, never changed.
     standing = read_lead(target_root) if convoy_id is not None else None
-    if standing is None and convoy_id is not None:
-        lead_card = {"harness": set_lead(target_root, named[0])["lead"], "set": True}
-    else:
-        lead_card = {"harness": standing, "set": False}
+    lead_card = {"harness": standing, "set": False}
 
     harness_cards = [_harness_card(hid, target_root, declared_checkout, write_repo_files) for hid in named]
     would_write = sorted({f for h in harness_cards for f in (h.get("first_run") or {}).get("would_write") or []})

@@ -4,8 +4,9 @@
 then. `repo.is_minted_worktree` is true for that marker inside a linked git worktree. Anywhere else
 is the person's repo: a launch there writes only the files Convoy names and git excludes (the local
 Claude settings, the root pointers, the Grok inbox hook, the convoy-end copies, the grok agent),
-never `AGENTS.md` or `.codex/hooks.json` without `--write-repo-files`, and the card says a Codex
-neuron there cannot receive until the person opts in. `terminals` is a listing and writes nothing.
+never `AGENTS.md` without `--write-repo-files`. No launch writes `.codex/hooks.json`: the convoy
+plugin carries Codex's hooks, so a Codex neuron needs no opt-in to receive and the card carries no
+opt-in note. `terminals` is a listing and writes nothing.
 
 Every repo is a scratch git repository in a temporary folder; the home and the Convoy home are
 temporary folders; no harness is started.
@@ -30,8 +31,10 @@ from convoy.lifecycle import join
 from convoy.repo import mint_worktrees
 from convoy.targeted_launch import launch_seat
 
-CODEX_NOTE = "inbox hook not written: opt in with --write-repo-files"
-PERSON_FILES = (".codex/hooks.json", "AGENTS.md")
+# The retired opt-in note; no card carries it now.
+CODEX_NOTE = "inbox hook not written"
+PERSON_FILES = ("AGENTS.md",)
+CODEX_HOOKS = ".codex/hooks.json"
 
 
 def _git(repo, *args):
@@ -145,19 +148,20 @@ class ARealRepo(Sandbox):
             self.assertTrue((self.repo / ".grok" / "hooks" / "convoy-inbox.json").is_file(), to)
             self.assertTrue((self.repo / ".codex" / "convoy-root").is_file(), to)
             self.assertEqual(sorted(card["would_write"]), list(PERSON_FILES), to)
+            self.assertFalse((self.repo / CODEX_HOOKS).exists(), to)
             self.assertEqual(self.status(self.repo), [], to + ": every file written is excluded")
 
-    def test_the_card_says_a_codex_neuron_cannot_receive_until_the_person_opts_in(self):
-        codex = ensure_first_run({"to": "codex", "worktree": str(self.repo)}, root=self.repo)
-        self.assertEqual(len([n for n in codex["notes"] if CODEX_NOTE in n]), 1, codex["notes"])
-        claude = ensure_first_run({"to": "claude", "worktree": str(self.repo)}, root=self.repo)
-        self.assertFalse(any(CODEX_NOTE in n for n in claude["notes"]), claude["notes"])
+    def test_a_codex_neuron_needs_no_opt_in_to_receive(self):
+        for to in ("codex", "claude"):
+            card = ensure_first_run({"to": to, "worktree": str(self.repo)}, root=self.repo)
+            self.assertFalse(any(CODEX_NOTE in n for n in card["notes"]), card["notes"])
 
     def test_the_opt_in_writes_every_file(self):
         card = ensure_first_run({"to": "codex", "worktree": str(self.repo)}, root=self.repo, write_repo_files=True)
         self.assertTrue(card["ok"], card)
         for rel in PERSON_FILES:
             self.assertTrue((self.repo / rel).is_file(), rel)
+        self.assertFalse((self.repo / CODEX_HOOKS).exists())
         self.assertFalse(any(CODEX_NOTE in n for n in card.get("notes") or []))
 
     def test_bring_up_on_a_root_seat_leaves_git_status_clean_and_names_would_write(self):
@@ -167,7 +171,7 @@ class ARealRepo(Sandbox):
         for rel in PERSON_FILES:
             self.assertFalse((self.repo / rel).exists(), rel)
             self.assertIn(rel, win["first_run"]["would_write"])
-        self.assertTrue(any(CODEX_NOTE in n for n in win["first_run"]["notes"]), win["first_run"])
+        self.assertFalse(any(CODEX_NOTE in n for n in win["first_run"]["notes"]), win["first_run"])
         self.assertEqual(self.status(self.repo), [])
 
     def test_bring_up_with_the_opt_in_writes_every_file(self):
@@ -201,7 +205,7 @@ class ARealRepo(Sandbox):
         self.assertEqual(len(calls), 1)
         for rel in PERSON_FILES:
             self.assertFalse((self.repo / rel).exists(), rel)
-        self.assertTrue(any(CODEX_NOTE in n for n in card["first_run"]["notes"]), card)
+        self.assertFalse(any(CODEX_NOTE in n for n in card["first_run"]["notes"]), card)
         self.assertEqual(self.status(self.repo), [])
 
 
@@ -213,6 +217,7 @@ class AMintedWorktree(Sandbox):
         self.assertTrue(card["ok"], card)
         for rel in PERSON_FILES:
             self.assertTrue((wt / rel).is_file(), rel)
+        self.assertFalse((wt / CODEX_HOOKS).exists())
         self.assertEqual(card["would_write"], [])
 
 
@@ -252,6 +257,7 @@ class Skills(Sandbox):
         self.assertEqual(rc, 0, card)
         for rel in PERSON_FILES:
             self.assertTrue((self.repo / rel).is_file(), rel)
+        self.assertFalse((self.repo / CODEX_HOOKS).exists())
 
     def test_skills_in_a_minted_worktree_writes_every_file(self):
         main_repo = _repo("convoy-marker-main-")
@@ -262,8 +268,6 @@ class Skills(Sandbox):
             self.assertTrue((wt / rel).is_file(), rel)
 
 
-MCP_NOTE = "inbox hook not written: opt in with write_repo_files=true"
-ASK_NOTE = "ask the person to run convoy"
 CODEX_EXE = "C:\\Tools\\codex.exe"
 
 
@@ -340,28 +344,26 @@ class TheCardReadsTheDisk(Sandbox):
     def notes(self, card):
         return [n for w in card["windows"] for n in (w.get("first_run") or {}).get("notes") or []]
 
-    def test_a_relaunch_after_the_opt_in_has_no_false_note_and_refreshes_the_hooks(self):
+    def test_a_relaunch_after_the_opt_in_refreshes_the_pointer(self):
         first = self.relaunch(write_repo_files=True)
         self.assertTrue(first["launched"], first)
-        hooks = self.repo / ".codex" / "hooks.json"
-        self.assertTrue(hooks.is_file())
+        agents = self.repo / "AGENTS.md"
+        self.assertTrue(agents.is_file())
         self.assertTrue((self.repo / ".convoy" / "repo-files.json").is_file(), "the opt-in is recorded")
-        hooks.unlink()
+        agents.unlink()
         again = self.relaunch()
         self.assertTrue(again["launched"], again)
-        self.assertTrue(hooks.is_file(), "the recorded opt-in refreshes hooks.json")
-        self.assertFalse(any("inbox hook not written" in n for n in self.notes(again)), self.notes(again))
+        self.assertTrue(agents.is_file(), "the recorded opt-in refreshes AGENTS.md")
+        self.assertFalse((self.repo / CODEX_HOOKS).exists())
         [win] = again["windows"]
         self.assertEqual(win["first_run"]["would_write"], [])
 
-    def test_a_hook_already_on_disk_is_not_reported_missing(self):
-        from convoy.identity import ensure_codex_end_hook
-        ensure_codex_end_hook(self.repo, root=self.repo)
+    def test_a_pointer_already_on_disk_is_not_reported_missing(self):
+        from convoy.identity import install_neuron_identity
+        install_neuron_identity(self.repo)
         card = self.relaunch()
-        self.assertFalse(any("inbox hook not written" in n for n in self.notes(card)), self.notes(card))
         [win] = card["windows"]
-        self.assertNotIn(".codex/hooks.json", win["first_run"]["would_write"])
-        self.assertIn("AGENTS.md", win["first_run"]["would_write"])
+        self.assertNotIn("AGENTS.md", win["first_run"]["would_write"])
 
 
 class ATrackedLocalSettingsFile(Sandbox):
@@ -433,7 +435,7 @@ class EveryLaunchVerbOnARealRepo(Sandbox):
             rc, card = _run(self.repo, "join", "--to", "codex", "--worktree", str(self.repo), "--launch")
         self.assertEqual(rc, 0, card)
         self.assertEqual(runner.call_count, 1)
-        self.assertTrue(any(CODEX_NOTE in n for n in card["launch"]["first_run"]["notes"]), card)
+        self.assertFalse(any(CODEX_NOTE in n for n in card["launch"]["first_run"]["notes"]), card)
         self.assert_clean()
 
     def mcp(self, name, args, gated):
@@ -441,12 +443,13 @@ class EveryLaunchVerbOnARealRepo(Sandbox):
         with mock.patch.dict(os.environ, {"CONVOY_MCP_WRITE_TOOLS": "1" if gated else ""}):
             return call_tool(self.repo, name, args)
 
-    def test_mcp_bring_up_names_the_route_that_works_on_its_surface(self):
+    def test_mcp_bring_up_names_what_it_would_write_on_either_surface(self):
         seat(self.repo, "codex", "chair", worktree=str(self.repo), resume="chair")
-        gated = self.mcp("bring_up", {}, gated=True)
-        self.assertTrue(any(MCP_NOTE in n for w in gated["windows"] for n in w["first_run"]["notes"]), gated)
-        public = self.mcp("bring_up", {}, gated=False)
-        self.assertTrue(any(ASK_NOTE in n for w in public["windows"] for n in w["first_run"]["notes"]), public)
+        for gated in (True, False):
+            card = self.mcp("bring_up", {}, gated=gated)
+            [win] = card["windows"]
+            self.assertEqual(win["first_run"]["would_write"], list(PERSON_FILES), card)
+            self.assertFalse(any(CODEX_NOTE in n for n in win["first_run"]["notes"]), card)
         self.assert_clean()
 
     def test_mcp_write_repo_files_is_a_strict_boolean_behind_the_write_gate(self):
@@ -471,7 +474,7 @@ class EveryLaunchVerbOnARealRepo(Sandbox):
                 mock.patch("convoy.bringup.shutil.which", return_value=CODEX_EXE):
             card = self.mcp("launch", {"seat": "chair-root"}, gated=True)
         self.assertTrue(card["ok"], card)
-        self.assertTrue(any(MCP_NOTE in n for n in card["first_run"]["notes"]), card)
+        self.assertFalse(any(CODEX_NOTE in n for n in card["first_run"]["notes"]), card)
         self.assert_clean()
         crew_card = self.mcp("crew", {"seats": [{"harness": "codex", "title": "two"}]}, gated=True)
         self.assertTrue(crew_card["ok"], crew_card)
@@ -492,16 +495,13 @@ class TheOptInRecord(Sandbox):
         # A seat worktree that was never bound or minted: /.convoy/ is not in its info/exclude.
         self.wt = _repo("convoy-marker-seat-")
 
-    def test_the_command_the_ask_note_gives_leaves_git_status_clean(self):
-        card = ensure_first_run({"to": "codex", "worktree": str(self.wt)}, root=self.root, opt_in_route="ask")
-        [note] = [n for n in card["notes"] if ASK_NOTE in n]
-        command = note.split("ask the person to run ", 1)[1].split()
-        self.assertEqual(command[:3], ["convoy", "--root", str(self.root)])
+    def test_the_opt_in_command_leaves_git_status_clean(self):
         out, err = io.StringIO(), io.StringIO()
         with redirect_stdout(out), redirect_stderr(err):
-            rc = main(command[1:])
+            rc = main(["--root", str(self.root), "skills", "--worktree", str(self.wt), "--write-repo-files"])
         self.assertEqual(rc, 0, out.getvalue())
-        self.assertTrue((self.wt / ".codex" / "hooks.json").is_file())
+        self.assertTrue((self.wt / "AGENTS.md").is_file())
+        self.assertFalse((self.wt / CODEX_HOOKS).exists())
         self.assertTrue((self.wt / ".convoy" / "repo-files.json").is_file())
         self.assertNotIn(".convoy/repo-files.json", self.status(self.wt))
         self.assertEqual(_git(self.wt, "status", "--porcelain", "--untracked-files=all", "--", ".convoy"), "")
@@ -517,7 +517,7 @@ class TheOptInRecord(Sandbox):
             card = ensure_first_run({"to": "codex", "worktree": str(into)}, root=self.root)
             for rel in PERSON_FILES:
                 self.assertFalse((into / rel).exists(), str(into) + ": " + rel)
-            self.assertTrue(any(CODEX_NOTE in n for n in card["notes"]), card["notes"])
+            self.assertEqual(card["would_write"], list(PERSON_FILES), card)
 
     def test_the_opt_in_is_withdrawn_with_no_write_repo_files(self):
         rc, _ = _run(self.root, "skills", "--worktree", str(self.wt), "--write-repo-files")
@@ -526,10 +526,10 @@ class TheOptInRecord(Sandbox):
         self.assertEqual(rc, 0, card)
         self.assertTrue(card["withdrawn"], card)
         self.assertFalse((self.wt / ".convoy" / "repo-files.json").exists())
-        (self.wt / ".codex" / "hooks.json").unlink()
+        (self.wt / "AGENTS.md").unlink()
         card = ensure_first_run({"to": "codex", "worktree": str(self.wt)}, root=self.root)
-        self.assertFalse((self.wt / ".codex" / "hooks.json").exists(), "a withdrawn opt-in writes no person file")
-        self.assertTrue(any(CODEX_NOTE in n for n in card["notes"]), card["notes"])
+        self.assertFalse((self.wt / "AGENTS.md").exists(), "a withdrawn opt-in writes no person file")
+        self.assertEqual(card["would_write"], list(PERSON_FILES), card)
 
     def test_both_flags_at_once_are_refused(self):
         with redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
@@ -537,7 +537,7 @@ class TheOptInRecord(Sandbox):
 
 
 class TheWidget(Sandbox):
-    def test_the_widget_crew_start_asks_the_person_to_opt_in(self):
+    def test_the_widget_crew_start_names_what_it_would_write(self):
         import convoy.onboard as onboard_module
         from convoy.widget_web import WidgetApi
         root = _repo("convoy-marker-root-")
@@ -553,8 +553,10 @@ class TheWidget(Sandbox):
         self.assertTrue(out.get("crew"), out)
         self.assertIn("windows", out["crew"], out["crew"])
         notes = [n for w in out["crew"]["windows"] for n in (w.get("first_run") or {}).get("notes") or []]
-        self.assertTrue(any(ASK_NOTE in n for n in notes), out["crew"])
-        self.assertFalse(any("--write-repo-files" in n and ASK_NOTE not in n for n in notes), notes)
+        self.assertFalse(any(CODEX_NOTE in n for n in notes), out["crew"])
+        would = [f for w in out["crew"]["windows"] for f in (w.get("first_run") or {}).get("would_write") or []]
+        self.assertEqual(would, list(PERSON_FILES), out["crew"])
+        self.assertFalse((reused / CODEX_HOOKS).exists())
 
 
 if __name__ == "__main__":

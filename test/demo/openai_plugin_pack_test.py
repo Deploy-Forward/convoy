@@ -17,7 +17,9 @@ class OpenAIPluginPackContract(unittest.TestCase):
         self.assertEqual(data["license"], "MIT")
         self.assertEqual(data["skills"], "./skills/")
         self.assertEqual(data["mcpServers"], "./.mcp.json")
-        self.assertNotIn("hooks", data, "hooks/hooks.json is auto-discovered; current validator rejects a manifest field")
+        # Codex keys a plugin hook by the manifest's relative path; codex_hooks_trusted reads
+        # <plugin>:codex-hooks.json:<event>:0:0, the published Deploy-Forward/plugins shape.
+        self.assertEqual(data["hooks"], "./codex-hooks.json")
         self.assertEqual(data["interface"]["category"], "Developer Tools")
         self.assertEqual(data["interface"]["capabilities"], ["Interactive", "Read"])
         self.assertLessEqual(len(data["interface"]["defaultPrompt"]), 3)
@@ -28,8 +30,34 @@ class OpenAIPluginPackContract(unittest.TestCase):
             self.assertTrue(asset.is_file(), field)
             self.assertTrue(asset.resolve().is_relative_to(PLUGIN.resolve()))
 
+    def test_the_plugin_carries_codexs_stop_and_post_tool_use_hooks(self):
+        hooks = json.loads((PLUGIN / "codex-hooks.json").read_text(encoding="utf-8"))["hooks"]
+        self.assertEqual(sorted(hooks), ["PostToolUse", "Stop"])
+        self.assertEqual(hooks["Stop"], [{"hooks": [{"type": "command", "command": "convoy end --hook", "timeout": 5,
+                                                     "statusMessage": "Recording Convoy heartbeat"}]}])
+        self.assertEqual(hooks["PostToolUse"], [{"hooks": [{"type": "command",
+                                                            "command": "convoy inbox --hook-pretooluse",
+                                                            "timeout": 8}]}])
+        self.assertFalse((PLUGIN / "hooks" / "hooks.json").exists(), "one hook file, the one the manifest names")
+
+    def test_the_trust_keys_convoy_reads_are_the_keys_this_plugin_produces(self):
+        from convoy.bringup import CODEX_PLUGIN_HOOK_EVENTS, codex_plugin_hook_keys
+        data = json.loads(MANIFEST.read_text(encoding="utf-8"))
+        hooks = json.loads((PLUGIN / data["hooks"]).read_text(encoding="utf-8"))["hooks"]
+        snake = {"Stop": "stop", "PostToolUse": "post_tool_use"}
+        produced = tuple("convoy@convoy:" + Path(data["hooks"]).name + ":" + snake[event] + ":0:0"
+                         for event in hooks)
+        self.assertEqual(sorted(CODEX_PLUGIN_HOOK_EVENTS), sorted(snake[e] for e in hooks))
+        self.assertEqual(sorted(codex_plugin_hook_keys("convoy@convoy")), sorted(produced))
+
+    def test_the_package_readme_names_the_codex_hook_file(self):
+        text = (PLUGIN / "README.md").read_text(encoding="utf-8")
+        self.assertIn("`codex-hooks.json`", text)
+        self.assertIn("convoy inbox --hook-pretooluse", text)
+        self.assertNotIn("hooks/hooks.json", text)
+
     def test_stop_hook_and_explicit_end_skill_have_separate_authority(self):
-        hooks = json.loads((PLUGIN / "hooks" / "hooks.json").read_text(encoding="utf-8"))
+        hooks = json.loads((PLUGIN / "codex-hooks.json").read_text(encoding="utf-8"))
         command = hooks["hooks"]["Stop"][0]["hooks"][0]["command"]
         self.assertEqual(command, "convoy end --hook")
         skill = (PLUGIN / "skills" / "convoy-end" / "SKILL.md").read_text(encoding="utf-8")

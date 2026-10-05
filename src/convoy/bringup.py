@@ -28,7 +28,8 @@ write_repo_files=False (start on a repo root) writes nothing into the worktree
 and lists what it would write as would_write. A launch (write_repo_files=None)
 writes every file only into a worktree Convoy minted (repo.is_minted_worktree);
 in the person's repo it writes only the Convoy-named files git excludes, and
-lists AGENTS.md and .codex/hooks.json as would_write until --write-repo-files.
+lists AGENTS.md as would_write until --write-repo-files. No .codex/hooks.json: the
+convoy plugin carries Codex's hooks.
 Not a user paste.
 Not a TUI guide. Persona is role.md.
 
@@ -50,7 +51,7 @@ import shutil
 import subprocess
 import time
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Iterable
 from urllib.parse import quote
 
 from .identity import ensure_grok_agent, ensure_inbox_hooks, install_neuron_identity
@@ -239,7 +240,7 @@ def _live_argv(argv: list[str]) -> list[str]:
     """Popen argv for ONE isolated wt.exe spawn. FileName is wt. ArgumentList is the rest.
 
     Never per-seat CREATE_NEW_CONSOLE. Never `--` before the harness exe (pops Help).
-    Never -w 0 / -w <thread>. Never ola-brain / side-chat / UltraCode-Shim.
+    Only -w convoy-<8 hex> (the thread's own window); never -w 0. Never ola-brain / side-chat / UltraCode-Shim.
     """
     if not argv:
         raise ValueError("refuse empty argv")
@@ -259,30 +260,48 @@ def _live_argv(argv: list[str]) -> list[str]:
             raise ValueError("refuse WM_CLOSE")
     if "--" in parts:
         raise ValueError("refuse -- before harness exe")
-    if "-w" in parts:
-        raise ValueError("refuse -w; use --window new")
     if any(a == "^;" for a in parts):
         raise ValueError("refuse cmd ^; — use literal ; in argv")
     base0 = _basename_lower(parts[0])
     if base0 not in ("wt", "wt.exe"):
         raise ValueError("refuse per-seat spawn; use isolated_wt_argv")
-    if len(parts) < 4 or parts[1] != "--window" or parts[2] != "new":
-        raise ValueError("refuse wt wrap")
-    first_cmd = parts[3]
-    if first_cmd in ("nw", "new-window", "rename-window"):
-        raise ValueError("refuse nw/rename-window as first command")
-    if first_cmd not in ("nt", "new-tab"):
-        raise ValueError("first command must be nt/new-tab")
+    _check_thread_window(parts)
     wt = _resolve_wt_bin(parts[0])
     # wt.exe splits ITS OWN command line on ';' (that is how nt ; split-pane
     # chains). A boot prompt or title carrying a literal ';' therefore became
     # a second wt command: relaunching a chair opened a tab
     # reading `error 0x80070002 when launching '" at the end of every turn
     # start convoy ...'`. WT's documented escape is `\;`. Everything after
-    # `--window new` is a pane argument; escape it there, never in the exe.
+    # `-w <window>` is a pane argument; escape it there, never in the exe.
     # A bare ";" argument IS the separator (nt ... ; split-pane ...); only a
     # ';' inside an argument is escaped.
     return [wt, *[a if a == ";" else a.replace(";", "\\;") for a in parts[1:]]]
+
+
+_THREAD_WINDOW = re.compile(r"^convoy-[0-9a-f]{8}$")
+
+
+def _window_holds_another(root: Path, launching: set[str]) -> bool:
+    """A chair of this thread outside this launch has a live pane host: the thread's
+    window is open, so this launch splits inside it instead of opening it."""
+    from .targeted_launch import hosted_live
+    return any(hosted_live(root, str(s["session_id"])) for s in list_seats(root)
+               if s.get("session_id") and str(s["session_id"]) not in launching)
+
+
+def _check_thread_window(argv: list[str]) -> None:
+    """A wt command targets the thread's own window and nothing else: `-w convoy-<8 hex>`
+    as its first argument, never `-w 0` (the most recently used window, i.e. wherever the
+    person last clicked) and never a second -w; then new-tab or split-pane."""
+    parts = [str(a) for a in argv]
+    if len(parts) < 4 or parts[1] != "-w" or not _THREAD_WINDOW.match(parts[2]):
+        raise ValueError("refuse wt outside the thread's own window (-w convoy-<8 hex>)")
+    if parts.count("-w") != 1 or "--window" in parts:
+        raise ValueError("refuse a second window target")
+    if parts[3] in ("nw", "new-window", "rename-window"):
+        raise ValueError("refuse nw/rename-window as first command")
+    if parts[3] not in ("nt", "new-tab", "split-pane", "sp"):
+        raise ValueError("first command must be new-tab or split-pane")
 
 
 def is_conductor(to: Any) -> bool:
@@ -446,15 +465,6 @@ def _convoy_named(rel: str) -> bool:
     return "convoy" in rel.lower() or rel == ".claude/settings.local.json"
 
 
-# The one card line for a Codex neuron in the person's repo: its hooks file is the person's to allow.
-# The route is the one that works where the card is read: the CLI flag, the MCP field behind the
-# write gate, or, on a surface with neither (the widget, the ungated wire), a command to ask for.
-CODEX_OPT_IN_NOTE = "codex: cannot receive here yet; inbox hook not written: "
-OPT_IN_ROUTES = {
-    "cli": "opt in with --write-repo-files",
-    "mcp": "opt in with write_repo_files=true",
-    "ask": "ask the person to run convoy --root {root} skills --worktree {worktree} --write-repo-files",
-}
 TRACKED_SETTINGS_NOTE = (".claude/settings.local.json is tracked in git; Convoy did not write its hooks "
                          "or auto-compact there")
 
@@ -472,23 +482,18 @@ def dry_opt_in_refusal(verb: str, *, cli: bool = False) -> str:
     return ask + ": a dry " + verb + " writes no person file"
 
 
-def codex_opt_in_note(route: str, root: Any, worktree: Any) -> str:
-    return CODEX_OPT_IN_NOTE + OPT_IN_ROUTES.get(route, OPT_IN_ROUTES["cli"]).format(root=root, worktree=worktree)
-
-
 # The home key Convoy may add to ~/.claude/settings.json, when it is missing.
 HOME_SETTINGS_KEY = "skipDangerousModePermissionPrompt"
 
 
 def repo_files_for(to: Any) -> list[str]:
     """The files a first run would write into a worktree for this harness, relative and sorted."""
-    from .identity import (CLAUDE_SETTINGS_RELATIVE, CODEX_HOOKS_RELATIVE, END_SKILL_RELATIVE,
-                           GROK_AGENT_RELATIVE, GROK_INBOX_HOOK_RELATIVE)
+    from .identity import CLAUDE_SETTINGS_RELATIVE, END_SKILL_RELATIVE, GROK_AGENT_RELATIVE, GROK_INBOX_HOOK_RELATIVE
     from .inbox import POINTER_RELS
     # The pointer, the convoy-end copies, the hooks and the root pointers are written for every
-    # harness; the grok agent only for grok.
+    # harness; the grok agent only for grok. Codex's hooks come from the convoy plugin.
     files = {Path("AGENTS.md"), *END_SKILL_RELATIVE, *POINTER_RELS,
-             CLAUDE_SETTINGS_RELATIVE, CODEX_HOOKS_RELATIVE, GROK_INBOX_HOOK_RELATIVE}
+             CLAUDE_SETTINGS_RELATIVE, GROK_INBOX_HOOK_RELATIVE}
     if _harness_bin(to) == "grok":
         files.add(GROK_AGENT_RELATIVE)
     return sorted(f.as_posix() for f in files)
@@ -691,6 +696,91 @@ def _trust_codex(wt: str, home: Path) -> list[dict[str, Any]]:
     return [_trust_row("codex", store, written=True, reason=None, key="projects"), hooks]
 
 
+# Codex keys a plugin hook "{plugin_id}:{relative_path}:{event}:{group}:{handler}"; the convoy
+# plugin (plugins/convoy here, and Deploy-Forward/plugins) declares `hooks: ./codex-hooks.json`,
+# and plugin_id is convoy@<marketplace> (convoy@convoy from this repository). One review by the person covers every project,
+# where a project `.codex/hooks.json` is keyed by its absolute path and so is new in every worktree.
+CODEX_DEFAULT_PLUGIN_ID = "convoy@deploy-forward"
+CODEX_PLUGIN_HOOK_EVENTS = ("stop", "post_tool_use")
+_CODEX_HOOK_TAIL = ("until then this neuron cannot be woken by a send and its identity rests on its folder")
+CODEX_HOOKS_WARNINGS = {
+    "untrusted": "codex hooks not trusted: run /hooks in Codex and trust the two {plugin} hooks; " + _CODEX_HOOK_TAIL,
+    "disabled": "codex hooks disabled: run /hooks in Codex and enable the two {plugin} hooks; " + _CODEX_HOOK_TAIL,
+    "plugin-disabled": ("codex convoy plugin disabled: enable {plugin} in Codex "
+                        "([plugins.\"{plugin}\"] enabled = true); " + _CODEX_HOOK_TAIL),
+    "unknown": "codex hook trust unknown: {reason}",
+}
+_TRUST_ORDER = ("trusted", "disabled", "untrusted")
+
+
+def codex_plugin_hook_keys(plugin_id: str) -> tuple[str, ...]:
+    return tuple(plugin_id + ":codex-hooks.json:" + event + ":0:0" for event in CODEX_PLUGIN_HOOK_EVENTS)
+
+
+def _codex_config_path(home: Path | str | None) -> Path:
+    """$CODEX_HOME/config.toml as Codex reads it; an explicit home wins (tests, a named machine)."""
+    if home is not None:
+        return Path(home).joinpath(*CODEX_CONFIG)
+    codex_home = os.environ.get("CODEX_HOME")
+    return Path(codex_home) / CODEX_CONFIG[-1] if codex_home else Path.home().joinpath(*CODEX_CONFIG)
+
+
+def codex_hooks_trusted(home: Path | str | None = None) -> dict[str, Any]:
+    """Read-only: will Codex run the convoy plugin's two hooks, by its own config?
+
+    The plugin ids are the enabled `convoy@*` entries under [plugins] (convoy@deploy-forward when
+    none is listed; disabled when every listed one is). Per key: disabled when its hook-state row says `enabled = false`, trusted
+    when it records a trusted_hash, else untrusted. state is the best plugin's worst key, or
+    unknown (with `reason`) when the config cannot be read or parsed. A recorded hash is all this
+    reads; whether it still matches the installed plugin's hook is Codex's check. Never writes."""
+    store = _codex_config_path(home)
+    out: dict[str, Any] = {"state": "untrusted", "keys": {}, "store": str(store), "plugin": CODEX_DEFAULT_PLUGIN_ID}
+    data: dict[str, Any] = {}
+    if store.is_file():
+        try:
+            import tomllib
+            data = tomllib.loads(store.read_text(encoding="utf-8-sig"))
+        except (OSError, UnicodeDecodeError, ValueError) as e:
+            out.update({"state": "unknown", "reason": "could not read " + str(store) + ": " + str(e),
+                        "keys": {k: "unknown" for k in codex_plugin_hook_keys(CODEX_DEFAULT_PLUGIN_ID)}})
+            return out
+    plugins = data.get("plugins") if isinstance(data.get("plugins"), dict) else {}
+    listed = sorted(k for k in plugins if k.startswith("convoy@"))
+    ids = [k for k in listed if not (isinstance(plugins[k], dict) and plugins[k].get("enabled") is False)]
+    if listed and not ids:
+        # Every listed convoy plugin is disabled: Codex runs none of its hooks, whatever hashes remain.
+        out.update({"state": "disabled", "plugin": listed[0], "plugin_disabled": True,
+                    "keys": {k: "disabled" for k in codex_plugin_hook_keys(listed[0])}})
+        return out
+    ids = ids or [CODEX_DEFAULT_PLUGIN_ID]
+    hooks = data.get("hooks") if isinstance(data.get("hooks"), dict) else {}
+    state = hooks.get("state") if isinstance(hooks.get("state"), dict) else {}
+    best = None
+    for plugin_id in ids:
+        for k in codex_plugin_hook_keys(plugin_id):
+            row = state.get(k) if isinstance(state.get(k), dict) else {}
+            h = row.get("trusted_hash")
+            out["keys"][k] = ("disabled" if row.get("enabled") is False
+                              else "trusted" if isinstance(h, str) and h.strip() else "untrusted")
+        worst = max((out["keys"][k] for k in codex_plugin_hook_keys(plugin_id)), key=_TRUST_ORDER.index)
+        if best is None or _TRUST_ORDER.index(worst) < _TRUST_ORDER.index(best[1]):
+            best = (plugin_id, worst)
+    out["plugin"], out["state"] = best
+    return out
+
+
+def codex_hooks_warning(harnesses: Iterable[Any], home: Path | str | None = None) -> str | None:
+    """The card warning, in the state's own words, when any of these harnesses is codex and Codex
+    will not run (or may not run) the plugin's hooks."""
+    if not any(_harness_bin(str(h or "")) == "codex" for h in harnesses):
+        return None
+    trust = codex_hooks_trusted(home)
+    if trust["state"] == "trusted":
+        return None
+    state = "plugin-disabled" if trust.get("plugin_disabled") else trust["state"]
+    return CODEX_HOOKS_WARNINGS[state].format(plugin=trust["plugin"], reason=trust.get("reason"))
+
+
 def _trust_claude(wt: str, home: Path) -> list[dict[str, Any]]:
     store = home.joinpath(*CLAUDE_STATE)
     if store.is_file():
@@ -807,7 +897,7 @@ def ensure_interactive_path(home: Path | None = None) -> dict[str, Any]:
 
 
 def ensure_first_run(seat: dict[str, Any], root: Path | str | None = None, live: bool = True, *,
-                     write_repo_files: bool | None = None, opt_in_route: str = "cli") -> dict[str, Any]:
+                     write_repo_files: bool | None = None) -> dict[str, Any]:
     """Ungate first-run Claude bypass warning for the thread worktree.
 
     Project {worktree}/.claude/settings.local.json: autoCompactEnabled true (a
@@ -820,7 +910,7 @@ def ensure_first_run(seat: dict[str, Any], root: Path | str | None = None, live:
     agent, settings or trust); would_write lists what would be. True: every file.
     None (a launch): every file in a minted worktree, or where the person opted in before
     (repo.repo_files_opted_in; True records it); in the person's repo only the Convoy-named
-    ones. would_write and the Codex note (naming opt_in_route) are read from disk. A
+    ones. would_write and the Codex migration note are read from disk. A
     .claude/settings.local.json git tracks is never written. trust_stores_written names each
     home trust store this call wrote.
     User ~/.claude.json: set projects[worktree].hasTrustDialogAccepted=true
@@ -881,7 +971,7 @@ def ensure_first_run(seat: dict[str, Any], root: Path | str | None = None, live:
         except Exception:
             home_worktree = False
         from . import repo as _repo
-        from .identity import CLAUDE_SETTINGS_RELATIVE, CODEX_HOOKS_RELATIVE, person_files_missing
+        from .identity import CLAUDE_SETTINGS_RELATIVE, CODEX_HOOKS_MIGRATION_NOTE, person_files_missing, stale_codex_hooks
         person_files = write_repo_files is True or (write_repo_files is None and (
             _repo.repo_files_opted_in(wt_path) or _repo.is_minted_worktree(wt_path)))
         out["write_repo_files"] = person_files
@@ -893,16 +983,15 @@ def ensure_first_run(seat: dict[str, Any], root: Path | str | None = None, live:
             # info/exclude never hides a tracked file: a settings.local.json the person commits is theirs.
             local_rel = CLAUDE_SETTINGS_RELATIVE.as_posix()
             settings_tracked = _repo.is_tracked(wt_path, local_rel)
-            skip = set() if person_files else {CODEX_HOOKS_RELATIVE.as_posix()}
+            skip: set[str] = set()
             if settings_tracked:
                 skip.add(local_rel)
                 out["would_write"].append(local_rel)
                 out["notes"].append(TRACKED_SETTINGS_NOTE)
             if not person_files:
-                missing = person_files_missing(wt_path)
-                out["would_write"] = sorted(set(out["would_write"]) | set(missing))
-                if _harness_bin(to) == "codex" and CODEX_HOOKS_RELATIVE.as_posix() in missing:
-                    out["notes"].append(codex_opt_in_note(opt_in_route, root, wt_path))
+                out["would_write"] = sorted(set(out["would_write"]) | set(person_files_missing(wt_path)))
+            if _harness_bin(to) == "codex" and stale_codex_hooks(wt_path):
+                out["notes"].append(CODEX_HOOKS_MIGRATION_NOTE)
             ident = install_neuron_identity(wt_path, person_files=person_files)
             out["identity_written"] = bool(ident.get("written"))
             out["identity_removed"] = list(ident.get("removed") or [])
@@ -1053,7 +1142,8 @@ def _with_claude_live_flags(argv: list[str], to: Any) -> list[str]:
 
 
 def isolated_wt_argv(thread: str | int, seats: list[dict[str, Any]], *, wt: str | None = None,
-                     root: Path | str | None = None, raw: bool = False) -> list[str]:
+                     root: Path | str | None = None, raw: bool = False, window: str | None = None,
+                     first: bool = True) -> list[str]:
     """Pure Windows Terminal argv for n seated neurons. Does not spawn.
 
     Every launch is an owned body: with `root` each pane runs
@@ -1065,28 +1155,42 @@ def isolated_wt_argv(thread: str | int, seats: list[dict[str, Any]], *, wt: str 
     hatch for one release; without a root there is nothing to host against and
     the pure form is unchanged.
 
-    Live GREEN on WT 1.24.11911.0:
-      --window new  nt --title T -d DIR EXE ...  ;  split-pane -V ...
-    Never -w 0 (injects into focused WT). Never -w <thread-name> (pops Help).
-    Never `--` before the harness exe (pops Help). Never nw / rename-window.
-    n=3: nt, then split-pane -V, then split-pane -H.
+    One window per thread: every pane goes into the
+    thread's own named window, `-w convoy-<8 hex of sha256(convoy_id)>`
+    (targeted_launch.thread_window_name; `window` overrides it). The first command
+    is new-tab when the window does not hold a live neuron yet (`first`), else
+    split-pane; then split-pane -V / -H. wt splits the target window's focused pane,
+    which inside the thread's own window is one of this thread's neurons.
+    Never -w 0 (the most recently used window: wherever the person clicked last).
+    Live-verified 2026-10-04 on WT 1.24.11911.0: `-w convoy-<name> new-tab ...`
+    then `-w convoy-<name> split-pane -V ...` gave one separate window with both
+    panes, the working window untouched, no Help. The older `-w <thread-name>` Help
+    note was a different argv shape. Never `--` before the harness exe (pops Help).
+    Never nw / rename-window.
     Literal ';' WT separators via Start-Process -ArgumentList, not cmd ^;.
     No --append-system-prompt. Claude live flags on the inner argv.
     """
     name = str(thread if thread is not None else "").strip()
-    if name == "0":
+    if name == "0" or str(window or "").strip() == "0":
         raise ValueError("refuse -w 0")
     panes = _pane_seats(list(seats or []))
     if not panes:
         raise ValueError("refuse empty seats")
+    from .targeted_launch import root_thread_label, thread_pane_title, thread_window_name
+    label = root_thread_label(root, name or None)
+    if window is None:
+        # The thread's convoy_id names its window; a rootless pure build falls back to the thread name.
+        key = read_id(Path(root)) if root is not None else None
+        window = thread_window_name(key or name or "thread")
     wt_bin = str(wt or "wt")
-    argv: list[str] = [wt_bin, "--window", "new"]
+    argv: list[str] = [wt_bin, "-w", str(window)]
     for i, seat in enumerate(panes):
-        if i == 0:
-            argv.append("nt")
+        if i == 0 and first:
+            argv.append("new-tab")
         else:
-            argv.append(";")
-            split = "-V" if i == 1 else "-H"
+            if i > 0:
+                argv.append(";")
+            split = "-V" if i <= 1 else "-H"
             argv.extend(["split-pane", split])
         cwd = seat.get("worktree") or seat.get("cwd") or ""
         # Mint BEFORE the argv is built, because the launch record written
@@ -1126,21 +1230,12 @@ def isolated_wt_argv(thread: str | int, seats: list[dict[str, Any]], *, wt: str 
             from .targeted_launch import managed_host_argv
             write_launch_argv(Path(root), str(seat.get("session_id") or ""), inner, str(cwd) if cwd else None)
             inner = managed_host_argv(Path(root), seat)
-        title = _pane_title(seat)
+        title = thread_pane_title(label, seat)
         argv.extend(["--title", title])
         if cwd:
             argv.extend(["-d", str(cwd)])
         argv.extend([str(a) for a in inner])
-    if "-w" in argv:
-        widx = argv.index("-w")
-        if widx + 1 < len(argv) and str(argv[widx + 1]) == "0":
-            raise ValueError("refuse -w 0")
-        raise ValueError("refuse -w; use --window new")
-    first_cmd = argv[3] if len(argv) > 3 else ""
-    if first_cmd in ("nw", "new-window", "rename-window"):
-        raise ValueError("refuse nw/rename-window as first command")
-    if first_cmd not in ("nt", "new-tab"):
-        raise ValueError("first command must be nt/new-tab")
+    _check_thread_window(argv)
     if "--append-system-prompt" in argv:
         raise ValueError("refuse --append-system-prompt")
     if "--" in argv:
@@ -1391,7 +1486,7 @@ def _tile_console(pid: int, rect: dict[str, int], title: str | None) -> str | No
 def live_runner(argv: list[str], cwd: str | None = None, rect: dict[str, int] | None = None, **_k: Any) -> dict[str, Any]:
     """ONE isolated wt.exe spawn for a named thread. Not called from unit tests.
 
-    FileName is wt. ArgumentList is isolated_wt_argv[1:] (--window new, nt / split-pane).
+    FileName is wt. ArgumentList is isolated_wt_argv[1:] (-w convoy-<8 hex>, new-tab / split-pane).
     Never per-seat CREATE_NEW_CONSOLE. Never MoveWindow. Never WM_CLOSE.
     Isolated spawn is a new WINDOW not a new PROCESS; do not close WT windows.
     cwd and rect are ignored: each pane has -d DIR; WT split-pane tiles.
@@ -1499,11 +1594,11 @@ def _window_for(root: Path, seat: dict[str, Any], rect: dict[str, int] | None, c
     return win
 
 
-def bring_up(root: Path, convoy_id: str | None = None, thread: str | None = None, runner: Runner | None = None, tiler: Tiler | None = None, session_ids: list[str] | None = None, *, allow_unverified_launch: bool = False, write_repo_files: bool | None = None, opt_in_route: str = "cli") -> dict[str, Any]:
+def bring_up(root: Path, convoy_id: str | None = None, thread: str | None = None, runner: Runner | None = None, tiler: Tiler | None = None, session_ids: list[str] | None = None, *, allow_unverified_launch: bool = False, write_repo_files: bool | None = None, exclude: dict[str, str] | None = None) -> dict[str, Any]:
     """Resume seated neurons in ONE isolated wt.exe window. Conductor grok-bot is not a window.
 
     write_repo_files None writes every repo file only into a minted worktree (ensure_first_run);
-    True is the person's --write-repo-files; opt_in_route names it on the card.
+    True is the person's --write-repo-files.
     Default runner is None (dry / no-op). Dry-run still calls ensure_first_run and
     must not Popen wt. Pass live_runner only for a real TUI pop (one isolated_wt_argv).
     Unit tests must not pass live_runner without mocking Popen.
@@ -1524,12 +1619,28 @@ def bring_up(root: Path, convoy_id: str | None = None, thread: str | None = None
             return {"ok": False, "convoy_id": cid, "thread": bound, "windows": [],
                     "error": "unknown seat: " + ", ".join(unknown)}
     hops = _pane_seats(_only(_hop_seats(root, cid), session_ids))
+    # A chair whose pane host is alive already has its body (another launch spawned it):
+    # never a second pane (no-steal). The card names it under `skipped`.
+    from .targeted_launch import hosted_live
+    skipped = [{"session_id": s.get("session_id"), "to": s.get("to"),
+                "reason": "a live pane host already holds this chair"}
+               for s in hops if s.get("session_id") and hosted_live(root, str(s["session_id"]))]
+    # exclude: chairs the caller found claimed by another launch in flight, with the reason.
+    for s in hops:
+        sid = str(s.get("session_id") or "")
+        if sid in (exclude or {}) and sid not in {x["session_id"] for x in skipped}:
+            skipped.append({"session_id": sid, "to": s.get("to"), "reason": (exclude or {})[sid]})
+    held = {x["session_id"] for x in skipped}
+    hops = [s for s in hops if s.get("session_id") not in held]
     if runner is not None:
         try:
             for s in hops:
                 validate_launch_eligibility(s.get("to"), allow_unverified_launch=allow_unverified_launch)
         except ValueError as exc:
             return {"ok": False, "convoy_id": cid, "thread": bound, "windows": [], "error": str(exc)}
+        # A pending boot prompt's lead and launcher line is the thread as it is now.
+        from .lifecycle import refresh_identity
+        hops = [refresh_identity(root, s) for s in hops]
     tile_fn = tiler or tile_rects
     rects = tile_fn(len(hops))
     try:
@@ -1542,8 +1653,7 @@ def bring_up(root: Path, convoy_id: str | None = None, thread: str | None = None
     for i, s in enumerate(hops):
         rect = rects[i] if i < len(rects) else None
         try:
-            fr = ensure_first_run(s, root=root, live=runner is not None, write_repo_files=write_repo_files,
-                                  opt_in_route=opt_in_route)
+            fr = ensure_first_run(s, root=root, live=runner is not None, write_repo_files=write_repo_files)
         except Exception as e:
             fr = {"ok": False, "prepared": False, "wrote": False, "settings": None, "error": str(e), "home_written": False, "settings_home": None}
         s = _seat_with_agent(root, s, fr)
@@ -1582,7 +1692,9 @@ def bring_up(root: Path, convoy_id: str | None = None, thread: str | None = None
             try:
                 # root=: every pane is an owned body, not a raw exe the
                 # terminal owns and nobody counts.
-                wt_argv = isolated_wt_argv(bound or "", ready, wt=_resolve_wt_bin(), root=root)
+                launching = {str(s.get("session_id")) for s in ready}
+                wt_argv = isolated_wt_argv(bound or "", ready, wt=_resolve_wt_bin(), root=root,
+                                           first=not _window_holds_another(root, launching))
                 result = runner(wt_argv)
                 if isinstance(result, dict):
                     for i in ready_idx:
@@ -1601,15 +1713,24 @@ def bring_up(root: Path, convoy_id: str | None = None, thread: str | None = None
                     windows[i]["ok"] = False
                     windows[i]["error"] = str(e)
     overall = all(w.get("ok") for w in windows) if windows else True
-    return {
+    card: dict[str, Any] = {
         "ok": overall,
         "convoy_id": cid,
         "thread": bound,
         "conductor": CONDUCTOR,
         "lead": read_lead(root),
         "windows": windows,
+        "skipped": skipped,
+        # The chairs a pane was actually spawned for; a dry run spawns none.
+        "launched": [str(w.get("session_id")) for w in windows
+                     if runner is not None and w.get("ok") and w.get("session_id")],
         "cloud": _cloud_seats(root, cid, session_ids),
     }
+    if skipped and not hops:
+        # ok stays true (nothing failed), but a caller reading ok alone must not think a pane opened.
+        card["note"] = ("nothing launched: every chair named is already held (" +
+                        ", ".join(str(x["session_id"]) for x in skipped) + "); see skipped")
+    return card
 
 
 def terminals(root: Path, convoy_id: str | None = None, thread: str | None = None) -> dict[str, Any]:

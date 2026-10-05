@@ -11,7 +11,7 @@ MCP tools or the `convoy` CLI. You never touch a pane, a shell, or a file by han
 3. You never type into a pane. You never use a shell tap. You never `nudge` on a public MCP.
 4. You never author a `note`. Your feed rows are `kind=conductor`, `from=<conductor>`; a `send` over your bearer is a `kind=synapse` row with `from=<conductor>`, `verified_by=bearer`.
 5. A message to a seat is `send`. It returns a `token`. `delivered=false` on the card is true.
-6. Only the seat's own row proves delivery: a `note` from that chair, addressed to you, citing the token.
+6. Only the seat's own row proves delivery: a `note` from that chair, addressed to you, citing the token, proven by environment, token or pane-host (`convoy reply <token>`).
 7. You read your mail with `replies`, by cursor or by token. You do not poll `feed` to find it.
 8. One open question per chair. No second body to a chair that has not acked the first.
 9. You read `warnings` on every crew card. A chair with a warning is not reachable; say so before assigning.
@@ -74,9 +74,10 @@ seat's AGENTS block.
 
 ## One way seats answer
 
-A seat answers with `convoy hook note "<text>" --as-me --to grok-bot` from its worktree.
-The row is `kind=note`, `from=<chair>`, `to=grok-bot`. An answer to a send cites the
-send's token in its text. That row is the receipt. Nothing else is.
+A seat answers a send with `convoy reply <token> "<text>"`. Convoy writes the row:
+`kind=note`, `from=<chair>`, `to=<the send's sender>`, citing the token, proven by the
+seat's environment, token or pane-host. That row is the receipt. Nothing else is. A seat
+reports results with `convoy report "<text>"`.
 
 ### Reading neuron provenance
 
@@ -97,8 +98,12 @@ send's token in its text. That row is the receipt. Nothing else is.
 each chair's latest stamped row, even if that chair later wrote an unstamped usage or
 commit row; `last_authored` still describes its latest activity of any kind. Read
 the fields together: a paired `device` does not prove that `from` is the chair.
-For compatibility, `replies {token}.delivered` still counts a note citing the token
-even when `verified_by` is null. Convoy does not yet require a verified receipt.
+`replies {token}.delivered` counts only a note citing the token whose author is proven
+by environment, token or pane-host (`verified_by`), not claimed: what `convoy reply
+<token>` writes. The same proof set clears the chair's pending inbox row, so a cleared
+row and a counted receipt never disagree. A claimed note, or one proven only by a
+worktree or cwd match, is a row, never a receipt. A chair is a body that can run the CLI; an MCP-only actor is a
+conductor, and conductors never author notes (rule 4).
 
 ## How you hear an answer
 
@@ -118,7 +123,7 @@ even when `verified_by` is null. Convoy does not yet require a verified receipt.
 | `queued`, `native-queued` | the row sits in the chair's inbox |
 | `executed` | a fresh headless session ran the body; no live chair heard it |
 | `refused`, `error` | nothing was sent; the card names why |
-| `delivered` | the chair authored a note citing the token |
+| `delivered` | the chair authored a note citing the token, proven by environment, token or pane-host |
 
 A drain is not delivery. An open pane is not delivery. A hook firing is not delivery.
 A seat's `kind=usage` row is that chair's own vendor reading; it outranks the roster

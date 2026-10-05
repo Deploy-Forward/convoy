@@ -438,8 +438,9 @@ class Phase7BringUp(unittest.TestCase):
         argv = recorded[0]["argv"]
         self.assertEqual(argv, expected)
         self.assertEqual(argv[0], r"C:\\Windows\\System32\\wt.exe")
-        self.assertEqual(argv[1:4], ["--window", "new", "nt"])
-        self.assertNotIn("-w", argv)
+        self.assertEqual((argv[1], argv[3]), ("-w", "new-tab"))  # the thread\'s own window
+        self.assertRegex(argv[2], r"^convoy-[0-9a-f]{8}$")
+        self.assertNotEqual(argv[argv.index("-w") + 1], "0")
         self.assertNotEqual(argv[2], "0")
         self.assertNotIn("--", argv)
         self.assertNotIn("nw", argv)
@@ -487,7 +488,7 @@ class Phase7BringUp(unittest.TestCase):
         self.assertNotEqual(kw.get("creationflags"), CREATE_NEW_CONSOLE)
         self.assertNotIn("startupinfo", kw)
         tile.assert_not_called()
-        self.assertNotIn("-w", got)
+        self.assertNotEqual(got[got.index("-w") + 1], "0")
         self.assertNotIn("--", got)
 
     def test_live_runner_refuses_per_seat_argv(self):
@@ -531,10 +532,16 @@ class Phase7BringUp(unittest.TestCase):
         ]
         argv = isolated_wt_argv("demo", seats, wt=r"C:\\abs\\wt.exe")
         title_values = [argv[i + 1] for i, token in enumerate(argv) if token == "--title"]
-        self.assertEqual(title_values[0], "lead-prreview")
-        self.assertNotEqual(title_values[1], "claude-1")
+        # `<thread label> - <chair title>`: the thread window's tab names the thread.
+        from convoy.targeted_launch import thread_label
+        label = thread_label("demo", "", "demo")   # a rootless build: the thread name, plus its 4 hex
+        self.assertRegex(label, r"^demo-[0-9a-f]{4}$")
+        self.assertEqual(title_values[0], label + " - lead-prreview")
+        self.assertNotEqual(title_values[1], label + " - claude-1")
+        self.assertTrue(title_values[1].startswith(label + " - "))
         self.assertNotIn("grok-0", title_values)
-        self.assertEqual(argv[1:4], ["--window", "new", "nt"])
+        self.assertEqual((argv[1], argv[3]), ("-w", "new-tab"))  # the thread\'s own window
+        self.assertRegex(argv[2], r"^convoy-[0-9a-f]{8}$")
 
     def test_pids_for_resume_matches_resume_or_session_id(self):
         cmd = {
@@ -563,7 +570,7 @@ if __name__ == "__main__":
 class LiveArgvEscapesWtSeparators(unittest.TestCase):
     def test_a_semicolon_in_a_pane_argument_is_escaped_for_wt(self):
         from convoy import bringup
-        argv = ["wt", "--window", "new", "nt", "--title", "a;b", "-d", "C:/x", "grok.EXE", "do this; then that"]
+        argv = ["wt", "-w", "convoy-0a1b2c3d", "new-tab", "--title", "a;b", "-d", "C:/x", "grok.EXE", "do this; then that"]
         with mock.patch.object(bringup, "_resolve_wt_bin", return_value="wt.exe"):
             live = bringup._live_argv(argv)
         self.assertEqual(live[5], "a\\;b")
@@ -685,6 +692,9 @@ class BootPromptReadsThreadOnce(unittest.TestCase):
     def test_handoff_equal_to_thread_is_named_once(self):
         from convoy.lifecycle import _boot_prompt
         root = Path(tempfile.mkdtemp())
+        # The prompt names only files that exist (a started thread may have no thread.md).
+        (root / "thread.md").write_text("x\n", encoding="utf-8")
+        (root / "handoff.md").write_text("x\n", encoding="utf-8")
         p = _boot_prompt(root, "s", "tok", "thread.md")
         self.assertEqual(p.count(str(root / "thread.md")), 1)
         self.assertNotIn(" and ", p.split(". Then run")[0])

@@ -84,7 +84,14 @@ def set_lead(root: Path, to: str) -> dict[str, Any]:
     path = _lead_path(root)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(harness + "\n", encoding="utf-8")
-    return {"ok": True, "convoy_id": cid, "conductor": CONDUCTOR, "lead": harness}
+    return {"ok": True, "convoy_id": cid, "conductor": lead_conductor(root), "lead": harness}
+
+
+def lead_conductor(root: Path) -> str | None:
+    """A card's `conductor`: the thread's lead chair, or null. The hosted conductor
+    (CONDUCTOR) is named only where that hosted identity is meant."""
+    from .lifecycle import lead_state
+    return lead_state(root)["chair"]
 
 def read_thread(root: Path) -> str | None:
     path = _thread_path(root)
@@ -391,7 +398,8 @@ def update_seat(root: Path, session_id: str, **changes: Any) -> dict[str, Any]:
     return updated
 
 
-def observe_resume(root: Path, session_id: str, vendor_id: Any, *, to: str | None = None) -> dict[str, Any] | None:
+def observe_resume(root: Path, session_id: str, vendor_id: Any, *, to: str | None = None,
+                   replace: bool = False) -> dict[str, Any] | None:
     """Stamp the vendor session id the harness itself just reported, onto the
     seat that has none. Returns the updated row, or None when nothing changed.
 
@@ -407,6 +415,17 @@ def observe_resume(root: Path, session_id: str, vendor_id: Any, *, to: str | Non
     harness's own payload for THIS chair, matched by cwd - never the newest
     file in a log directory, which is often one of Convoy's own `/usage`
     probe stubs.
+
+    replace=True is the one exception, and end.py passes it only for a Stop
+    from a top-level codex body (never a nested `codex exec`) in the chair's
+    exact worktree: a different id there is a Codex restarted by hand, and
+    keeping the dead id would `codex queue` every later send into it. Even
+    then the id is kept while a pane host owns a live body for the chair (the
+    host owns that chair's life), and within REPLACE_COOLDOWN_S of the last
+    replace (two bodies in one worktree would flap the chair on every turn;
+    one `resume-flap` row says so). A replace writes a `resume-changed` row
+    with hashes of both ids; the feed never carries a vendor id. The
+    incarnation is the pane host's and is never touched here.
     """
     sid = str(session_id or "").strip()
     value = vendor_id.strip() if isinstance(vendor_id, str) else ""
@@ -418,7 +437,8 @@ def observe_resume(root: Path, session_id: str, vendor_id: Any, *, to: str | Non
             row = r
     if row is None:
         return None
-    if str(row.get("resume") or "").strip():
+    current = str(row.get("resume") or "").strip()
+    if current == value or (current and not replace):
         return None
     harness = str(row.get("to") or "").strip()
     if not harness:
@@ -430,7 +450,44 @@ def observe_resume(root: Path, session_id: str, vendor_id: Any, *, to: str | Non
         return None
     # update_seat derives resume_for from the row's own harness, which is the
     # binding resume_target checks.
-    return update_seat(root, sid, resume=value)
+    if not current:
+        return update_seat(root, sid, resume=value)
+    from .pane_host import pid_alive
+    if row.get("harness_pid") is not None and str(row.get("process_state") or "") != "exited" \
+            and pid_alive(row.get("harness_pid")):
+        return None  # the pane host's live body is the chair; a different id beside it is a second body
+    rows = [r for r in feed_since(root, "1970-01-01T00:00:00.000000Z")
+            if r.get("instance_id") == sid and r.get("kind") in ("resume-changed", "resume-flap")]
+    changed = [r for r in rows if r.get("kind") == "resume-changed"]
+    if changed and _seconds_since(changed[-1].get("ts")) < REPLACE_COOLDOWN_S:
+        if not any(r.get("kind") == "resume-flap" and str(r.get("ts") or "") >= str(changed[-1].get("ts") or "")
+                   for r in rows):
+            hook(root, "resume-flap", "chair " + sid + ": two codex bodies in one worktree? its resume changed "
+                 "under " + str(REPLACE_COOLDOWN_S // 60) + " minutes ago; keeping the recorded id",
+                 instance_id=sid, author=None, extra={"chair": sid, "harness": harness})
+        return None
+    updated = update_seat(root, sid, resume=value)
+
+    def digest(text: str) -> str:
+        return hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
+
+    hook(root, "resume-changed", "chair " + sid + ": a new " + harness + " session took its worktree",
+         instance_id=sid, author=None,
+         extra={"chair": sid, "harness": harness, "old_sha256": digest(current), "new_sha256": digest(value)})
+    return updated
+
+
+REPLACE_COOLDOWN_S = 600
+
+
+def _seconds_since(ts: Any) -> float:
+    """Seconds since an ISO feed timestamp; infinity when it does not parse."""
+    from datetime import datetime, timezone
+    try:
+        then = datetime.fromisoformat(str(ts).replace("Z", "+00:00"))
+    except ValueError:
+        return float("inf")
+    return (datetime.now(timezone.utc) - then).total_seconds()
 
 
 def lookup_resume(root: Path, thread: str, to: str, worktree: str | None = None) -> str | None:
@@ -518,7 +575,7 @@ def attach(root: Path, convoy_id: str | None = None, probe_fn=None, *, session_i
         "seats": seats,
         "pointers": pack(root),
         "thread": thread,
-        "conductor": CONDUCTOR,
+        "conductor": lead_conductor(root),
         "lead": read_lead(root),
         "ts": event["ts"],
         "since": since,

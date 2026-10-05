@@ -144,7 +144,8 @@ class ListAttach(unittest.TestCase):
         with patch("convoy.sessions.is_temp_root", return_value=False):
             result = attach_session("synthetic-project", cwd=self.root)
         self.assertFalse(result["ok"])
-        self.assertIn("ambiguous", result["error"])
+        self.assertIn("matches 2 threads: ", result["error"])
+        self.assertIn(read_id(other), result["error"])
 
     def test_mcp_list_is_read_only_and_machine_wide(self):
         from convoy.mcp_http import TOOLS, _call_tool, _WRITE_TOOLS, _PRODUCT_SURFACE

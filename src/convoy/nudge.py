@@ -102,10 +102,16 @@ WAKE_EVIDENCE = [
 
 
 def _seat_row(root: Path, session_id: str) -> dict[str, Any] | None:
+    """The chair's seat row, with `pane_title`: the exact title Convoy gave its pane in the
+    thread window (`<thread label> - <chair title>`), the only composed title that proves it."""
     sid = str(session_id or "").strip()
     for row in list_seats(root):
         if row.get("session_id") == sid:
-            return row
+            from .targeted_launch import root_thread_label, thread_pane_title
+            try:
+                return {**row, "pane_title": thread_pane_title(root_thread_label(root), row)}
+            except (OSError, ValueError):
+                return row
     return None
 
 
@@ -119,9 +125,11 @@ def _contains_token(text: str, token: str) -> bool:
     return tok.lower() in raw.lower()
 
 
-def _window_names_chair(text: str, worktree_name: str, seat_title: str) -> bool:
+def _window_names_chair(text: str, worktree_name: str, seat_title: str, pane_title: str | None = None) -> bool:
     """Worktree folder names are unique and long. Short seat titles ('g2')
-    appear inside prompts; only an exact/prefix pane title counts."""
+    appear inside prompts; only an exact/prefix pane title counts. A title in a
+    Convoy thread window (`<label>-<4 hex> - <title>`) proves only the chair whose own
+    composed title it is exactly (pane_title), never through the prefix rule."""
     raw = str(text or "")
     name = str(worktree_name or "").strip()
     if name and len(name) >= 8 and _contains_token(raw, name):
@@ -131,11 +139,22 @@ def _window_names_chair(text: str, worktree_name: str, seat_title: str) -> bool:
         return False
     t = raw.strip()
     sl, low = s.lower(), t.lower()
+    if pane_title and low == str(pane_title).strip().lower():
+        return True
+    if is_thread_pane_title(low):
+        return False   # another chair's (or thread's) composed title: never by prefix
     if low == sl:
         return True
     if low.startswith(sl + " - ") or low.startswith(sl + " | "):
         return True
     return False
+
+
+def is_thread_pane_title(low: str) -> bool:
+    """The shape Convoy gives a pane in a thread window: `<name>-<4 hex> - <title>` (or the
+    bare 8-hex label). Such a title is proof only as one chair's exact own title."""
+    import re as _re
+    return bool(_re.fullmatch(r"(?:[a-z0-9._-]{1,19}-[0-9a-f]{4}|[0-9a-f]{8}) - .+", low.strip().lower()))
 
 
 def _pane_label(window: dict[str, Any] | None, tmux_target: str | None) -> str:
@@ -235,13 +254,13 @@ def _match_window(seat: dict[str, Any], windows: list[dict[str, Any]]) -> dict[s
     for w in windows:
         hwnd = int(w.get("hwnd") or 0)
         text = str(w.get("title") or "")
-        ok = _window_names_chair(text, name, title)
+        ok = _window_names_chair(text, name, title, seat.get("pane_title"))
         if ok and hwnd not in seen:
             hits.append(w)
             seen.add(hwnd)
     if len(hits) == 1:
         return hits[0]
-    return None
+    return None   # none, or several: ambiguous, never pick one
 
 
 def identify_target(

@@ -159,7 +159,7 @@ class Phase7Hide(unittest.TestCase):
     def test_live_runner_popen_gets_absolute_file_name(self):
         wt = r"C:\Windows\System32\wt.exe"
         grok = r"C:\abs\grok.exe"
-        argv_in = [wt, "--window", "new", "nt", "--title", "grok-0", "-d", str(self.wt_g), grok, "--resume", "sess-grok"]
+        argv_in = [wt, "-w", "convoy-0a1b2c3d", "new-tab", "--title", "grok-0", "-d", str(self.wt_g), grok, "--resume", "sess-grok"]
         proc = mock.Mock()
         proc.pid = 77
         with mock.patch("convoy.bringup.os.name", "nt"), \
@@ -171,7 +171,7 @@ class Phase7Hide(unittest.TestCase):
         self.assertEqual(argv, argv_in)
         self.assertNotIn("creationflags", popen.call_args.kwargs)
         self.assertNotIn("--", argv)
-        self.assertNotIn("-w", argv)
+        self.assertNotEqual(argv[argv.index("-w") + 1], "0")
         self.assertNotIn("ola-brain", " ".join(argv).lower())
         popen.assert_called_once()
 
@@ -186,11 +186,12 @@ class Phase7Hide(unittest.TestCase):
             _live_argv(["wt", "-d", r"C:\tmp", "--", abs_claude, "--resume", "sess-claude"])
         with self.assertRaises(ValueError):
             _live_argv(["claude", "--resume", "sess-claude"])
-        out = _live_argv([wt, "--window", "new", "nt", "--title", "claude-0", "-d", r"C:\Users\demo\workspace\ola-brain", abs_claude, "--resume", "sess-claude"])
+        out = _live_argv([wt, "-w", "convoy-0a1b2c3d", "new-tab", "--title", "claude-0", "-d", r"C:\Users\demo\workspace\ola-brain", abs_claude, "--resume", "sess-claude"])
         self.assertEqual(out[0], wt)
-        self.assertEqual(out[1:4], ["--window", "new", "nt"])
+        self.assertEqual((out[1], out[3]), ("-w", "new-tab"))  # the thread\'s own window
+        self.assertRegex(out[2], r"^convoy-[0-9a-f]{8}$")
         self.assertNotIn("--", out)
-        self.assertNotIn("-w", out)
+        self.assertNotEqual(out[out.index("-w") + 1], "0")
 
 
 if __name__ == "__main__":
