@@ -1,16 +1,12 @@
-"""The inbox hook command must RESOLVE where the hook runs.
+"""The inbox hook command must RESOLVE where the hook runs, and it is always bare.
 
-Every hook Convoy wrote since PR 40 was `convoy inbox --hook-pretooluse`, a
-bare name. On the audited machine that name is shadowed by an unrelated
-`convoy.cmd` shim (exits 0, knows no `inbox`), and Git Bash cannot see .cmd
-shims at all (exit 127). Only one chair ever received, because its hook file
-carried an absolute interpreter path. Hook files are gitignored per-worktree
-state: they never travel, so an absolute path is not a portability bug.
-
-Rule: probe the candidate (`<cmd> inbox --help` must exit 0 and print the
-Python usage). Prefer the bare console script when it passes; else this
-interpreter's resolved `-m convoy`; record `resolved_via` on the card; fail
-closed with the install hint when neither passes."""
+A hook file carries `convoy inbox --hook-pretooluse` (or `convoy end --hook`), the console
+script's own name. The writer probes it the way the hook runs it (`<cmd> inbox --help` must exit
+0 and print the Python usage): an unrelated `convoy.cmd` shim that exits 0 with its own help
+fails, and so does a name Git Bash cannot see (exit 127). When the bare name fails, the writer
+fails closed with the install hint and the PATH problem; it never bakes an interpreter path in
+its place, because a baked path pins one machine's interpreter into a worktree. `convoy
+--version` names the executable that runs."""
 import json
 import sys
 import tempfile
@@ -22,6 +18,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 
 from convoy import cmd
 from convoy.identity import ensure_claude_inbox_hook, ensure_grok_inbox_hook
+
+BARE = "convoy inbox --hook-pretooluse"
 
 
 def _probe(ok_for):
@@ -36,28 +34,17 @@ class HookCommandResolution(unittest.TestCase):
         cmd._END_RESOLVED = None
 
     def test_bare_console_script_wins_when_it_probes_ok(self):
-        with mock.patch.object(cmd, "_probe_inbox_command", _probe({"convoy inbox --hook-pretooluse"})):
+        with mock.patch.object(cmd, "_probe_inbox_command", _probe({BARE})):
             r = cmd.resolve_inbox_hook_command()
-        self.assertEqual(r["command"], "convoy inbox --hook-pretooluse")
+        self.assertEqual(r["command"], BARE)
         self.assertEqual(r["resolved_via"], "console-script")
 
-    def test_falls_back_to_this_interpreter_when_bare_name_is_shadowed(self):
+    def test_a_shadowed_bare_name_fails_closed_instead_of_baking_this_interpreter(self):
         py = cmd._quote(sys.executable) + " -m convoy inbox --hook-pretooluse"
         with mock.patch.object(cmd, "_probe_inbox_command", _probe({py})):
             r = cmd.resolve_inbox_hook_command()
-        self.assertEqual(r["command"], py)
-        self.assertEqual(r["resolved_via"], "interpreter")
-
-    def test_checkout_only_machine_gets_a_source_carrying_command(self):
-        """Live 2026-09-03: `python -m convoy` fails without PYTHONPATH when the
-        package is not installed; the third candidate carries the source dir."""
-        def probe(command):
-            return "sys.path.insert" in command
-        with mock.patch.object(cmd, "_probe_inbox_command", probe):
-            r = cmd.resolve_inbox_hook_command()
-        self.assertEqual(r["resolved_via"], "interpreter+src")
-        self.assertIn(cmd._source_dir().replace("\\", "\\\\"), r["command"].replace("\\\\", "\\\\"))
-        self.assertTrue(r["command"].endswith("inbox --hook-pretooluse"))
+        self.assertIsNone(r["command"])
+        self.assertIn("PATH", r["error"])
 
     def test_fails_closed_when_nothing_resolves(self):
         with mock.patch.object(cmd, "_probe_inbox_command", _probe(set())):
@@ -68,11 +55,11 @@ class HookCommandResolution(unittest.TestCase):
 
     def test_live_probe_rejects_a_shim_that_does_not_know_inbox(self):
         # the real probe on this machine: bare `convoy` may be an unrelated shim
-        bare = cmd._probe_inbox_command("convoy inbox --hook-pretooluse")
+        bare = cmd._probe_inbox_command(BARE)
         self.assertIsInstance(bare, bool)
         live = cmd.resolve_inbox_hook_command()
-        self.assertIsNotNone(live["command"], "some candidate must resolve on the machine running the suite")
-        self.assertIn(live["resolved_via"], ("console-script", "interpreter", "interpreter+src"))
+        self.assertEqual(live["command"], BARE if bare else None)
+        self.assertIn(live["resolved_via"], ("console-script", None))
 
     @unittest.skipUnless(sys.platform == "win32", "Windows shell selection")
     def test_windows_hook_shell_prefers_git_bash_over_wsl_bash_on_path(self):
@@ -83,7 +70,7 @@ class HookCommandResolution(unittest.TestCase):
             shell = cmd.hook_shell()
         self.assertEqual(shell, [str(git_bash), "-c"])
 
-    def test_end_hook_has_the_same_probed_portable_resolution(self):
+    def test_end_hook_has_the_same_probed_bare_resolution(self):
         with mock.patch.object(cmd, "_probe_end_command", _probe({"convoy end --hook"})):
             result = cmd.resolve_end_hook_command()
         self.assertEqual(result["command"], "convoy end --hook")
@@ -99,21 +86,18 @@ class HookWritersUseResolvedCommand(unittest.TestCase):
         (self.root / ".convoy").mkdir()
         (self.root / ".convoy" / "id").write_text("cvy_test\n", encoding="utf-8")
 
-    def test_grok_and_claude_hooks_carry_the_resolved_command_and_say_how(self):
-        py = cmd._quote(sys.executable) + " -m convoy inbox --hook-pretooluse"
-        with mock.patch.object(cmd, "_probe_inbox_command", _probe({py})):
+    def test_grok_and_claude_hooks_carry_the_bare_command_and_say_how(self):
+        with mock.patch.object(cmd, "_probe_inbox_command", _probe({BARE})):
             g = ensure_grok_inbox_hook(self.wt, root=self.root)
             c = ensure_claude_inbox_hook(self.wt, root=self.root)
         self.assertTrue(g["ok"] and c["ok"])
-        self.assertEqual(g["resolved_via"], "interpreter")
+        self.assertEqual(g["resolved_via"], "console-script")
         doc = json.loads((self.wt / ".grok" / "hooks" / "convoy-inbox.json").read_text(encoding="utf-8"))
-        self.assertEqual(doc["hooks"]["PreToolUse"][0]["hooks"][0]["command"], py)
+        self.assertEqual(doc["hooks"]["PreToolUse"][0]["hooks"][0]["command"], BARE)
         settings = json.loads((self.wt / ".claude" / "settings.local.json").read_text(encoding="utf-8"))
-        cmds = json.dumps(settings["hooks"])
-        self.assertIn(py.replace("\\", "\\\\"), cmds)
         self.assertIn("UserPromptSubmit", settings["hooks"])
         self.assertIn("PostToolUse", settings["hooks"], "a fresh claude install stamps usage rows")
-        self.assertEqual(settings["hooks"]["PostToolUse"][0]["hooks"][0]["command"], py)
+        self.assertEqual(settings["hooks"]["PostToolUse"][0]["hooks"][0]["command"], BARE)
         self.assertEqual((self.wt / ".grok" / "convoy-root").read_text(encoding="utf-8").strip(), str(self.root.resolve()))
 
     def test_writers_fail_closed_when_nothing_resolves(self):
@@ -139,81 +123,71 @@ class HookWritersUseResolvedCommand(unittest.TestCase):
             str(self.root.resolve()),
         )
 
-    def test_a_working_prior_hook_is_kept_not_overwritten(self):
-        """That chair's baked hook is the only one that ever delivered; a later
-        ensure_first_run must not replace a command that still probes ok."""
+    def test_a_baked_prior_hook_is_rewritten_bare_with_the_current_events(self):
+        """A file an older Convoy wrote with a baked interpreter path, and only PreToolUse, gets
+        the bare command and the current event set; a second run rewrites nothing."""
         prior = '{"hooks": {"PreToolUse": [{"hooks": [{"type": "command", "command": "C:/venv/python.exe -m convoy inbox --hook-pretooluse", "timeout": 8}]}]}}\n'
         dest = self.wt / ".grok" / "hooks" / "convoy-inbox.json"
         dest.parent.mkdir(parents=True)
         dest.write_text(prior, encoding="utf-8")
-        ok = {"C:/venv/python.exe -m convoy inbox --hook-pretooluse", "convoy inbox --hook-pretooluse"}
+        ok = {"C:/venv/python.exe -m convoy inbox --hook-pretooluse", BARE}
         with mock.patch.object(cmd, "_probe_inbox_command", _probe(ok)):
             g = ensure_grok_inbox_hook(self.wt, root=self.root)
         self.assertTrue(g["ok"])
-        self.assertEqual(g["kept_existing"], "C:/venv/python.exe -m convoy inbox --hook-pretooluse")
-        # The COMMAND is kept. The EVENT SET is upgraded: a prior file that
-        # knew only PreToolUse gains the Stop gate (2026-09-05), same command.
         self.assertTrue(g["written"])
-        self.assertTrue(g["upgraded_events"])
         doc = json.loads(dest.read_text(encoding="utf-8"))
         self.assertEqual(set(doc["hooks"]), {"PreToolUse", "PostToolUse", "Stop"})
         for ev in ("PreToolUse", "PostToolUse", "Stop"):
-            self.assertEqual(doc["hooks"][ev][0]["hooks"][0]["command"], "C:/venv/python.exe -m convoy inbox --hook-pretooluse")
-        # Run again: nothing stale, nothing rewritten.
+            self.assertEqual(doc["hooks"][ev][0]["hooks"][0]["command"], BARE)
         with mock.patch.object(cmd, "_probe_inbox_command", _probe(ok)):
             again = ensure_grok_inbox_hook(self.wt, root=self.root)
         self.assertFalse(again["written"])
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
-class DeadHooksAreStrippedNotKept(unittest.TestCase):
-    """Live 2026-09-09: a tracked .claude/settings.json carried bare `convoy inbox
-    --hook-pretooluse`; resolution failed on the box and the installer left it,
-    so cursor-agent's every tool was refused (exit 127 under Git Bash). A failed
-    resolve now strips Convoy's own entries and keeps foreign ones."""
+class DeadHooksAreLeftAsTheyAre(unittest.TestCase):
+    """A failed resolve writes nothing and removes nothing: the launch refuses instead, so no pane
+    starts with a hook that cannot run, and the files on disk stay the person's to change."""
 
     def setUp(self):
-        from convoy import cmd as _c
-        self._c = _c
-        _c._RESOLVED = None; _c._END_RESOLVED = None   # a success is cached per process; these need a fresh failure
-        self.addCleanup(setattr, _c, '_RESOLVED', None); self.addCleanup(setattr, _c, '_END_RESOLVED', None)
+        cmd._RESOLVED = None; cmd._END_RESOLVED = None   # a success is cached per process; these need a fresh failure
+        self.addCleanup(setattr, cmd, '_RESOLVED', None); self.addCleanup(setattr, cmd, '_END_RESOLVED', None)
         self.wt = Path(tempfile.mkdtemp())
         self.root = Path(tempfile.mkdtemp())
         (self.root / ".convoy").mkdir()
         (self.root / ".convoy" / "id").write_text("cvy_test\n", encoding="utf-8")
 
-    def test_claude_settings_keeps_foreign_hooks_and_drops_convoys_dead_ones(self):
-        from convoy.identity import ensure_claude_inbox_hook
+    def test_claude_settings_are_left_byte_for_byte(self):
         dest = self.wt / ".claude" / "settings.local.json"; dest.parent.mkdir(parents=True)
         dest.write_text(json.dumps({"hooks": {
             "PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": "python -m ola_brain.cli guard"}]},
                            {"hooks": [{"type": "command", "command": "convoy inbox --hook-pretooluse", "timeout": 8}]}],
             "UserPromptSubmit": [{"hooks": [{"type": "command", "command": "convoy inbox --hook-pretooluse"}]}],
         }}), encoding="utf-8")
-        with mock.patch.object(self._c, "_probe_inbox_command", return_value=False):
+        before = dest.read_bytes()
+        with mock.patch.object(cmd, "_probe_inbox_command", return_value=False):
             r = ensure_claude_inbox_hook(self.wt, root=self.root)
-        self.assertFalse(r["ok"]); self.assertEqual(r["removed_dead"], str(dest))
-        doc = json.loads(dest.read_text(encoding="utf-8"))
-        self.assertEqual([h["hooks"][0]["command"] for h in doc["hooks"]["PreToolUse"]], ["python -m ola_brain.cli guard"])
-        self.assertNotIn("UserPromptSubmit", doc["hooks"], "an event left with only dead entries is dropped")
+        self.assertFalse(r["ok"])
+        self.assertNotIn("removed_dead", r)
+        self.assertEqual(dest.read_bytes(), before)
 
-    def test_grok_hook_file_loses_dead_convoy_entries_and_codex_file_is_left_alone(self):
-        from convoy.identity import ensure_end_hooks, ensure_grok_inbox_hook
+    def test_grok_hook_file_and_codex_file_are_left_alone(self):
+        from convoy.identity import ensure_end_hooks
         g = self.wt / ".grok" / "hooks" / "convoy-inbox.json"; g.parent.mkdir(parents=True)
         g.write_text(json.dumps({"hooks": {"PreToolUse": [{"hooks": [{"type": "command", "command": "convoy inbox --hook-pretooluse"}]}]}}), encoding="utf-8")
         h = self.wt / ".codex" / "hooks.json"; h.parent.mkdir(parents=True)
         h.write_text(json.dumps({"hooks": {
             "Stop": [{"hooks": [{"type": "command", "command": "convoy end --hook"}]}],
-            "PostToolUse": [{"hooks": [{"type": "command", "command": "convoy inbox --hook-pretooluse"}]}],
             "SessionStart": [{"hooks": [{"type": "command", "command": "node vendor.mjs"}]}],
         }}), encoding="utf-8")
-        before = h.read_bytes()
-        with mock.patch.object(self._c, "_probe_inbox_command", return_value=False), \
-             mock.patch.object(self._c, "_probe_end_command", return_value=False):
+        before = {p: p.read_bytes() for p in (g, h)}
+        with mock.patch.object(cmd, "_probe_inbox_command", return_value=False), \
+             mock.patch.object(cmd, "_probe_end_command", return_value=False):
             rg = ensure_grok_inbox_hook(self.wt, root=self.root)
             ensure_end_hooks(self.wt, root=self.root)
-        self.assertFalse(rg["ok"]); self.assertFalse(g.exists(), "a wholly Convoy-owned dead file is removed")
-        self.assertEqual(h.read_bytes(), before, "Convoy no longer writes .codex/hooks.json; the card notes it")
+        self.assertFalse(rg["ok"])
+        for p, data in before.items():
+            self.assertEqual(p.read_bytes(), data, p)
+
+
+if __name__ == "__main__":
+    unittest.main()

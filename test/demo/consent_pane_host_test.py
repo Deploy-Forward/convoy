@@ -240,11 +240,12 @@ class ManagedPaneHost(unittest.TestCase):
             ),
             encoding="utf-8",
         )
-        waiting = close_managed_pane(self.root, "managed-chair")
-        self.assertFalse(waiting["ok"])
-        self.assertEqual(waiting["state"], "awaiting-user-consent")
-        token = grant_consent(self.root, waiting["consent_request"]["request_id"])["consent"]
-        closed = close_managed_pane(self.root, "managed-chair", consent=token)
+        with mock.patch("convoy.pane_host.pid_alive", return_value=True):  # the recorded host is running
+            waiting = close_managed_pane(self.root, "managed-chair")
+            self.assertFalse(waiting["ok"])
+            self.assertEqual(waiting["state"], "awaiting-user-consent")
+            token = grant_consent(self.root, waiting["consent_request"]["request_id"])["consent"]
+            closed = close_managed_pane(self.root, "managed-chair", consent=token)
         self.assertTrue(closed["ok"])
         self.assertEqual(closed["state"], "close-requested")
         self.assertEqual(closed["host_pid"], 101)

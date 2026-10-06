@@ -16,6 +16,7 @@ import uuid
 from pathlib import Path
 from typing import Any
 
+from .refusal import next_step
 from .cmd import convoy_root_command
 from .convoy import list_seats, read_lead, read_thread, seat as write_seat, set_lead, update_seat
 from .harness_contract import validate_effort, validate_model, validate_where
@@ -99,6 +100,11 @@ def record_launcher(root: Path, session_id: str, launched_by: Any, why: str | No
     return refresh_identity(root, row)
 
 
+# A duplicate join names the two ways to a new chair (linted by printed_commands_test).
+JOIN_NEW_CHAIR_TITLE = next_step("join", "--to", "<harness>", "--title", "<name>")
+JOIN_NEW_CHAIR_ID = next_step("join", "--to", "<harness>", "--session-id", "<id>")
+
+
 def join(
     root: Path,
     to: str,
@@ -139,7 +145,9 @@ def join(
             return {"ok": True, "already": True, "chair": me["chair"], "seat": existing, "next": "receive", "ownership_skipped": skipped}
     sid = (session_id or "").strip() or ((title or to) + "-" + (read_thread(root) or "thread"))
     if any(row.get("session_id") == sid for row in list_seats(root)):
-        raise ValueError("refuse join: chair already exists: " + sid)
+        raise ValueError("refuse join: chair already exists: " + sid + "; pass --title <name> or --session-id <id> ("
+                         + JOIN_NEW_CHAIR_TITLE.replace("<harness>", to) + ", or "
+                         + JOIN_NEW_CHAIR_ID.replace("<harness>", to) + ")")
     token = _mint_token()
     write_seat(root, to, sid, worktree=worktree, model=model, title=title, effort=effort, where=where)
     if launched_by is not _UNSET:
@@ -175,7 +183,7 @@ def swap(
     chair = _require_seat(root, session_id)
     # Every refusal happens here, before the row stamps: update_seat would
     # refuse these too, but by then a kind=swap row and a minted token were
-    # already in the feed asserting a swap that never happened (2026-09-04).
+    # already in the feed asserting a swap that never happened.
     validate_model(to, model)
     validate_effort(to, effort)
     validate_where(to, chair.get("where"))
@@ -187,7 +195,7 @@ def swap(
     )
     # Both tokens null on EVERY swap, same harness included: update_seat only
     # nulls vendor_session_id on a harness change, which left a grok->grok
-    # swap resumable and made `launch` refuse it as "not fresh" (2026-09-03).
+    # swap resumable and made `launch` refuse it as "not fresh".
     # The new occupant has not been launched yet: the launch that spawns it records who
     # launched it, and until then its prompt says so (never the old occupant's launcher).
     changes: dict[str, Any] = {"to": to, "resume": None, "vendor_session_id": None,

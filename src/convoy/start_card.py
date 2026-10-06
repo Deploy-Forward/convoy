@@ -371,7 +371,12 @@ def build_start_card(root: Path | str, *, notes: list[str] | None = None, budget
     root = Path(root)
     now = now or datetime.now(timezone.utc)
     cid = read_id(root)
-    seats = list_seats(root, convoy_id=cid) if cid else []
+    if not cid:
+        # Outside a thread nothing here is known: unknown is never zero neurons.
+        line = "unknown: no Convoy thread at " + str(root) + "; run it from a thread root or pass --root <thread root>"
+        return {"ok": False, "root": str(root), "who": None, "error": "no Convoy thread at " + str(root),
+                "lines": [line], "more": 0, "more_command": None}
+    seats = list_seats(root, convoy_id=cid)
     feed = _feed(root)
     where = _where(root)
     card: dict[str, Any] = {

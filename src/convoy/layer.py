@@ -220,8 +220,8 @@ def feed_since(root: Path, since: str) -> list[dict[str, Any]]:
                 row = json.loads(line)
             except json.JSONDecodeError as e:
                 # One bad line (a neuron's stray stdout, a torn write) must not
-                # take the whole bus down for every reader (live 2026-09-05:
-                # feed, rail, await-seated all crashed on one row). The line is
+                # take the whole bus down for every reader (feed, rail and
+                # await-seated would all crash on one row). The line is
                 # kept on disk and surfaced as a row, never dropped silently.
                 row = {"ts": None, "kind": "malformed", "instance_id": None,
                        "summary": "feed line " + str(lineno) + " is not JSON: " + str(e)[:80],

@@ -27,15 +27,16 @@ class ConvoyCommand(unittest.TestCase):
         with mock.patch.object(cmd.shutil, "which", return_value="C:\\Users\\x\\.local\\bin\\convoy.cmd"), \
              mock.patch.object(cmd, "_is_convoy_itself", return_value=False) as probe, \
              mock.patch.object(cmd.sys, "executable", "C:\\Python314\\python.exe"):
-            self.assertEqual(cmd.convoy_command(), "C:\\Python314\\python.exe -m convoy")
-            self.assertEqual(cmd.convoy_command(), "C:\\Python314\\python.exe -m convoy")
+            # forward slashes: the one spelling cmd.exe and Git Bash both run
+            self.assertEqual(cmd.convoy_command(), "C:/Python314/python.exe -m convoy")
+            self.assertEqual(cmd.convoy_command(), "C:/Python314/python.exe -m convoy")
             self.assertEqual(probe.call_count, 1, "the proof runs once per process")
 
     def test_falls_back_to_this_interpreter(self):
         with mock.patch.object(cmd.shutil, "which", return_value=None), \
              mock.patch.object(cmd.sys, "executable", "C:\\Program Files\\Py\\python.exe"):
-            self.assertEqual(cmd.convoy_command(), '"C:\\Program Files\\Py\\python.exe" -m convoy')
-            self.assertTrue(cmd.convoy_root_command("C:\\a b").endswith(' --root "C:\\a b"'))
+            self.assertEqual(cmd.convoy_command(), '"C:/Program Files/Py/python.exe" -m convoy')
+            self.assertTrue(cmd.convoy_root_command("C:\\a b").endswith(' --root "C:/a b"'))
 
     def test_no_hardcoded_python_m_convoy_in_neuron_facing_strings(self):
         src = Path(__file__).resolve().parents[2] / "src" / "convoy"

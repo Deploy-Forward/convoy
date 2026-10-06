@@ -33,7 +33,7 @@ They are **complements**, not substitutes. Herdr (or plain tmux/WT) can be the r
 2. **BYO harnesses, own meters** — claude / codex / grok stay logged-in CLIs; Convoy does not become UltraCode-Shim.  
 3. **Orchestration verbs with honesty** — onboard → crew → await-seated → send → feed/stamp; Gate 0 fail-closed; usage `null` when unknown.  
 4. **Conductor-shaped product** — Grok Bot (or a lead neuron) orchestrates; chips/cards stay compact.  
-5. **Pack for attach** — `plugin/convoy/` gets a host onto `https://convoy.bot/mcp`; pack ≠ product SoT.
+5. **Pack for attach** — the convoy plugin (Deploy-Forward/plugins) gets a host onto `https://convoy.bot/mcp`; pack ≠ product SoT.
 
 **Not** the value add (today): being the detachable PTY server; a Herdr-class `blocked|working|idle` wait API; a first-party “thread rail” TUI chrome (glance/CLI exist; the storyboard rail is UX target).
 
@@ -212,21 +212,21 @@ Convoy’s job is different: **interactive harness sessions** + **thread memory*
 
 ## 10. Public product pitch (today)
 
-Locked **shape** (see also `SPEC.md`, `plugin/convoy/`). Live wire status is separate — see Acceptance bar below.
+Locked **shape** (see also `SPEC.md`, the convoy plugin in Deploy-Forward/plugins). Live wire status is separate — see Acceptance bar below.
 
 1. Attach `https://convoy.bot/mcp` (one root on the public process; named threads are `--root` bindings).
-2. Skills orchestrate (`convoy`, optional `@convoy` wizard). The **intended** host UX is one live MCP card from `tools/list` / `card` — never a frozen tool menu. **Acceptance DoD:** that card path is **RED** until Public Gate 0 is GREEN on a live probe (`docs/e2e-dod.md`; wizard skill Gate 0 in `plugin/convoy/skills/convoy-wizard/SKILL.md`). Host-render of the card on Grok Bot remains **unverified** in `plugin/convoy/README.md`. Soften any landing copy that implies the stranger path is already GREEN.
+2. Skills orchestrate (the convoy plugin's skills; the `convoy-wizard` skill is not in the plugins repository). The **intended** host UX is one live MCP card from `tools/list` / `card` — never a frozen tool menu. **Acceptance DoD:** that card path is **RED** until Public Gate 0 is GREEN on a live probe (`docs/e2e-dod.md`; the Gate 0 verb list is `REQUIRED_WIZARD_VERBS` in `src/convoy/wizard_preflight.py`). Host-render of the card on Grok Bot remains **unverified** in `README.md` (Host rendering). Soften any landing copy that implies the stranger path is already GREEN.
 3. Neurons are BYO harness sessions seated on the thread.
 4. Synapses are native send into seats (not transcript merges, not UltraCode-Shim wraps).
-5. **Pack ≠ product SoT:** pack = `plugin/convoy/` (skills + MCP manifests + logo). Product SoT = `.convoy/*` on the bound `--root`. Prefer saying **“Exa-style pack layout”** for marketplace pin shape; reserve **SoT** for `.convoy/` / feed / seats / `convoy_id`. Avoid calling the xAI marketplace catalog “SoT” in the same breath as product SoT (`docs/e2e-dod.md` wording collision).
+5. **Pack ≠ product SoT:** pack = the convoy plugin in Deploy-Forward/plugins (skills + MCP manifests + logo). Product SoT = `.convoy/*` on the bound `--root`. Prefer saying **“Exa-style pack layout”** for marketplace pin shape; reserve **SoT** for `.convoy/` / feed / seats / `convoy_id`. Avoid calling the xAI marketplace catalog “SoT” in the same breath as product SoT (`docs/e2e-dod.md` wording collision).
 
 ### 10.1 Acceptance bar (2026-09-05)
 
 | Check | Score | Evidence |
 |---|---|---|
-| Pack shape matches attach → skills → Gate 0 → card | shape OK | `plugin/convoy/.mcp.json`, skills `convoy` / `convoy-wizard` |
+| Pack shape matches attach → skills → Gate 0 → card | shape OK | the convoy plugin's `.mcp.json` and skills (Deploy-Forward/plugins) |
 | Live Public Gate 0 (`card` + required verbs) | **RED** | `docs/e2e-dod.md`; live `POST https://convoy.bot/mcp` tools/list may 405 / lag origin — **never invent tool counts** |
-| Host card rendering on Grok Bot | **null / unverified** | `plugin/convoy/README.md` |
+| Host card rendering on Grok Bot | **null / unverified** | `README.md` (Host rendering) |
 | Marketplace listing | **RED** until xAI merge | pin PR separate from this landscape doc |
 | Pack ≠ `.convoy/` SoT | **GREEN** | §10.5 / §12 / README |
 | §16 Herdr landing honesty | **GREEN** | panes = mux/harness; no PTY-ownership overclaim |
@@ -257,7 +257,7 @@ Claims in this document must point at code or stay RED. Paths are relative to re
 | MCP orchestration, write gate | `src/convoy/mcp_http.py` (`_WRITE_TOOLS` L108 / `CONVOY_MCP_WRITE_TOOLS` (comment ~L90, gate L114), `call_tool` L590, `McpHandler` L1075) | `test/demo/phase_mcp_http_test.py`, `mcp_wizard_verbs_test.py`, `wizard_e2e_gated_test.py` |
 | Glance / usage honesty | `src/convoy/glance.py`, `src/convoy/usage.py` (`probe` L151, `surface` L194) | `test/demo/glance_test.py`, `glance_public_redaction_test.py`, `phase5_usage_test.py` |
 | Tokens never leave seats on wire | `src/convoy/graph.py` L16; public redaction tests | `test/demo/public_wire_redaction_test.py`, `graph_test.py` |
-| Marketplace pack ≠ SoT | `plugin/convoy/` (skills + `.mcp.json`); SoT remains `.convoy/` on `--root` | `plugin/convoy/README.md`; prefer “Exa-style pack layout” over “xAI SoT” in `docs/e2e-dod.md` |
+| Marketplace pack ≠ SoT | the convoy plugin (skills + `.mcp.json`, Deploy-Forward/plugins); SoT remains `.convoy/` on `--root` | `README.md`; prefer “Exa-style pack layout” over “xAI SoT” in `docs/e2e-dod.md` |
 
 ---
 
@@ -396,7 +396,7 @@ Loop Unit / Integration / Acceptance / System Testing against this SPEC. Each do
 |---|---|---|
 | **Unit** | Do pseudo-code blocks match functions? Are DoDs falsifiable by `test/demo/*` without network? | `test/demo/*_test.py`, pure `src/convoy/*.py` |
 | **Integration** | Do MCP + CLI + seat/feed/bring_up paths compose as claimed? Write gate + no-steal hold across boundaries? | `phase_mcp_http_test.py`, `mcp_wizard_verbs_test.py`, `phase7_*`, `inbox_notify_test.py` |
-| **Acceptance** | Does public pitch (§10) match what a stranger gets from attach → skills → live card? Pack ≠ SoT clear? | `plugin/convoy/`, `docs/e2e-dod.md`, `README.md`, Gate 0 |
+| **Acceptance** | Does public pitch (§10) match what a stranger gets from attach → skills → live card? Pack ≠ SoT clear? | the convoy plugin, `docs/e2e-dod.md`, `README.md`, Gate 0 |
 | **System** | Persistence topology: Worker `/mcp` vs Python origin vs WT/tmux; quit-conductor vs quit-mux behavior | `docs/deploy-convoy-bot-mcp.md`, `workers-site.mjs`, `bringup.py`, live convoy.bot probe |
 
 Reviewers record findings under `docs/audits/` or as PR review comments on the landscape PR — cite file:line.
@@ -440,7 +440,7 @@ See `CANON.md` and the terminology lock in `SPEC.md`.
 
 - `SPEC.md` — product / feed / seat / MCP locks  
 - `CANON.md` — names  
-- `plugin/convoy/` — marketplace pack (skills + MCP), not the SoT  
+- the convoy plugin (Deploy-Forward/plugins) — marketplace pack (skills + MCP), not the SoT  
 - `docs/deploy-convoy-bot-mcp.md` — public MCP origin topology  
 - `src/convoy/{convoy,layer,bringup,synapse,mcp_http,glance,usage,graph}.py` — implementation cited above  
 - `test/demo/` — falsifiable unit/integration evidence  

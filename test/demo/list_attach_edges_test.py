@@ -102,6 +102,7 @@ class ListAttachEdges(unittest.TestCase):
         outside = self.root.parent / "outside"
         outside.mkdir()
         with patch("convoy.panes.identify", return_value={"ok": True, "chair": "synthetic-chair", "via": "environment"}), \
+             patch("convoy.panes._TEST_PROCS", []), \
              patch("convoy.sessions.is_temp_root", return_value=False), \
              patch("convoy.end._stop_work", return_value={}):
             card = end_task(hook_payload={"cwd": str(outside), "turn_id": "synthetic-turn"})
@@ -159,6 +160,7 @@ class ListAttachEdges(unittest.TestCase):
         def proof(root, **kw):
             return {"ok": True, "chair": "synthetic-old" if root == self.root else "synthetic-current", "via": "environment"}
         with patch("convoy.panes.identify", side_effect=proof), \
+             patch("convoy.panes._TEST_PROCS", []), \
              patch("convoy.sessions.is_temp_root", return_value=False):
             found, chair = proven_session_chair(self.root.parent)
         self.assertEqual(found, other)

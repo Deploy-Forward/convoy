@@ -31,11 +31,11 @@ from .panes import chair_live
 
 def _chair_live(root: Path, session_id: str) -> bool:
     """Registry (what Convoy launched) OR the OS process table (panes) — the
-    second is what catches a body Convoy never launched (2026-09-03: a second
-    codex resume on a live thread got past the registry-only check)."""
+    second is what catches a body Convoy never launched (a second codex
+    resume on a live thread gets past a registry-only check)."""
     # Process table only. terminals() is NOT read-only (it runs first-run
     # setup that writes ~/.bashrc and ~/.claude settings), so a liveness probe
-    # must never call it — stranger-eyes blocker, 2026-09-03.
+    # must never call it.
     try:
         return chair_live(Path(root), session_id)
     except Exception:

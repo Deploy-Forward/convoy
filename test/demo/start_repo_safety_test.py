@@ -142,12 +142,18 @@ class TheHomeFile(RepoRoot):
     def test_the_home_key_is_written_once_when_missing_and_alone(self):
         self.home_settings().parent.mkdir(parents=True)
         self.home_settings().write_text('{"other": 1}', encoding="utf-8")
-        first = self.claude_first_run(self.start())
+        # Only a start that performs the first run (write_repo_files) writes the home key;
+        # a plain start names it in would_write_home and leaves the file alone.
+        plain = self.claude_first_run(self.start())
+        self.assertFalse(plain["home_written"])
+        self.assertIn(str(self.home_settings()), plain["would_write_home"])
+        self.assertEqual(json.loads(self.home_settings().read_text(encoding="utf-8")), {"other": 1})
+        first = self.claude_first_run(self.start(write_repo_files=True))
         self.assertTrue(first["home_written"])
         self.assertEqual(first["home_key"], HOME_KEY)
         self.assertEqual(json.loads(self.home_settings().read_text(encoding="utf-8")), {"other": 1, HOME_KEY: True})
         before = self.home_settings().read_bytes()
-        again = self.claude_first_run(self.start())
+        again = self.claude_first_run(self.start(write_repo_files=True))
         self.assertFalse(again["home_written"])
         self.assertEqual(self.home_settings().read_bytes(), before)
 

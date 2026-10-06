@@ -21,19 +21,32 @@ def register(root: Path, session_id: str, to: str, extra: dict[str, Any] | None 
     append_line(registry_path(root), (json.dumps(row, separators=(",", ":")) + chr(10)).encode("utf-8"))
     return row
 
-def lookup(root: Path, session_id: str) -> dict[str, Any] | None:
-    path = registry_path(root)
-    if not path.exists() or not session_id:
-        return None
-    found = None
+def _rows(path: Path) -> list[dict[str, Any]]:
+    """Every parseable row. A torn line (a writer killed mid-append) is skipped, as
+    list_seats skips one: one bad line must never break every lookup after it."""
+    rows: list[dict[str, Any]] = []
     with path.open(encoding="utf-8-sig") as f:
         for line in f:
             line = line.strip()
             if not line:
                 continue
-            row = json.loads(line)
-            if row.get("session_id") == session_id:
-                found = row
+            try:
+                row = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(row, dict):
+                rows.append(row)
+    return rows
+
+
+def lookup(root: Path, session_id: str) -> dict[str, Any] | None:
+    path = registry_path(root)
+    if not path.exists() or not session_id:
+        return None
+    found = None
+    for row in _rows(path):
+        if row.get("session_id") == session_id:
+            found = row
     return found
 
 
@@ -45,26 +58,21 @@ def lookup_any(root: Path, token: str, to: str | None = None, worktree: str | No
     wanted_to = str(to).strip().lower() if isinstance(to, str) and to.strip() else None
     wanted_wt = str(worktree).strip() if isinstance(worktree, str) and worktree.strip() else None
     found = None
-    with path.open(encoding="utf-8-sig") as f:
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
-            row = json.loads(line)
-            candidates = (
-                row.get("session_id"),
-                row.get("resume"),
-                row.get("vendor_session_id"),
-            )
-            if token not in candidates:
-                continue
-            row_to = str(row.get("to") or "").strip().lower()
-            row_wt = str(row.get("worktree") or "").strip()
-            if wanted_to is not None and row_to != wanted_to:
-                continue
-            if wanted_wt is not None and row_wt != wanted_wt:
-                continue
-            found = row
+    for row in _rows(path):
+        candidates = (
+            row.get("session_id"),
+            row.get("resume"),
+            row.get("vendor_session_id"),
+        )
+        if token not in candidates:
+            continue
+        row_to = str(row.get("to") or "").strip().lower()
+        row_wt = str(row.get("worktree") or "").strip()
+        if wanted_to is not None and row_to != wanted_to:
+            continue
+        if wanted_wt is not None and row_wt != wanted_wt:
+            continue
+        found = row
     return found
 
 def parse_session_id(stdout: str) -> str | None:

@@ -71,7 +71,7 @@ class PhaseInstall(unittest.TestCase):
             raise AssertionError("opt_in required to fetch")
         card = install("grok", dry_run=False, opt_in=False, installer=boom)
         self.assertFalse(card["ok"])
-        self.assertEqual(card.get("error"), "opt_in required")
+        self.assertTrue(card.get("error", "").startswith("opt_in required: pass --opt-in"), card)
         self.assertFalse(card["ran"])
 
     def test_live_opt_in_calls_installer_then_path(self):
@@ -121,7 +121,7 @@ class PhaseInstall(unittest.TestCase):
     def test_mcp_install_live_without_opt_in_refuses(self):
         payload = call_tool(self.root, "install", {"to": "grok", "dry_run": False})
         self.assertFalse(payload["ok"])
-        self.assertEqual(payload.get("error"), "opt_in required")
+        self.assertTrue(payload.get("error", "").startswith("opt_in required: pass --opt-in"), payload)
 
     def test_cli_install_dry_default(self):
         rc, d = _run(self.root, "install", "--to", "codex")

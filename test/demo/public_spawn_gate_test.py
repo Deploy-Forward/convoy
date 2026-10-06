@@ -115,7 +115,7 @@ class PublicSpawnGate(unittest.TestCase):
         # the user-facing reason does not change with the deploy.
         card = self._call("install", to="grok", dry_run=False)
         self.assertFalse(card.get("ok"))
-        self.assertEqual(card.get("error"), "opt_in required")
+        self.assertTrue(card.get("error", "").startswith("opt_in required: pass --opt-in"), card)
 
     def test_behind_the_gate_the_live_modes_run(self):
         os.environ["CONVOY_MCP_WRITE_TOOLS"] = "1"

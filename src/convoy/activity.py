@@ -22,6 +22,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+from .refusal import next_step
 from .cmd import convoy_root_command
 from .convoy import list_seats, read_thread, read_id
 from .inbox import pending, reply_index
@@ -31,6 +32,11 @@ from .wake_routes import reachability_detail
 
 EPOCH = "1970-01-01T00:00:00.000000Z"
 DEFAULT_WINDOW_MIN = 90
+
+
+# Id lookups name the listing and the explicit address (linted by printed_commands_test).
+NEURONS_ALL = next_step("neurons", "--all")
+SEND_BY_ROOT = next_step("--root", "<root>", "send", "--to", "<harness>", "--instance-id", "<chair>", "<body>")
 
 
 def _age(ts: str | None, now: datetime) -> str | None:
@@ -202,8 +208,8 @@ def resolve_neuron_id(nid: str) -> dict[str, Any]:
     if len(hits) == 1:
         return {"ok": True, "id": want, **hits[0]}
     if not hits:
-        return {"ok": False, "id": want, "error": "no neuron with id " + want + " on this machine; see `convoy neurons --all`"}
-    return {"ok": False, "id": want, "error": "ambiguous id " + want + ": " + str(len(hits)) + " chairs; address by --root and --instance-id", "hits": hits}
+        return {"ok": False, "id": want, "error": "no neuron with id " + want + " on this machine; see `" + NEURONS_ALL + "`"}
+    return {"ok": False, "id": want, "error": "ambiguous id " + want + ": " + str(len(hits)) + " chairs; address by --root and --instance-id (" + SEND_BY_ROOT + ")", "hits": hits}
 
 
 def resolve_neuron_id_on_thread(root: Path, nid: str) -> dict[str, Any]:

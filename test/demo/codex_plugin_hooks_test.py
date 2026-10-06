@@ -250,7 +250,7 @@ class TheTrustCheck(Sandbox):
         self.assertEqual(sorted(card["keys"]), sorted(other))
 
     def test_the_repo_marketplace_plugin_convoy_at_convoy_is_read(self):
-        """README installs convoy@convoy from this repository's marketplace; its keys clear the warning."""
+        """A convoy plugin installed from another marketplace is keyed by that id; its keys clear the warning."""
         from convoy.bringup import codex_hooks_warning
         local = ("convoy@convoy:codex-hooks.json:stop:0:0", "convoy@convoy:codex-hooks.json:post_tool_use:0:0")
         self.write_config('[plugins."convoy@convoy"]\nenabled = true\n\n' + _trusted_config(*local))
@@ -871,11 +871,11 @@ class OptionFirstNestedExec(unittest.TestCase):
 
 
 class TheListenGuidance(Sandbox):
-    def test_the_agents_block_says_codex_never_waits_in_the_foreground(self):
+    def test_the_agents_block_leaves_listening_to_the_plugin(self):
+        # The plugin's skills say how each harness listens; the pointer restates none of it.
         from convoy.identity import _AGENTS_BLOCK
-        self.assertIn("--wait is for Claude and Grok background tasks", _AGENTS_BLOCK)
-        self.assertIn("Codex is woken through its native queue", _AGENTS_BLOCK)
-        self.assertIn("never run `inbox --wait` in the foreground", _AGENTS_BLOCK)
+        self.assertIn("convoy-operate", _AGENTS_BLOCK)
+        self.assertNotIn("inbox --wait", _AGENTS_BLOCK)
         self.assertNotIn(".codex/hooks.json", _AGENTS_BLOCK)
 
     def test_the_inbox_wait_help_says_the_same(self):

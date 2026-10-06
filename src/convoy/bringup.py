@@ -54,7 +54,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable
 from urllib.parse import quote
 
-from .identity import ensure_grok_agent, ensure_inbox_hooks, install_neuron_identity
+from .identity import ensure_inbox_hooks, install_neuron_identity
 from .index import is_temp_root
 from .harness_contract import effective_model, effort_argv, model_argv, session_id_flag, validate_launch_eligibility
 from .convoy import (
@@ -65,7 +65,6 @@ from .convoy import (
     read_id,
     read_lead,
     read_thread,
-    set_seat_agent,
 )
 
 Tiler = Callable[..., list[dict[str, int]]]
@@ -127,6 +126,141 @@ def _is_wrapper_text(text: str) -> bool:
         or "ultracode-shim" in low
         or "ultracodeshim" in low
     )
+
+
+def _is_wrapper_exe(program: str) -> bool:
+    """A wrapper program by its basename (ola-brain.exe, side-chat.cmd), never by its folder."""
+    base = _basename_lower(program)
+    return base in _WRAPPER_EXES or _is_wrapper_text(base)
+
+
+# wt options that take a value, and the subcommands that open a pane: neither is a program.
+# Flags with no value (--suppressApplicationTitle, --useApplicationTitle, -V, -H) are not
+# listed: the word after a flag is the pane's program.
+_WT_VALUE_OPTIONS = frozenset({"-w", "--window", "-d", "--startingdirectory", "--title", "-p", "--profile",
+                               "-s", "--size", "--tabcolor", "--colorscheme", "--pos"})
+_WT_SUBCOMMANDS = frozenset({"new-tab", "nt", "split-pane", "sp", "focus-tab", "ft", "move-focus", "mf"})
+
+
+def _exe_positions(parts: list[str]) -> list[int]:
+    """Indexes of the programs a wt argv runs: parts[0], then the first word of each pane
+    command (after its subcommand and options; panes are separated by a literal ';')."""
+    out = [0] if parts else []
+    i, n = 1, len(parts)
+    while i < n:
+        while i < n and parts[i] != ";":
+            a = parts[i].lower()   # wt documents camelCase spellings (--startingDirectory)
+            if a in _WT_VALUE_OPTIONS:
+                i += 2
+                continue
+            if a in _WT_SUBCOMMANDS or a.startswith("-"):
+                i += 1
+                continue
+            out.append(i)
+            break
+        while i < n and parts[i] != ";":
+            i += 1
+        i += 1
+    return out
+
+
+_SHELL_EXES = frozenset({"cmd", "powershell", "pwsh", "bash", "sh", "zsh", "wsl"})
+
+
+def _is_shell_exe(program: str) -> bool:
+    base = _basename_lower(program)
+    return (base[:-4] if base.endswith(".exe") else base) in _SHELL_EXES
+
+
+# Interpreters and launchers: the program they run is their script or package argument.
+_INTERPRETER_EXES = frozenset({"python", "py", "pythonw", "node", "npx", "uvx", "uv", "pipx",
+                               "deno", "bun", "ruby", "perl"})
+# Words a launcher takes before its script or package (uv run, uv tool run, bun x).
+_LAUNCHER_SUBCOMMANDS = frozenset({"run", "tool", "x", "exec"})
+# Options whose value IS the package or module run (python -m, npx -p, uvx --from).
+_PACKAGE_OPTIONS = frozenset({"-m", "-p", "--package", "--from", "--spec"})
+# Options whose value is neither the script nor a package.
+_INTERPRETER_VALUE_OPTIONS = frozenset({"-W", "-X", "-r", "--require", "--import", "--loader",
+                                        "--with", "--python"})
+# Options that run inline code: no script argument follows.
+_INLINE_CODE_OPTIONS = frozenset({"-c", "-e", "--eval"})
+
+
+def _is_interpreter_exe(program: str) -> bool:
+    base = _basename_lower(program)
+    for ext in (".exe", ".cmd", ".bat"):
+        if base.endswith(ext):
+            base = base[: -len(ext)]
+            break
+    return re.sub(r"[\d.]+$", "", base) in _INTERPRETER_EXES   # python3.12, python3
+
+
+def _script_arguments(words: list[str]) -> list[str]:
+    """The script or package an interpreter runs, from the words after it: each package
+    option's value, then the first word that is not an option or launcher subcommand.
+    Later words are the script's own arguments (a root, a --seat value, a boot prompt)."""
+    out: list[str] = []
+    i = 0
+    while i < len(words):
+        w = words[i]
+        key, eq, val = w.partition("=")
+        if key in _PACKAGE_OPTIONS:
+            if eq:
+                out.append(val)
+                i += 1
+            else:
+                out.extend(words[i + 1:i + 2])
+                i += 2
+            continue
+        if key in _INLINE_CODE_OPTIONS:
+            break
+        if key in _INTERPRETER_VALUE_OPTIONS:
+            i += 1 if eq else 2
+            continue
+        if w.startswith("-") or w.lower() in _LAUNCHER_SUBCOMMANDS:
+            i += 1
+            continue
+        out.append(w)
+        break
+    return out
+
+
+def _script_names(arg: str) -> list[str]:
+    """A script is named by its file and by the folder holding it (ola-brain/main.py,
+    side-chat/index.js); a module or package by its name (ola_brain, side-chat@latest)."""
+    path = arg.replace("\\", "/").rstrip("/")
+    names = [path, path.replace("_", "-")]
+    parent = os.path.dirname(path)
+    if parent:
+        names.append(parent)
+    return names
+
+
+def _pane_programs(parts: list[str]) -> list[str]:
+    """Every word a wt argv may run as a program. A plain pane runs its first word. A
+    shell's command line can chain programs, so under a shell every later word of that
+    pane counts, split on whitespace; Convoy's own panes never run through a shell. An
+    interpreter or launcher runs its script or package argument, so that counts too."""
+    out: list[str] = []
+    for i in _exe_positions(parts):
+        j = i + 1
+        while j < len(parts) and parts[j] != ";":
+            j += 1
+        words = [parts[i]]
+        if _is_shell_exe(parts[i]):
+            for a in parts[i + 1:j]:
+                words.extend(a.split())
+            out.extend(words)
+        else:
+            words.extend(parts[i + 1:j])
+            out.append(parts[i])
+        # A plain pane runs only its first word; under a shell any word may start a program.
+        starts = range(len(words)) if _is_shell_exe(parts[i]) else range(1)
+        for k in starts:
+            if _is_interpreter_exe(words[k]):
+                for arg in _script_arguments(words[k + 1:]):
+                    out.extend(_script_names(arg))
+    return out
 
 
 def _is_abs_exe(exe: str) -> bool:
@@ -245,19 +379,13 @@ def _live_argv(argv: list[str]) -> list[str]:
     if not argv:
         raise ValueError("refuse empty argv")
     parts = [str(a) for a in argv]
-    # Do not scan -d DIR / --title / --resume values: worktree may be .../ola-brain.
-    skip_next = False
-    for a in parts:
-        if skip_next:
-            skip_next = False
-            continue
-        if a in ("-d", "--title", "--window", "--resume", "--permission-mode"):
-            skip_next = True
-            continue
-        if _is_wrapper_text(a) or _basename_lower(a) in _WRAPPER_EXES:
+    # Only exe positions are read: the spawned program and each pane's program. A root,
+    # worktree, title or boot prompt may carry a wrapper's name and is not a wrap.
+    for program in _pane_programs(parts):
+        if _is_wrapper_exe(program):
             raise ValueError("refuse ola-brain / side-chat / UltraCode-Shim wrap")
-        if a.lower() == "wm_close":
-            raise ValueError("refuse WM_CLOSE")
+    if any(a.lower() == "wm_close" for a in parts):
+        raise ValueError("refuse WM_CLOSE")
     if "--" in parts:
         raise ValueError("refuse -- before harness exe")
     if any(a == "^;" for a in parts):
@@ -350,6 +478,13 @@ def session_store_has(to: Any, worktree: Any, sid: str) -> bool:
     return False
 
 
+def _is_convoy_grok_agent(agent: str) -> bool:
+    """The agent file earlier Convoy versions wrote into a worktree and stored on the seat row.
+    Convoy no longer writes it, so it is not passed: only an agent the person chose rides argv."""
+    norm = "/" + agent.strip().replace("\\", "/").lower().lstrip("/")
+    return norm.endswith("/.grok/agents/convoy-neuron.md")
+
+
 def resume_argv(seat: dict[str, Any]) -> list[str]:
     """Argv we WOULD exec. No spawn. Native harness resume only.
 
@@ -377,12 +512,12 @@ def resume_argv(seat: dict[str, Any]) -> list[str]:
     argv = [binary]
     # The seat's declared model rides argv through the contract's evidenced
     # flag (grok/codex/hermes -m, claude/agy/pi --model). Without it the
-    # vendor's config default wins: live 2026-09-06 a relaunched codex seat
-    # declared gpt-5.6/high booted as gpt-6-astra medium from config.toml.
+    # vendor's config default wins: a relaunched codex seat declared with one
+    # model and effort boots with whatever config.toml names instead.
     argv.extend(model_argv(to, effective_model(to, seat.get("model"), seat.get("effort"))))
     if _harness_bin(to) == "grok":
         agent = seat.get("agent")
-        if isinstance(agent, str) and agent.strip():
+        if isinstance(agent, str) and agent.strip() and not _is_convoy_grok_agent(agent):
             argv.extend(["--agent", agent.strip()])
     # Declared effort rides argv only through the contract's evidenced flag,
     # and only as a value that harness's --help lists (effort_argv re-checks).
@@ -412,7 +547,7 @@ def resume_argv(seat: dict[str, Any]) -> list[str]:
             argv.extend(["--conversation", sid])
         else:
             argv.extend(["--resume", sid])
-    # Blessed exception (seat-lifecycle, ratified 2026-09-02): join/swap set a
+    # Deliberate exception (seat lifecycle): join/swap set a
     # one-shot boot_prompt delivered as an initial POSITIONAL prompt — every
     # harness documents one; the session stays interactive (this is not -p).
     # It is the seated-ack delivery mechanism; seated_ack clears the field.
@@ -472,11 +607,8 @@ TRACKED_SETTINGS_NOTE = (".claude/settings.local.json is tracked in git; Convoy 
 def dry_opt_in_refusal(verb: str, *, cli: bool = False) -> str:
     """Refuse the person-ownable repo-file opt-in on a dry launch, before those writes.
 
-    A dry launch without that opt-in still prepares first-run home and Convoy files:
-    ~/.bashrc, convoy-end copies, the AGENTS.md pointer in a minted worktree,
-    the Grok agent and .git/info/exclude entries; Claude also prepares
-    ~/.claude/settings.json and ~/.claude.json trust. Hook files and hook
-    trust stores are skipped. This refusal does not mean every dry run is read-only.
+    A dry launch writes nothing at all (home files, trust stores, worktree files and
+    .git/info/exclude included); its first_run card lists what a live run would write.
     """
     ask = "--write-repo-files needs a live run, not --dry-run" if cli else "write_repo_files=true needs dry_run=false"
     return ask + ": a dry " + verb + " writes no person file"
@@ -488,14 +620,11 @@ HOME_SETTINGS_KEY = "skipDangerousModePermissionPrompt"
 
 def repo_files_for(to: Any) -> list[str]:
     """The files a first run would write into a worktree for this harness, relative and sorted."""
-    from .identity import CLAUDE_SETTINGS_RELATIVE, END_SKILL_RELATIVE, GROK_AGENT_RELATIVE, GROK_INBOX_HOOK_RELATIVE
+    from .identity import CLAUDE_SETTINGS_RELATIVE, GROK_INBOX_HOOK_RELATIVE
     from .inbox import POINTER_RELS
-    # The pointer, the convoy-end copies, the hooks and the root pointers are written for every
-    # harness; the grok agent only for grok. Codex's hooks come from the convoy plugin.
-    files = {Path("AGENTS.md"), *END_SKILL_RELATIVE, *POINTER_RELS,
-             CLAUDE_SETTINGS_RELATIVE, GROK_INBOX_HOOK_RELATIVE}
-    if _harness_bin(to) == "grok":
-        files.add(GROK_AGENT_RELATIVE)
+    # The pointer, the hooks and the root pointers, for every harness. Skills ship from the
+    # convoy plugin, and Codex's hooks come from it too.
+    files = {Path("AGENTS.md"), *POINTER_RELS, CLAUDE_SETTINGS_RELATIVE, GROK_INBOX_HOOK_RELATIVE}
     return sorted(f.as_posix() for f in files)
 
 
@@ -697,8 +826,8 @@ def _trust_codex(wt: str, home: Path) -> list[dict[str, Any]]:
 
 
 # Codex keys a plugin hook "{plugin_id}:{relative_path}:{event}:{group}:{handler}"; the convoy
-# plugin (plugins/convoy here, and Deploy-Forward/plugins) declares `hooks: ./codex-hooks.json`,
-# and plugin_id is convoy@<marketplace> (convoy@convoy from this repository). One review by the person covers every project,
+# plugin (Deploy-Forward/plugins) declares `hooks: ./codex-hooks.json`, and plugin_id is
+# convoy@<marketplace> (convoy@deploy-forward from the published one). One review by the person covers every project,
 # where a project `.codex/hooks.json` is keyed by its absolute path and so is new in every worktree.
 CODEX_DEFAULT_PLUGIN_ID = "convoy@deploy-forward"
 CODEX_PLUGIN_HOOK_EVENTS = ("stop", "post_tool_use")
@@ -850,7 +979,7 @@ CONVOY_PATH_BLOCK = (
 )
 
 
-def ensure_interactive_path(home: Path | None = None) -> dict[str, Any]:
+def ensure_interactive_path(home: Path | None = None, *, write: bool = True) -> dict[str, Any]:
     """Ungate harness bins for interactive non-login bash (desktop terminals).
 
     roster.present is shutil.which on the MCP/agent process PATH. That is not
@@ -861,7 +990,8 @@ def ensure_interactive_path(home: Path | None = None) -> dict[str, Any]:
 
     Writes an idempotent block into ~/.bashrc. No-op on Windows (WT inherits
     user PATH). Does not clobber vendor installer blocks. Does not source
-    the file into a foreign PID.
+    the file into a foreign PID. write=False (a read verb) writes nothing and
+    names the file in would_write instead.
     """
     out: dict[str, Any] = {
         "ok": True,
@@ -882,6 +1012,9 @@ def ensure_interactive_path(home: Path | None = None) -> dict[str, Any]:
         if CONVOY_PATH_BEGIN in text:
             out["path_ok"] = True
             return out
+        if not write:
+            out["would_write"] = [str(bashrc)]
+            return out
         prefix = text.rstrip()
         new = (prefix + "\n\n" if prefix else "") + CONVOY_PATH_BLOCK
         if not new.endswith("\n"):
@@ -894,6 +1027,102 @@ def ensure_interactive_path(home: Path | None = None) -> dict[str, Any]:
         out["ok"] = False
         out["error"] = type(e).__name__ + ": " + str(e)
         return out
+
+
+# The test guard sets this to a reading with no source for a whole run: a live launch under
+# test then probes no vendor CLI for its heartbeat. None in production (the vendor's reading).
+TEST_LAUNCH_USAGE_READING: Callable[[str], dict[str, Any]] | None = None
+
+
+def _first_run_plan(out: dict[str, Any], to: str, wt: Any, write_repo_files: bool | None) -> dict[str, Any]:
+    """What a live first run would write, read from disk and never written (a dry run).
+
+    dry_run_writes: the worktree files a live run would write (relative); would_write keeps
+    its live meaning (person files only an opt-in writes); would_write_home: the home files
+    and trust stores."""
+    out["dry_run"] = True
+    out["prepared"] = False
+    out["would_write_home"] = []
+    out["hook_trust_skipped"] = "dry-run"
+    if os.name != "nt":
+        bashrc = Path.home() / ".bashrc"
+        try:
+            has_block = bashrc.is_file() and CONVOY_PATH_BEGIN in bashrc.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            has_block = False
+        out["path_bashrc"] = str(bashrc)
+        out["path_ok"] = has_block
+        if not has_block:
+            out["would_write_home"].append(str(bashrc))
+    else:
+        out["path_ok"] = True
+        out["path_host"] = "windows-user"
+    has_wt = (isinstance(wt, str) and wt.strip()) or isinstance(wt, Path)
+    if has_wt:
+        wt_path = Path(wt)
+        try:
+            home_worktree = wt_path.resolve() == Path.home().resolve()
+        except OSError:
+            home_worktree = False
+        if not home_worktree:
+            from . import repo as _repo
+            person_files = write_repo_files is True or (write_repo_files is None and (
+                _repo.repo_files_opted_in(wt_path) or _repo.is_minted_worktree(wt_path)))
+            out["write_repo_files"] = bool(person_files)
+            files = repo_files_for(to)
+            if write_repo_files is False:
+                out["would_write"] = files
+                live_writes: list[str] = []
+            else:
+                # would_write keeps its live meaning (person files only an opt-in writes).
+                from .identity import CLAUDE_SETTINGS_RELATIVE, CODEX_HOOKS_MIGRATION_NOTE, person_files_missing, stale_codex_hooks
+                local_rel = CLAUDE_SETTINGS_RELATIVE.as_posix()
+                skip = {local_rel} if _repo.is_tracked(wt_path, local_rel) else set()
+                if skip:
+                    out["would_write"].append(local_rel)
+                    out["notes"].append(TRACKED_SETTINGS_NOTE)
+                if not person_files:
+                    out["would_write"] = sorted(set(out["would_write"]) | set(person_files_missing(wt_path)))
+                if _harness_bin(to) == "codex" and stale_codex_hooks(wt_path):
+                    out["notes"].append(CODEX_HOOKS_MIGRATION_NOTE)
+                live_writes = [f for f in files if (person_files or _convoy_named(f)) and f not in skip]
+            # dry_run_writes: what the live run would write into this worktree.
+            out["dry_run_writes"] = sorted(set(live_writes) | ({".git/info/exclude"} if live_writes else set()))
+    if not _is_claude(to):
+        return out
+    if not has_wt:
+        out["ok"] = False
+        out["error"] = "no worktree"
+        return out
+    wt_path = Path(wt)
+    if _is_home_claude_settings(_claude_settings_path(wt_path)):
+        out["ok"] = False
+        out["error"] = "refuse home ~/.claude/settings.json"
+        return out
+    try:
+        if wt_path.resolve() == Path.home().resolve():
+            out["ok"] = False
+            out["error"] = "refuse home dir"
+            return out
+    except OSError:
+        pass
+    out["home_key"] = HOME_SETTINGS_KEY
+    home_path = _claude_home_settings_path()
+    out["settings_home"] = str(home_path)
+    home_data = _read_json_object(home_path)
+    if home_data is None:
+        out["home_error"] = "unparseable"  # a live run leaves it alone too
+    elif HOME_SETTINGS_KEY not in home_data:
+        out["would_write_home"].append(str(home_path))
+    if write_repo_files is not False:
+        out["settings"] = str(_claude_settings_path(wt_path))
+        state = _claude_home_state_path()
+        out["trust_settings_home"] = str(state)
+        if _read_json_object(state) is None:
+            out["trust_error"] = "unparseable"
+        else:
+            out["would_write_home"].append(str(state))
+    return out
 
 
 def ensure_first_run(seat: dict[str, Any], root: Path | str | None = None, live: bool = True, *,
@@ -917,9 +1146,8 @@ def ensure_first_run(seat: dict[str, Any], root: Path | str | None = None, live:
     for both slash spellings of the worktree key.
     Never write ~/.claude if worktree IS the home dir.
     Grok/codex: no Claude settings write. All harnesses with a non-home
-    worktree get the AGENTS.md pointer to the Convoy plugin skills; retired
-    neuron-identity / neuron-receive copies Convoy wrote there are removed and
-    listed in identity_removed. Persona is role.md, not CLI.
+    worktree get the AGENTS.md pointer to the Convoy plugin skills. No skill text is
+    written and nothing is removed; identity_removed stays empty. Persona is role.md, not CLI.
     Never ola-brain, side-chat, grok -p/-c, --append-system-prompt.
     """
     to = str((seat or {}).get("to") or "").strip()
@@ -939,13 +1167,11 @@ def ensure_first_run(seat: dict[str, Any], root: Path | str | None = None, live:
         "path_bashrc": None,
         "path_ok": False,
         "path_host": None,
-        # identity_* names kept for callers: the pointer write and the retired
-        # copies install_neuron_identity removed, not an identity skill.
+        # identity_* names kept for callers: the pointer write, not an identity skill.
+        # identity_removed stays empty: Convoy deletes nothing in a worktree.
         "identity_written": False,
         "identity_removed": [],
         "identity_agents": None,
-        "agent_written": False,
-        "agent_path": None,
         "inbox_hook_written": False,
         "inbox_hook": None,
         "hook_trust": [],
@@ -956,6 +1182,8 @@ def ensure_first_run(seat: dict[str, Any], root: Path | str | None = None, live:
         "trust_stores_written": [],
         "home_key": None,
     }
+    if not live:
+        return _first_run_plan(out, to, wt, write_repo_files)
     settings_tracked = False
     path_card = ensure_interactive_path()
     out["path_written"] = bool(path_card.get("path_written"))
@@ -998,12 +1226,7 @@ def ensure_first_run(seat: dict[str, Any], root: Path | str | None = None, live:
             out["identity_agents"] = ident.get("agents")
             if ident.get("error"):
                 out["identity_error"] = ident["error"]
-            if _harness_bin(to) == "grok":
-                agent_card = ensure_grok_agent(wt_path)
-                out["agent_written"] = bool(agent_card.get("written"))
-                out["agent_path"] = agent_card.get("agent")
-                if agent_card.get("error"):
-                    out["agent_error"] = agent_card["error"]
+            out["notes"].extend(ident.get("warnings") or [])
             # Hook files only matter to a launched pane, and resolving the hook
             # command probes a shell; a dry bring-up (no runner) skips it.
             if live:
@@ -1012,12 +1235,17 @@ def ensure_first_run(seat: dict[str, Any], root: Path | str | None = None, live:
                 # lands as its own kind=usage row at launch, so the thread tab
                 # is explicit before the first tool call. Only a reading the
                 # vendor gave (require_source); never blocks the launch.
-                try:
-                    from .inbox import stamp_usage_row
-                    hb = stamp_usage_row(root, sid, to, require_source=True)
-                    out["usage_heartbeat"] = hb.get("ts") if hb else None
-                except Exception:  # a heartbeat must never break a launch
-                    out["usage_heartbeat"] = None
+                out["usage_heartbeat"] = None
+                sid = (seat or {}).get("session_id")
+                if root is not None and isinstance(sid, str) and sid.strip():
+                    try:
+                        from .inbox import stamp_usage_row
+                        hb = stamp_usage_row(Path(root), sid.strip(), to, require_source=True,
+                                             probe_fn=TEST_LAUNCH_USAGE_READING)
+                        out["usage_heartbeat"] = hb.get("ts") if hb else None
+                    except Exception as e:  # noqa: BLE001 - a heartbeat must never break a launch
+                        # Any error, expected or not, is recorded on the card and the launch goes on.
+                        out["usage_heartbeat_error"] = type(e).__name__ + ": " + str(e)
             else:
                 hook_card = {"ok": True, "written": False, "command": None, "kinds": None, "skipped": "dry-run"}
             out["inbox_hook_written"] = bool(hook_card.get("written"))
@@ -1029,6 +1257,11 @@ def ensure_first_run(seat: dict[str, Any], root: Path | str | None = None, live:
             out["inbox_claude_hook"] = claude_hook
             if hook_card.get("error"):
                 out["inbox_hook_error"] = hook_card["error"]
+            if hook_card.get("unresolved"):
+                # The bare `convoy` does not resolve where the hooks run: refuse the launch rather
+                # than start a pane whose hooks cannot fire, or bake an interpreter path instead.
+                out.update({"ok": False, "hook_refused": True, "error": hook_card.get("error")})
+                return out
             # Vendor trust stores are machine-wide: written only on a live
             # bring-up, never on --dry-run / crew without --launch.
             if live:
@@ -1119,7 +1352,7 @@ def ensure_first_run(seat: dict[str, Any], root: Path | str | None = None, live:
 def _with_claude_live_flags(argv: list[str], to: Any) -> list[str]:
     """Live Claude argv includes --permission-mode bypassPermissions and --allow-dangerously-skip-permissions. Dry resume_argv does not.
     Other harnesses take their live-only flags from the contract's `live_flags`
-    (cursor-agent: --trust --force, quoted from its --help, 2026-09-08)."""
+    (cursor-agent: --trust --force, quoted from its --help)."""
     parts = [str(a) for a in argv]
     if not _is_claude(to):
         from .harness_contract import live_flags
@@ -1184,6 +1417,7 @@ def isolated_wt_argv(thread: str | int, seats: list[dict[str, Any]], *, wt: str 
         window = thread_window_name(key or name or "thread")
     wt_bin = str(wt or "wt")
     argv: list[str] = [wt_bin, "-w", str(window)]
+    records: list[tuple[str, list[str], str | None]] = []
     for i, seat in enumerate(panes):
         if i == 0 and first:
             argv.append("new-tab")
@@ -1217,8 +1451,7 @@ def isolated_wt_argv(thread: str | int, seats: list[dict[str, Any]], *, wt: str 
             raise ValueError("refuse --append-system-prompt")
         if "--" in inner:
             raise ValueError("refuse -- before harness exe")
-        low = " ".join(inner).lower()
-        if _is_wrapper_text(low):
+        if _is_wrapper_exe(exe):   # the program, never its arguments (a root may name a wrapper)
             raise ValueError("refuse ola-brain / side-chat / UltraCode-Shim wrap")
         if root is not None and not raw:
             # The pane runs the Convoy pane host, which spawns the harness
@@ -1226,9 +1459,9 @@ def isolated_wt_argv(thread: str | int, seats: list[dict[str, Any]], *, wt: str 
             # reach the body. The launch record is written from the argv validated just above
             # (absolute exe, no wrapper, no --append-system-prompt, live flags, boot prompt) and
             # BEFORE the swap, so the host executes exactly what the terminal would have.
-            from .pane_host import write_launch_argv
             from .targeted_launch import managed_host_argv
-            write_launch_argv(Path(root), str(seat.get("session_id") or ""), inner, str(cwd) if cwd else None)
+            # Recorded only after every pane passes: a refused second pane leaves no record for the first.
+            records.append((str(seat.get("session_id") or ""), inner, str(cwd) if cwd else None))
             inner = managed_host_argv(Path(root), seat)
         title = thread_pane_title(label, seat)
         argv.extend(["--title", title])
@@ -1242,6 +1475,10 @@ def isolated_wt_argv(thread: str | int, seats: list[dict[str, Any]], *, wt: str 
         raise ValueError("refuse -- before harness exe")
     if any(a == "^;" for a in argv):
         raise ValueError("refuse cmd ^; — use literal ; in argv")
+    if records:
+        from .pane_host import write_launch_argv
+        for sid, inner_argv, cwd_s in records:
+            write_launch_argv(Path(root), sid, inner_argv, cwd_s)
     return argv
 
 
@@ -1345,7 +1582,7 @@ def pane_env(base: dict[str, str] | None = None, *, registry: dict[str, str] | N
     environment plus the logon-time process variables and Convoy's own
     CONVOY_* settings; never the launcher's shell identity or PATH.
 
-    Live 2026-09-10, a private client repo, cursor-agent 2026.09.02-2026.09.08: the
+    Observed with cursor-agent 2026.09.02-2026.09.08: the
     hook runner builds a PowerShell pipeline (`Get-Content -LiteralPath ...
     -Raw | & { $input | <hook> }`) and runs it in the shell it picks from the
     environment. Panes launched from a Git Bash tool call inherited
@@ -1362,8 +1599,8 @@ def pane_env(base: dict[str, str] | None = None, *, registry: dict[str, str] | N
     env = dict(_registry_env() if registry is None else registry)
     # os.environ on Windows uppercases its keys (SYSTEMROOT), while the
     # registry and the harness launchers spell them mixed-case (SystemRoot);
-    # live 2026-09-10 a case-sensitive copy dropped SystemRoot and every
-    # cursor-agent.CMD died with "The system cannot find the path specified".
+    # a case-sensitive copy drops SystemRoot and every
+    # cursor-agent.CMD dies with "The system cannot find the path specified".
     upper = {k.upper(): v for k, v in src.items()}
     present = {k.upper() for k in env}
     for name in _WIN_PROCESS_VARS:
@@ -1521,7 +1758,7 @@ def _hop_seats(root: Path, cid: str) -> list[dict[str, Any]]:
 
 def _cloud_seats(root: Path, cid: str, session_ids: list[str] | None = None) -> list[dict[str, Any]]:
     """Chairs bring_up must NOT make a pane: a cloud neuron is not a local
-    process. No cloud launcher exists (2026-09-04); its connected proof will
+    process. No cloud launcher exists; its connected proof will
     be an MCP attach, and the card says so instead of spawning."""
     return [
         {"session_id": s.get("session_id"), "to": s.get("to"), "where": "cloud", "pane": False,
@@ -1533,32 +1770,12 @@ def _cloud_seats(root: Path, cid: str, session_ids: list[str] | None = None) -> 
 
 def _only(seats: list[dict[str, Any]], session_ids: list[str] | None) -> list[dict[str, Any]]:
     """None means every seat (the bulk show); a list names exactly the chairs
-    a caller minted. crew (2026-09-04) launches its own N chairs this way, so
+    a caller minted. crew launches its own N chairs this way, so
     an older chair with a live body is never handed a second --resume."""
     if session_ids is None:
         return seats
     wanted = {str(s) for s in session_ids}
     return [s for s in seats if str(s.get("session_id") or "") in wanted]
-
-
-def _seat_with_agent(root: Path, seat: dict[str, Any], first_run: dict[str, Any]) -> dict[str, Any]:
-    """Point an agent-less grok seat at the Convoy-owned agent file.
-
-    An explicit seat agent (e.g. agents/cloud-lead.md) always wins. Persists
-    onto the seat row when it has a session_id, so resume_argv sees --agent
-    on later bring_up without first-run. Never touches the vendor resume id.
-    """
-    agent_path = (first_run or {}).get("agent_path")
-    to = str((seat or {}).get("to") or "")
-    if not agent_path or _harness_bin(to) != "grok":
-        return seat
-    existing = seat.get("agent")
-    if isinstance(existing, str) and existing.strip():
-        return seat
-    sid = seat.get("session_id")
-    if isinstance(sid, str) and sid.strip():
-        set_seat_agent(root, sid.strip(), str(agent_path))
-    return {**seat, "agent": str(agent_path)}
 
 
 def _window_for(root: Path, seat: dict[str, Any], rect: dict[str, int] | None, cid: str, thread: str | None) -> dict[str, Any]:
@@ -1599,8 +1816,8 @@ def bring_up(root: Path, convoy_id: str | None = None, thread: str | None = None
 
     write_repo_files None writes every repo file only into a minted worktree (ensure_first_run);
     True is the person's --write-repo-files.
-    Default runner is None (dry / no-op). Dry-run still calls ensure_first_run and
-    must not Popen wt. Pass live_runner only for a real TUI pop (one isolated_wt_argv).
+    Default runner is None (dry / no-op). A dry run writes nothing: first_run is the plan
+    (would_write, would_write_home) and it must not Popen wt. Pass live_runner only for a real TUI pop (one isolated_wt_argv).
     Unit tests must not pass live_runner without mocking Popen.
     session_ids=None is the bulk show; a list restricts the window to those chairs.
     """
@@ -1643,11 +1860,12 @@ def bring_up(root: Path, convoy_id: str | None = None, thread: str | None = None
         hops = [refresh_identity(root, s) for s in hops]
     tile_fn = tiler or tile_rects
     rects = tile_fn(len(hops))
-    try:
-        from .conductor import ensure_contract_copy
-        ensure_contract_copy(root)   # the conductor's counterpart to the seats' AGENTS block
-    except Exception:  # a missing mirror must never block a launch
-        pass
+    if runner is not None:   # a dry run writes nothing, not even the mirror
+        try:
+            from .conductor import ensure_contract_copy
+            ensure_contract_copy(root)   # the conductor's counterpart to the seats' AGENTS block
+        except Exception:  # a missing mirror must never block a launch
+            pass
     windows: list[dict[str, Any]] = []
     effective: list[dict[str, Any]] = []
     for i, s in enumerate(hops):
@@ -1656,7 +1874,6 @@ def bring_up(root: Path, convoy_id: str | None = None, thread: str | None = None
             fr = ensure_first_run(s, root=root, live=runner is not None, write_repo_files=write_repo_files)
         except Exception as e:
             fr = {"ok": False, "prepared": False, "wrote": False, "settings": None, "error": str(e), "home_written": False, "settings_home": None}
-        s = _seat_with_agent(root, s, fr)
         effective.append(s)
         win = _window_for(root, s, rect, cid, bound)
         win["first_run"] = {
@@ -1668,11 +1885,17 @@ def bring_up(root: Path, convoy_id: str | None = None, thread: str | None = None
             "trust_written": bool(fr.get("trust_written")),
             "trust_settings_home": fr.get("trust_settings_home"),
             "would_write": list(fr.get("would_write") or []),
+            "would_write_home": list(fr.get("would_write_home") or []),
+            "dry_run_writes": list(fr.get("dry_run_writes") or []),
+            "dry_run": bool(fr.get("dry_run")),
             "notes": list(fr.get("notes") or []),
             "trust_stores_written": list(fr.get("trust_stores_written") or []),
         }
         if fr.get("error"):
             win["first_run"]["error"] = fr["error"]
+        if fr.get("hook_refused"):
+            win["ok"] = False
+            win["error"] = str(fr.get("error"))
         windows.append(win)
     if runner is not None:
         ready: list[dict[str, Any]] = []

@@ -45,7 +45,7 @@ from .cmd import convoy_root_command
 from .convoy import broad_worktree, list_seats, read_id, read_thread
 from .index import find_root
 from .harness_contract import canonical_harness_id
-from .pane_host import read_host_records
+from .pane_host import read_host_records, record_matches_start
 from .layer import utc_now
 from .pulse import chair_reachable, pulse_is_fresh, read_pulse
 from .wait import listening_wait_file
@@ -66,7 +66,10 @@ _HELPER_MARKS = ("--type=", "daemon run", "--bg-pty-host", "app-server", "mcp-se
 
 
 def enumerate_processes(*, attempts: int = 3, timeout: float = 150) -> list[dict[str, Any]]:
-    """{pid, ppid, cmdline, cwd|None} for every process the OS will show.
+    """{pid, ppid, cmdline, cwd|None, started|None} for every process the OS will show.
+    started is the process's creation time (Windows FILETIME, Linux start tick, other POSIX
+    Unix seconds), None when it cannot be read; it is what tells a parent from a process that
+    reused a dead parent's pid.
     Raises on failure; callers turn that into source=null + error. attempts and
     timeout bound the external call (seconds); a caller on a send's path passes
     one short attempt so a slow process table can never hold the send."""
@@ -82,13 +85,15 @@ def _enumerate_windows(*, attempts: int = 3, timeout: float = 150) -> list[dict[
     if not shell:
         raise OSError("neither powershell nor pwsh on PATH")
     # The encoding set can throw on a redirected console; CIM can answer
-    # "Call cancelled" transiently under load (seen live 2026-09-03). Guard
+    # "Call cancelled" transiently under load. Guard
     # the first, retry the second once, and put stderr on the error.
     # -OperationTimeoutSec: without it CIM answered "Call cancelled"
-    # (0x80041032) on a loaded host with ~1000 processes (live 2026-09-03).
+    # (0x80041032) on a host with ~1000 processes.
     ps = ("try { [Console]::OutputEncoding=[Text.Encoding]::UTF8 } catch { }; "
           "Get-CimInstance Win32_Process -OperationTimeoutSec " + str(max(1, min(120, int(timeout)))) + " "
-          "| Select-Object ProcessId,ParentProcessId,CommandLine | ConvertTo-Json -Compress")
+          "| Select-Object ProcessId,ParentProcessId,CommandLine,"
+          "@{n='Started';e={if ($_.CreationDate) { $_.CreationDate.ToFileTime() } else { $null }}} "
+          "| ConvertTo-Json -Compress")
     last: Exception | None = None
     out = ""
     for attempt in range(max(1, int(attempts))):
@@ -108,7 +113,23 @@ def _enumerate_windows(*, attempts: int = 3, timeout: float = 150) -> list[dict[
     if isinstance(data, dict):
         data = [data]
     return [{"pid": int(d.get("ProcessId") or 0), "ppid": int(d.get("ParentProcessId") or 0),
-             "cmdline": str(d.get("CommandLine") or ""), "cwd": None} for d in data]
+             "cmdline": str(d.get("CommandLine") or ""), "cwd": None,
+             "started": _int_or_none(d.get("Started"))} for d in data]
+
+
+def _int_or_none(value: Any) -> int | None:
+    try:
+        return int(value) if value is not None and str(value).strip() != "" else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _parse_proc_stat(stat: str) -> tuple[int, int | None]:
+    """(ppid, start tick) from /proc/<pid>/stat. The command name may hold spaces and
+    parentheses, so fields are counted from the last ')': state is field 3, ppid field 4,
+    starttime field 22."""
+    fields = stat[stat.rindex(")") + 2:].split()
+    return int(fields[1]), (_int_or_none(fields[19]) if len(fields) > 19 else None)
 
 
 def _enumerate_proc() -> list[dict[str, Any]]:
@@ -120,7 +141,7 @@ def _enumerate_proc() -> list[dict[str, Any]]:
         try:
             with open("/proc/" + entry + "/stat", "r", encoding="utf-8", errors="replace") as f:
                 stat = f.read()
-            ppid = int(stat[stat.rindex(")") + 2:].split()[1])
+            ppid, started = _parse_proc_stat(stat)
             with open("/proc/" + entry + "/cmdline", "rb") as f:
                 cmd = f.read().replace(b"\0", b" ").decode("utf-8", "replace").strip()
             try:
@@ -129,20 +150,41 @@ def _enumerate_proc() -> list[dict[str, Any]]:
                 cwd = None
         except (OSError, ValueError, IndexError):
             continue
-        procs.append({"pid": pid, "ppid": ppid, "cmdline": cmd, "cwd": cwd})
+        procs.append({"pid": pid, "ppid": ppid, "cmdline": cmd, "cwd": cwd, "started": started})
     return procs
 
 
 def _enumerate_ps(*, timeout: float = 20) -> list[dict[str, Any]]:
-    out = subprocess.run(["ps", "-eww", "-o", "pid=,ppid=,args="], capture_output=True, text=True,
-                         encoding="utf-8", errors="replace", timeout=timeout, check=True, **quiet_spawn_kwargs()).stdout
     procs: list[dict[str, Any]] = []
-    for line in out.splitlines():
-        parts = line.strip().split(None, 2)
-        if len(parts) < 2:
-            continue
-        procs.append({"pid": int(parts[0]), "ppid": int(parts[1]),
-                      "cmdline": parts[2] if len(parts) > 2 else "", "cwd": None})
+    try:
+        # lstart is five words ("Mon Oct  6 10:00:00 2026") in the C locale.
+        out = subprocess.run(["ps", "-eww", "-o", "pid=,ppid=,lstart=,args="], capture_output=True, text=True,
+                             encoding="utf-8", errors="replace", timeout=timeout, check=True,
+                             env={**os.environ, "LC_ALL": "C"}, **quiet_spawn_kwargs()).stdout
+        for line in out.splitlines():
+            parts = line.strip().split(None, 7)
+            if len(parts) < 7:
+                continue
+            try:
+                started: int | None = int(time.mktime(time.strptime(" ".join(parts[2:7]),
+                                                                    "%a %b %d %H:%M:%S %Y")))
+            except (ValueError, OverflowError):
+                started = None
+            procs.append({"pid": int(parts[0]), "ppid": int(parts[1]),
+                          "cmdline": parts[7] if len(parts) > 7 else "", "cwd": None, "started": started})
+    except (OSError, subprocess.SubprocessError, ValueError):
+        # A ps without lstart: the table carries no start times at all (no "started" key),
+        # and the walk falls back to its cycle check alone.
+        procs = []
+        out = subprocess.run(["ps", "-eww", "-o", "pid=,ppid=,args="], capture_output=True, text=True,
+                             encoding="utf-8", errors="replace", timeout=timeout, check=True,
+                             **quiet_spawn_kwargs()).stdout
+        for line in out.splitlines():
+            parts = line.strip().split(None, 2)
+            if len(parts) < 2:
+                continue
+            procs.append({"pid": int(parts[0]), "ppid": int(parts[1]),
+                          "cmdline": parts[2] if len(parts) > 2 else "", "cwd": None})
     if sys.platform == "darwin":
         _fill_cwd_lsof(procs)
     return procs
@@ -359,22 +401,55 @@ def _mentions_path(cmdline: str, worktree: Any) -> bool:
     return False
 
 
+ANCESTRY_HOPS = 32
+
+
+def walk_ancestry(by_pid: Mapping[int, dict[str, Any]], pid: Any,
+                  *, limit: int = ANCESTRY_HOPS) -> list[dict[str, Any]]:
+    """The process at pid and its ancestors, nearest first.
+
+    The OS reuses pids, so a ppid can name a process that started after its child: the real
+    parent died and an unrelated process took its number. That process is not an ancestor.
+    The walk stops at a repeated pid (a cycle), at a parent that started after its child, and
+    at a start time that cannot be read; each ends the chain, which errs toward "no further
+    ancestor" and never toward a second harness outside the caller. A table that carries no
+    start times at all (no "started" key) gets the cycle check alone."""
+    chain: list[dict[str, Any]] = []
+    seen: set[Any] = set()
+    cur = by_pid.get(pid) if pid is not None else None
+    while cur is not None and len(chain) < limit and cur.get("pid") not in seen:
+        chain.append(cur)
+        seen.add(cur.get("pid"))
+        parent = by_pid.get(cur.get("ppid"))
+        if parent is None or parent.get("pid") in seen:
+            break
+        if "started" in cur and "started" in parent:
+            born, parent_born = cur.get("started"), parent.get("started")
+            if born is None or parent_born is None:
+                break
+            try:
+                if int(parent_born) > int(born):
+                    break
+            except (TypeError, ValueError):
+                break
+        cur = parent
+    return chain
+
+
+def _record_names(by_pid: Mapping[int, dict[str, Any]], pid: int, started: Any, launched_at: Any) -> bool:
+    """Does the table's process at pid match a record of it? A pid absent from the table, or
+    without a readable start, is not evidence of reuse."""
+    proc = by_pid.get(pid)
+    if proc is None:
+        return True
+    return record_matches_start(proc.get("started"), started, launched_at)
+
+
 def _collapse(found: list[dict[str, Any]], by_pid: dict[int, dict[str, Any]]) -> list[dict[str, Any]]:
     """One body per ancestor chain: drop a match whose ancestor also matched."""
     pids = {b["pid"] for b in found}
-    out = []
-    for b in found:
-        cur = by_pid.get(b["pid"])
-        hops, dup = 0, False
-        while cur is not None and hops < 32:
-            cur = by_pid.get(cur.get("ppid"))
-            hops += 1
-            if cur is not None and cur["pid"] in pids:
-                dup = True
-                break
-        if not dup:
-            out.append(b)
-    return out
+    return [b for b in found
+            if not any(p["pid"] in pids for p in walk_ancestry(by_pid, b["pid"])[1:])]
 
 
 def match_processes(root: Path, procs: list[dict[str, Any]], *, now: str | None = None) -> dict[str, Any]:
@@ -399,7 +474,8 @@ def match_processes(root: Path, procs: list[dict[str, Any]], *, now: str | None 
             pid_value = int(recorded_pid) if recorded_pid is not None else None
         except (TypeError, ValueError):
             pid_value = None
-        if pid_value is not None and not recorded_gone and pid_value in by_pid:
+        if (pid_value is not None and not recorded_gone and pid_value in by_pid and
+                _record_names(by_pid, pid_value, s.get("harness_started"), s.get("launched_at"))):
             cmd = str(by_pid[pid_value].get("cmdline") or "")
             found.append({"pid": pid_value, "via": "pid", "exe": _liveness_harness(cmd) or harness})
         if not found:
@@ -440,22 +516,15 @@ def match_processes(root: Path, procs: list[dict[str, Any]], *, now: str | None 
         exe = _liveness_harness(str(p.get("cmdline") or ""))
         if not exe or p["pid"] in claimed:
             continue
-        cur, hops, owned = by_pid.get(p.get("ppid")), 0, False
-        while cur is not None and hops < 32:
-            if cur["pid"] in claimed:
-                owned = True
-                break
-            cur = by_pid.get(cur.get("ppid"))
-            hops += 1
+        owned = any(a["pid"] in claimed for a in walk_ancestry(by_pid, p["pid"])[1:])
         if not owned:
             unassigned.append({"pid": p["pid"], "harness": exe, "cwd": p.get("cwd"), "close": "manual-close-required"})
     # A chair with no matched body is only NOT LIVE when no process of its
     # harness is running unplaced. If unplaceable candidates exist, liveness
     # is UNKNOWN (null), never false: on Windows a codex pane carries neither
     # a token nor its worktree in the command line and the OS exposes no cwd,
-    # so eight live codex processes sat beside a chair reporting live=false
-    # (live 2026-09-03 — and this session reported that as "not live" to the
-    # user, which was inventing a fact).
+    # so live codex processes can sit beside a chair that would report
+    # live=false; reporting that as "not live" would be inventing a fact.
     by_harness: dict[str, int] = {}
     for u in unassigned:
         by_harness[u["harness"]] = by_harness.get(u["harness"], 0) + 1
@@ -594,12 +663,7 @@ def hook_body(pid: int | None = None, procs: list[dict[str, Any]] | None = None,
         return {"harness": None, "nested": None, "error": error}
     me = pid if pid is not None else (_TEST_PID if _TEST_PID is not None else os.getpid())
     by_pid = {p["pid"]: p for p in procs}
-    chain: list[dict[str, Any]] = []
-    cur = by_pid.get(me)
-    while cur is not None and len(chain) < 32:
-        chain.append(cur)
-        cur = by_pid.get(cur.get("ppid"))
-    body, outer = _body_and_outer(chain)
+    body, outer = _body_and_outer(walk_ancestry(by_pid, me))
     return {"harness": body[0][2] if body else None, "nested": bool(outer), "error": None}
 
 
@@ -694,13 +758,7 @@ def _identify(root: Path, pid: int | None = None, procs: list[dict[str, Any]] | 
                       str(root_thread) + " (" + str(root_id) + "): always pass --root " + str(root) +
                       " from this worktree, or move the chair to a worktree without a foreign .convoy")
     by_pid = {p["pid"]: p for p in procs}
-    chain: list[dict[str, Any]] = []
-    cur = by_pid.get(me)
-    hops = 0
-    while cur is not None and hops < 32:
-        chain.append(cur)
-        cur = by_pid.get(cur.get("ppid"))
-        hops += 1
+    chain = walk_ancestry(by_pid, me)
     seats = list_seats(root, require_session=True)
 
     def _refuse(reason: str, chairs: list[str] | None = None) -> dict[str, Any]:
@@ -807,9 +865,12 @@ def _identify(root: Path, pid: int | None = None, procs: list[dict[str, Any]] | 
                             record.get("status") == "running"):
                         for key in ("child_pid", "host_pid"):
                             try:
-                                hosted_pids.add(int(record[key]))
+                                value = int(record[key])
                             except (KeyError, TypeError, ValueError):
-                                pass
+                                continue
+                            if _record_names(by_pid, value, record.get(key[:-4] + "_started"),
+                                             record.get("started_at")):
+                                hosted_pids.add(value)
                 elsewhere = [b["pid"] for c in view["chairs"]
                              if c["session_id"] == hits[0]["session_id"]
                              for b in c["bodies"]
@@ -859,7 +920,10 @@ def _identify(root: Path, pid: int | None = None, procs: list[dict[str, Any]] | 
                 value = int(record.get(key))
             except (TypeError, ValueError):
                 continue
-            by_recorded_pid.setdefault(value, sid)
+            # The record names the process it launched by pid and start time; a pid now held
+            # by a process that started later is someone else.
+            if _record_names(by_pid, value, record.get(key[:-4] + "_started"), record.get("started_at")):
+                by_recorded_pid.setdefault(value, sid)
     pid_hit: tuple[str, int] | None = None
     for p in chain:
         sid = by_recorded_pid.get(p["pid"])
@@ -973,8 +1037,8 @@ def _safe_enumerate(*, attempts: int = 3, timeout: float = 150) -> tuple[list[di
 def chair_live(root: Path, session_id: str, procs: list[dict[str, Any]] | None = None) -> bool:
     """True when the chair is live OR its liveness is UNKNOWN. Callers are
     no-steal guards: refusing on unknown is the safe answer, and inventing
-    `not live` is how a second body got launched on a live codex thread
-    (2026-09-03). Use chair_liveness() when you need the three states."""
+    `not live` is how a second body gets launched on a live codex thread.
+    Use chair_liveness() when you need the three states."""
     return chair_liveness(root, session_id, procs) is not False
 
 

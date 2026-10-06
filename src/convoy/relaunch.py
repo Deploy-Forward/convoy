@@ -30,7 +30,7 @@ from .lifecycle import convoy_root_command
 from .crew import await_seated
 from .inbox import enqueue, pending
 from .layer import feed_since, hook, utc_now
-from .pane_host import _read_state, pid_alive, request_close
+from .pane_host import _read_state, host_alive, pid_alive, request_close
 from .pulse import pulse_is_fresh, read_pulse
 
 EPOCH = "1970-01-01T00:00:00.000000Z"
@@ -53,7 +53,8 @@ def chair_occupancy(root: Path, row: dict[str, Any], *,
     for the chair. `alive` is injected so this is testable without a process
     table, and so a caller can supply a richer prober later.
 
-    `occupied` is True only when a pid of the CURRENT incarnation answers.
+    `occupied` is True only when a pid of the CURRENT incarnation answers and its start
+    time is the recorded body's (a reused pid is evidence 'pid-reused', not a body).
     Absence of evidence is not evidence of absence: with nothing recorded at
     all the answer is False with evidence ['no-host'], because a chair nobody
     ever hosted has no body to protect.
@@ -70,10 +71,15 @@ def chair_occupancy(root: Path, row: dict[str, Any], *,
         evidence.append("host-exited")
     occupied = False
     if pid is not None and str(row.get("process_state") or "") != "exited":
-        if alive(pid):
+        if not alive(pid):
+            evidence.append("pid-dead")
+        elif host_alive(pid, row.get("harness_started"), launched_at=row.get("launched_at"),
+                        alive=lambda _pid: True):
             occupied = True
         else:
-            evidence.append("pid-dead")
+            # The pid answers, but for a process that started after the recorded body: the OS
+            # gave that pid to someone else.
+            evidence.append("pid-reused")
     if pulse is not None and not pulse_is_fresh(pulse, now=now):
         evidence.append("pulse-stale")
     return {
@@ -262,11 +268,15 @@ def relaunch(root: Path | str, *, thread: str | None = None, runner: Runner | No
     launchable = [c for c in card["chairs"] if "refused" not in c]
     sids = [c["session_id"] for c in launchable]
     if not sids:
-        card["ok"] = True
+        # Every chair was refused: nothing launched, so the card is not ok, and each chair
+        # gets the command that would take it over.
+        card["ok"] = False
         card["launched"] = False
         card["windows"] = []
         card["seated"] = await_seated(root, [], timeout=0.0)
-        card["next"] = "relaunch --take-over"
+        card["error"] = "every chair refused the relaunch: " + ", ".join(
+            str(c["session_id"]) + " (" + str(c.get("refused")) + ")" for c in card["chairs"])
+        card["next"] = ["relaunch --seat " + str(c["session_id"]) + " --take-over" for c in card["chairs"]]
         return card
     if not dry:
         # The boot prompt is ONE-SHOT: join sets it, the seated ack clears it
@@ -296,18 +306,25 @@ def relaunch(root: Path | str, *, thread: str | None = None, runner: Runner | No
         card["error"] = str(up["error"])
     card["launched"] = (not dry) and bool(up.get("ok")) and all(
         bool(w.get("ok", True)) for w in card["windows"] if isinstance(w, dict))
+    if not card.get("error"):
+        # A window that failed is the relaunch's failure: name it at the top, not only per window.
+        failed = [w for w in card["windows"] if isinstance(w, dict) and w.get("ok") is False and w.get("error")]
+        if failed:
+            card["error"] = str(failed[0].get("session_id")) + ": " + str(failed[0]["error"])
     if not dry:
         # The temporal handoff, one row per launched chair. Dry never writes,
         # and a refused chair was not relaunched, so it gets no note.
+        from .cmd import _fwd
+        cmd = convoy_root_command(root)
         for c in launchable:
             since = c["last_seen"] or EPOCH
             body = ("Relaunched at " + now + " after the panes died. Your last feed row was " +
                     (c["last_seen"] or "never") + ". " + str(c["unread"]) + " inbox row(s) were waiting. "
-                    "Run: convoy --root " + str(root) + " feed --since " + since +
-                    "  then  convoy --root " + str(root) + " inbox --drain --seat " + c["session_id"] +
-                    "  then ack with  convoy --root " + str(root) + " seated --seat " + c["session_id"] +
+                    "Run: " + cmd + " feed --since " + since +
+                    "  then  " + cmd + " inbox --drain --seat " + c["session_id"] +
+                    "  then ack with  " + cmd + " seated --seat " + c["session_id"] +
                     " --token <the token from your boot prompt>. Continue from your worktree " +
-                    str(c["worktree"]) + " on its branch; rebase onto the lead branch before pushing.")
+                    _fwd(str(c["worktree"])) + " on its branch; rebase onto the lead branch before pushing.")
             item = enqueue(root, c["session_id"], body, to=str(c.get("harness") or ""), label="relaunch")
             c["relaunch_note"] = item.get("file")
         hook(root, "relaunch", "relaunch " + str(len(sids)) + " chairs", instance_id=None, author=None,

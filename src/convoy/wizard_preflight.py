@@ -19,8 +19,8 @@ from .mcp_http import _WRITE_TOOLS as WRITE_GATED, TOOLS as PACKAGED_TOOLS
 
 PUBLIC_MCP_URL = "http://127.0.0.1:8788/mcp"
 
-# Every verb the wizard skill calls (plugin/convoy/skills/convoy-wizard, Gate 0),
-# and only those: plugin_wizard_sequence_test holds Gate 0's list equal to this.
+# Every verb a guided setup calls (its Gate 0), and only those. This tuple is the list's
+# only source: no skill in the plugins repository carries a wizard Gate 0.
 # A dependency set, not a menu: user-facing capabilities stay live-only.
 # card superseded choices and the per-chair join/launch/seat/mint/bring_up walk:
 # the wizard reads card once and crew does the rest.

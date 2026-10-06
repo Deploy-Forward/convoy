@@ -177,6 +177,7 @@ class ListAttach(unittest.TestCase):
         with patch.dict(os.environ, {"CLAUDE_CODE_SESSION_ID": "synthetic-native-id", "CODEX_THREAD_ID": ""}), \
              patch("convoy.panes.identify", return_value={"ok": True, "chair": "synthetic-chair",
                    "via": "environment", "harness": "claude"}), \
+             patch("convoy.panes._TEST_PROCS", []), \
              patch("convoy.end._stop_work", return_value={}):
             result = end_task(root=self.root, hook_payload={"cwd": str(self.root), "turn_id": "synthetic-turn"})
         self.assertTrue(result["ok"], result)

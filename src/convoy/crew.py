@@ -2,8 +2,8 @@
 
 The wizard's old sequence (join + launch for chair 1, `seat` for chairs 2..N,
 bring_up) left chairs 2..N with no boot prompt - `seat` never writes one - so
-those panes came up with a bare harness argv and nobody told them to connect
-(reader 4, 2026-09-04). crew joins EVERY chair (boot prompt + token), mints
+those panes came up with a bare harness argv and nobody told them to connect.
+crew joins EVERY chair (boot prompt + token), mints
 one worktree per local chair from the checkout, and launches once through
 bring_up: one wt window, N panes, never launch_seat per chair.
 
@@ -24,6 +24,7 @@ import time
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
+from .refusal import next_step
 from .bringup import Runner, bring_up, codex_hooks_warning, pane_host_available
 from .convoy import list_seats, read_id, read_thread
 from .harness_contract import (canonical_harness_id, harness_entries, validate_effort, validate_launch_eligibility,
@@ -37,6 +38,10 @@ from .targeted_launch import (Runner as PaneRunner, Which, active_pane_argv, gro
 
 EPOCH = "1970-01-01T00:00:00.000000Z"
 STATES = ("connected", "pending", "stale")
+
+
+# A duplicate crew chair names the way to a new one (linted by printed_commands_test).
+CREW_NEW_TITLE = next_step("crew", "--seat", "<harness>,title=<name>")
 
 
 def _plan(root: Path, seats: list[dict[str, Any]], bound: str | None) -> list[dict[str, Any]]:
@@ -67,7 +72,8 @@ def _plan(root: Path, seats: list[dict[str, Any]], bound: str | None) -> list[di
         names.add(name)
         sid = name + "-" + (bound or "thread")
         if sid in existing:
-            raise ValueError("refuse seat " + str(i + 1) + ": chair already exists: " + sid)
+            raise ValueError("refuse seat " + str(i + 1) + ": chair already exists: " + sid +
+                             "; give it another title (" + CREW_NEW_TITLE.replace("<harness>", harness) + ")")
         plan.append({"harness": harness, "where": where, "model": model, "effort": effort,
                      "title": name, "session_id": sid})
     return plan
@@ -93,7 +99,7 @@ def crew(
     bound = read_thread(root)
     # launched starts False and is read from the runner's RESULT after bring_up.
     # It was `runner is not None`, so a crew refused before any write, with a
-    # live runner handed in, claimed to have acted (review 2026-09-04).
+    # live runner handed in, claimed to have acted.
     card: dict[str, Any] = {"ok": False, "convoy_id": read_id(root), "thread": bound, "seats": [], "launched": False}
     if card["convoy_id"] is None:
         card["error"] = "crew requires a bound thread root (onboard, or init + bind)"
@@ -204,15 +210,15 @@ def _bring_up_window(card: dict[str, Any], root: Path, sids: list[str], bound: s
         return _mark_partial(card, root, sids, "launch failed: " + str(e), retry=retry)
     card["windows"] = up.get("windows") or []
     card["cloud"] = up.get("cloud") or []
-    # Live 2026-09-09: two cursor-agent seats launched with dead hook files (the
-    # resolver found no hook-shell interpreter that imports convoy) and the card
-    # said nothing at the top; the caller reported "live" seats whose every tool
-    # was refused. Per-window errors now ride the card as warnings.
+    # Seats can launch with dead hook files (the resolver found no hook-shell
+    # interpreter that imports convoy); a card silent about that lets a caller
+    # report "live" seats whose every tool is refused. Per-window errors ride
+    # the card as warnings.
     warnings: list[str] = []
     for w in card["windows"]:
         if not isinstance(w, dict):
             continue
-        for k in ("inbox_hook_error", "identity_error", "agent_error"):
+        for k in ("inbox_hook_error", "identity_error"):
             if w.get(k):
                 warnings.append(str(w.get("session_id") or "?") + ": " + k + ": " + str(w[k]))
     if warnings:

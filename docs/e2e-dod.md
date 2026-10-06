@@ -130,19 +130,8 @@ the write gate is closed. That is **not** public Gate 0 GREEN.
 
 ## Marketplace pin
 
-Official SoT: https://github.com/xai-org/plugin-marketplace
-
-- Catalog lives in `.grok-plugin/marketplace.json` on that repo (not convoy's
-  `.cursor-plugin/marketplace.json`).
-- Plugin root to pin: `plugin/convoy` at
-  `b4030e4bac62807115fac1d787e33543d7c1218c`.
-- Pack mirrors Exa: `.grok-plugin/plugin.json`, `.mcp.json` (`type: http`),
-  `skills/{convoy,convoy-wizard}/SKILL.md`.
-- `gh repo view xai-org/plugin-marketplace` → `viewerPermission: READ`.
-  No `convoy` entry in the catalog (21 plugins). PR body:
-  `docs/marketplace-pr.md`.
-
-Re-pin after #52 merges onto `main` if that commit is not this SHA.
+Plugin packs and skills ship from Deploy-Forward/plugins, not from this
+repository; a marketplace entry pins a commit there.
 
 ## Production redeploy DoD (public wizard Gate 0 remains RED)
 

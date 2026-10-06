@@ -1,6 +1,6 @@
 """cursor-agent's effort rides its model id, never a flag.
 
-Live 2026-09-08 (cursor-agent 2026.08.11-e8db854, Pro+ login): the --help's
+Observed with cursor-agent 2026.08.11-e8db854: the --help's
 bracket override ('claude-opus-4-8[effort=high]') is refused by this build
 ("Cannot use this model"), and the refusal prints the account's catalog: 223
 ids shaped <family>-<effort>[-fast], e.g. gpt-5.6-luna-high, gpt-5.6-luna-xhigh,

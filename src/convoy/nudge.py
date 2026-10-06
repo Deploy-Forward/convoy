@@ -17,10 +17,11 @@ import uuid
 from pathlib import Path
 from typing import Any, Callable
 
+from .refusal import next_step
 from .consent import consume_consent, request_consent
 from .convoy import list_seats
 from .harness_contract import canonical_harness_id
-from .pane_host import host_state_path, pid_alive, read_host_records, request_nudge
+from .pane_host import console_injection_supported, host_alive, host_state_path, pid_alive, read_host_records, request_nudge
 from .panes import bodies as panes_bodies
 from .wt_walk import BUSY_RE, WtWalkAdapter
 from .synapse import try_codex_queue
@@ -99,6 +100,10 @@ WAKE_EVIDENCE = [
         ),
     },
 ]
+
+
+# A dry nudge names the live one (linted by printed_commands_test).
+NUDGE_NEXT = next_step("nudge", "--seat", "<seat>", "--keys", "<exact>", "--consent", "<grant>")
 
 
 def _seat_row(root: Path, session_id: str) -> dict[str, Any] | None:
@@ -317,7 +322,8 @@ def identify_target(
             continue
         if record.get("status") != "running":
             continue
-        if not alive(record.get("host_pid")):
+        if not host_alive(record.get("host_pid"), record.get("host_started"),
+                          launched_at=record.get("started_at"), alive=alive):
             continue
         card["host"] = "pane-host"
         card["identified"] = True
@@ -629,6 +635,18 @@ def _record_nudge_result(root: Path, session_id: str, nudge_id: str, result: dic
                 "delivered": False})
 
 
+_ADAPTERS = frozenset({"tmux-send-keys", "codex-queue", "wt-walk", "wt-sendinput", "pane-host"})
+
+
+def _cannot_deliver(adapter: Any) -> str | None:
+    """Why this adapter cannot type here, or None. Read before any consent is spent."""
+    if adapter not in _ADAPTERS:
+        return "no adapter to run"
+    if adapter == "pane-host" and not console_injection_supported():
+        return "pane-host nudge cannot type on this OS: console injection is Windows only"
+    return None
+
+
 def nudge_seat(
     root: Path | str,
     session_id: str,
@@ -673,9 +691,12 @@ def nudge_seat(
             and "no unique title" in str(card.get("reason") or ""):
         _arm_walk(root, session_id, card, idle_chairs_fn)
     if dry_run:
-        card["next"] = "nudge --seat " + str(session_id) + " --keys <exact> --consent <grant>"
+        card["next"] = NUDGE_NEXT.replace("<seat>", str(session_id)).removeprefix("convoy ")
+        # A dry nudge is ok only when it proved the pane it would type into.
+        card["ok"] = bool(card.get("identified"))
         return card
     if not card.get("identified"):
+        card["ok"] = False
         return card
     if card.get("adapter") == "grok-acp-unshipped":
         card["ok"] = True
@@ -721,9 +742,21 @@ def nudge_seat(
             return card
         card["pane"] = {"hwnd": probe.get("hwnd"), "title": probe.get("pane_title_after"),
                         "rule": probe.get("rule"), "walk": True}
-    pane = _pane_label(card.get("pane") if isinstance(card.get("pane"), dict) else None, target)
+    # The consent card names the transport that will really type: a tmux target only
+    # when the tmux adapter was chosen.
+    pane = _pane_label(card.get("pane") if isinstance(card.get("pane"), dict) else None,
+                       target if adapter == "tmux-send-keys" else None)
     to = str(seat.get("to") or card.get("harness") or "")
     worktree = str(seat.get("worktree") or "")
+    unable = _cannot_deliver(adapter)
+    if unable:
+        # Refused before the consent is asked for or spent: it stays usable.
+        card["ok"] = False
+        card["delivery"] = "refused"
+        card["delivered"] = False
+        card["reason"] = unable
+        card["error"] = unable
+        return card
     if not consent:
         waiting = request_consent(
             root, "nudge-pane",

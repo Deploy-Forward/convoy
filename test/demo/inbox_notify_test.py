@@ -101,6 +101,7 @@ class LiveSeatInbox(unittest.TestCase):
 
     def test_old_rewritten_consumed_row_is_not_pending(self):
         dest = inbox_path(self.root, "sess-grok")
+        dest.parent.mkdir(parents=True, exist_ok=True)   # reading never creates the inbox directory
         dest.write_text(
             json.dumps({
                 "ts": "2026-09-03T00:00:00.000000Z",
@@ -218,19 +219,16 @@ class LiveSeatInbox(unittest.TestCase):
         self.assertEqual(queued[0][1:5], ["queue", "--thread", "01codex", "--message"])
 
     def test_hook_command_is_probed_where_it_runs(self):
-        """Audit 2026-09-03 reversed PR 40's bare-only rule: the bare name was
-        shadowed by an unrelated shim on the audited machine and invisible to
-        Git Bash, so every hook written was dead. Hook files never travel (they
-        are gitignored per-worktree state), so an absolute interpreter path is
-        allowed when it is the command that actually resolves. The documents
-        take whatever the probe returned."""
+        """The bare name is probed where the hook runs; a shadowed or invisible name fails
+        closed (the launch refuses) instead of baking an interpreter path into the worktree.
+        The documents take whatever the probe returned, which is only ever the bare name."""
         self.assertEqual(inbox_hook_command(), INBOX_HOOK_COMMAND)
         self.assertEqual(INBOX_HOOK_COMMAND, "convoy inbox --hook-pretooluse")
         from convoy import cmd as _cmd
         res = _cmd.resolve_inbox_hook_command()
-        self.assertIn(res["resolved_via"], ("console-script", "interpreter", "interpreter+src", None))
+        self.assertIn(res["resolved_via"], ("console-script", None))
         if res["command"]:
-            self.assertTrue(res["command"].endswith("inbox --hook-pretooluse"))
+            self.assertEqual(res["command"], INBOX_HOOK_COMMAND)
             grok_doc = grok_inbox_hook_document(res["command"])
             claude_doc = claude_inbox_hook_document(res["command"])
             self.assertEqual(grok_doc["hooks"]["PreToolUse"][0]["hooks"][0]["command"], res["command"])
@@ -260,8 +258,8 @@ class LiveSeatInbox(unittest.TestCase):
         grok_raw = grok_path.read_text(encoding="utf-8")
         claude_data = json.loads(claude_path.read_text(encoding="utf-8"))
         resolved = card["command"]
-        self.assertTrue(resolved.endswith("inbox --hook-pretooluse"))
-        self.assertIn(card["resolved_via"], ("console-script", "interpreter", "interpreter+src", "kept-existing"))
+        self.assertEqual(resolved, "convoy inbox --hook-pretooluse")
+        self.assertEqual(card["resolved_via"], "console-script")
         self.assertIn(json.dumps(resolved)[1:-1], grok_raw)
         self.assertEqual(claude_data["hooks"]["PreToolUse"][0]["hooks"][0]["command"], resolved)
         self.assertEqual(claude_data["hooks"]["UserPromptSubmit"][0]["hooks"][0]["command"], resolved)

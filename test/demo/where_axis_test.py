@@ -95,12 +95,6 @@ class ContractCarriesACloudBlock(unittest.TestCase):
                 self.assertIsInstance(block["cli"], str, row["id"])
                 self.assertIn(block["cli"], block["evidence"], row["id"])
 
-    def test_plugin_copy_is_byte_identical_and_carries_the_block(self):
-        bundled = (REPO / "plugin" / "convoy" / "harness_effort.json").read_bytes()
-        packaged = (REPO / "src" / "convoy" / "harness_effort.json").read_bytes()
-        self.assertEqual(bundled, packaged)
-        self.assertIn("cloud", json.loads(bundled)["harnesses"][0])
-
     def test_cloud_contract_view_and_where_options_follow_the_contract(self):
         for row in load_harness_contract()["harnesses"]:
             self.assertEqual(cloud_contract(row["id"]), row["cloud"], row["id"])

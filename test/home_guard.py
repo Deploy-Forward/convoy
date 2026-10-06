@@ -82,5 +82,8 @@ def empty_launcher_table() -> None:
     patched shutil.which. A test that needs a launcher passes procs= or sets panes._TEST_PROCS."""
     if _SRC not in sys.path:
         sys.path.insert(0, _SRC)
-    from convoy import launcher
+    from convoy import bringup, launcher
     launcher.TEST_DEFAULT_PROCS = []
+    # A live launch's heartbeat reads the vendor's usage; under test that reading has no
+    # source, so no vendor CLI starts. A test of the heartbeat patches stamp_usage_row.
+    bringup.TEST_LAUNCH_USAGE_READING = lambda _harness: {}

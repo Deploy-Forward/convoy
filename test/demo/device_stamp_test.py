@@ -157,6 +157,8 @@ class PairedDeviceStampContract(unittest.TestCase):
     def test_worklanes_origin_brief_does_not_borrow_local_device(self):
         origin_root = Path(tempfile.mkdtemp())
         bind(origin_root, "synthetic-origin-thread")
+        # The brief goes to the link harness's one seated chair (never a spawned stand-in).
+        seat(origin_root, "codex", "synthetic-origin-chair", worktree=str(Path(tempfile.mkdtemp())))
         link = {"id": "synthetic-origin-link", "originId": "o_synthetic_origin",
                 "harness": "codex"}
         card = _deliver_via_synapse(root=origin_root, link=link, body="synthetic board brief")

@@ -1,15 +1,14 @@
-"""Prepare a neuron worktree: the AGENTS.md pointer, convoy-end, hooks.
+"""Prepare a neuron worktree: the AGENTS.md pointer and the hooks.
 
-Agent guidance lives in the Convoy plugin (convoy@deploy-forward): the
-convoy-operate, convoy-listen and convoy-send skills. AGENTS.md gets a short
-pointer block naming them. The retired neuron-identity and neuron-receive
-copies Convoy used to write are removed. convoy-end is still copied where
-grok, claude and codex load skills; canonical text is skills/convoy-end/,
-harness_skills/convoy-end/ is the packaged mirror resolved at runtime.
-Never writes ~/.grok or ~/.claude user-global skills. Never ola-brain.
+Agent guidance ships from Deploy-Forward/plugins (the convoy plugin's skills).
+AGENTS.md gets a short pointer block naming them. Convoy writes no skill text
+of its own, and deletes nothing: a file an earlier Convoy wrote into a worktree
+stays where it is, whatever its name. Never writes ~/.grok or ~/.claude
+user-global skills. Never ola-brain.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 from typing import Any, Iterable
@@ -24,214 +23,99 @@ from .cmd import (
 
 SKILL_BEGIN = "# >>> convoy neuron identity >>>"
 SKILL_END = "# <<< convoy neuron identity <<<"
-# Retired 2026-09-28 in favour of the plugin skills; first run removes the
-# copies Convoy wrote here before.
-RETIRED_SKILL_NAMES = ("neuron-identity", "neuron-receive")
-RETIRED_SKILL_HOMES = (Path(".grok") / "skills", Path(".claude") / "skills")
-END_SKILL_NAME = "convoy-end"
-END_SKILL_RELATIVE = (
-    Path(".grok") / "skills" / END_SKILL_NAME / "SKILL.md",
-    Path(".claude") / "skills" / END_SKILL_NAME / "SKILL.md",
-    Path(".agents") / "skills" / END_SKILL_NAME / "SKILL.md",
-)
-
-GROK_AGENT_NAME = "convoy-neuron"
-GROK_AGENT_RELATIVE = Path(".grok") / "agents" / (GROK_AGENT_NAME + ".md")
 GROK_INBOX_HOOK_RELATIVE = Path(".grok") / "hooks" / "convoy-inbox.json"
 # Convoy's Claude hooks live in the local settings file, which Claude Code keeps out of git.
 CLAUDE_SETTINGS_RELATIVE = Path(".claude") / "settings.local.json"
-CLAUDE_END_COMMAND_RELATIVE = Path(".claude") / "commands" / "end.md"
 CODEX_HOOKS_RELATIVE = Path(".codex") / "hooks.json"
-CODEX_PROMPT_NAME = "convoy.md"
-
-_GROK_AGENT_TEXT = """\
----
-name: convoy-neuron
-description: Convoy neuron seat identity for grok --agent. Not Grok Bot.
----
-
-You are a Convoy neuron: one grok session on a Convoy thread, not Grok Bot.
-
-- Persona: read `role.md` in this worktree.
-- Identity: read `thread.md`, `.convoy/id`, `.convoy/thread`, and the
-  convoy-operate skill from the Convoy plugin (convoy@deploy-forward). Missing
-  files mean unknown — JSON null. Never invent a `cvy_` or session id.
-- Detect, identify, then send: `convoy panes` shows every body on the
-  thread; `convoy whoami` names YOUR chair; message a chair with `convoy send`
-  (below); acknowledge a message with `convoy hook note "re token <token>: ..."
-  --as-me --to <chair>`, which is the receipt (on a wake-enabled root it wakes
-  that token's sender once, so don't also send a second message); read your place
-  with `convoy graph --neuron <chair>`. (`convoy` is the console script; after a
-  plain `pip install .` without PATH, `python -m convoy` is the same thing.)
-- Synapse: `convoy send --to <harness> "..."`, or `convoy send --id <id> "..."` with the short id from `convoy neurons --all`. Do not type into another
-  neuron's TUI. Do not steal a live `--resume`.
-- Inbox: a send into this live seat is queued under the thread root
-  (`.convoy/inbox/<session_id>.jsonl`). Drain with `convoy inbox --drain`
-  or the PreToolUse hook (`convoy inbox --hook-pretooluse`). Fake send
-  ACKs are not delivery.
-- Usage dying: ASK the user to bring_up / open a pane, or write a
-  `.convoy/handoff/<chair>-<ts>.md` file. Never guess remaining quota.
-"""
 
 _AGENTS_BLOCK = (
     SKILL_BEGIN + "\n"
-    "You are a Convoy neuron on this thread. Run `convoy --root <root> whoami` first. "
-    "Your guidance is the Convoy plugin's skills (convoy@deploy-forward): "
-    "convoy-operate (first turn, identity, how to work on a thread), "
-    "convoy-listen (wait, drain your inbox, acknowledge with `convoy reply <token> \"...\"`) and "
-    "convoy-send (send one neuron a message and prove it arrived). "
-    "Claude Code and Codex install the convoy plugin from the deploy-forward marketplace "
-    "(Claude Code: `claude plugin install convoy@deploy-forward`). "
-    "Grok and Cursor get rendered copies when the person runs the plugin's installer "
-    "(`node plugin/install.mjs --apply`). "
-    "agy, hermes and pi have none yet: run `convoy --root <root> whoami` "
-    "and the receive loop in convoy-listen. "
-    "Listening: --wait is for Claude and Grok background tasks. "
-    "Codex is woken through its native queue (the convoy plugin's hooks record its session id): "
-    "drain your inbox at turn start, and never run `inbox --wait` in the foreground. "
-    "Convoy files: `convoy end --push` names any Convoy-written file in the commits it pushes.\n"
+    "You are a Convoy neuron on this thread. Run `convoy --root <root> whoami` first, then follow "
+    "the convoy plugin's convoy-operate skill; convoy-dictionary defines every Convoy word. "
+    "Convoy's skills ship only from Deploy-Forward/plugins (https://github.com/Deploy-Forward/plugins), "
+    "as the convoy and worklanes plugins.\n"
     + SKILL_END + "\n"
 )
 
-
-_CODEX_PROMPT_TEXT = """---
-description: Run a Convoy command against the current thread and report its JSON card
-argument_hint: <convoy arguments>
----
-
-Run the Convoy CLI from the current repository using the raw arguments below.
-Prefer `convoy` when it is on PATH; otherwise use `python -m convoy`.
-
-Raw slash-command arguments:
-`$ARGUMENTS`
-
-Preserve the arguments exactly. Use the current checkout/thread root unless the
-arguments explicitly provide `--root`. Return the command's JSON card. Do not
-invent convoy IDs, seat IDs, session IDs, usage, or delivery acknowledgements.
-"""
-
-
-def codex_prompt_source_path() -> Path:
-    return Path(__file__).resolve().parent / "harness_skills" / CODEX_PROMPT_NAME
-
-
-def install_codex_prompt() -> dict[str, Any]:
-    """Install Codex's native custom prompt in CODEX_HOME/prompts."""
-    import os
-    out: dict[str, Any] = {"ok": True, "written": False, "path": None}
-    try:
-        src = codex_prompt_source_path().read_text(encoding="utf-8")
-        codex_home = Path(os.environ.get("CODEX_HOME") or (Path.home() / ".codex"))
-        dest = codex_home / "prompts" / CODEX_PROMPT_NAME
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        prev = dest.read_text(encoding="utf-8") if dest.is_file() else None
-        if prev != src:
-            dest.write_text(src, encoding="utf-8")
-            out["written"] = True
-        out["path"] = str(dest)
-        return out
-    except OSError as e:
-        out["ok"] = False
-        out["error"] = type(e).__name__ + ": " + str(e)
-        return out
+# The sha256 of every block an earlier Convoy wrote between the markers (opening marker through
+# closing marker, LF line endings). Only a block whose hash is here is replaced; one anybody
+# edited is left as it is. test/demo/fixtures/agents_blocks.json holds the text of each.
+KNOWN_AGENTS_BLOCKS = frozenset({
+    "a238bd74a002b5cbb442ab43aecd7f09df4eb842e548e4e9dd248236bb2954d8",
+    "b0fec251139313e6d111a32cfbe0ae923e8c11f78273ae5576193ea216795e5f",
+    "ce0c03168669e3e9abbbc62fd969fb085259510ba507919342810245195b77a7",
+    "fd8fb84353e2430be87b1dd2643b986016b333b3f447b114a2cd58a7a7b24fc4",
+    "2193e92471e5e53da1e0b0d85eff2f65610612659d14f68fe401c44f4093d890",
+    "082057ebb029bc8a3e753515c1a2a4e51106877e9d7af00a7f7e6371ba072d2e",
+    "b3c884d9ec5a5d507cf47f164cb1c6455bd03d50e27e46bf78b814df5f21b863",
+    "fd2f9a4efd38cd992904a750014fc52579f6672456e2932fd51d246b13b8f429",
+    "586dc1fb5a8f11a78d8e8fab8083acc086d742d23ddcd1f8d09f4beafc2e19df",
+    "228681e0edbdabf38e5b3dcb75e33106f341f41f241e5726046b6b6940e79bde",
+    "d755c2d4f4ba0d7b054be56cc00ad84d95fd26629bfba841eb4130dd62eafcd0",
+    "b0519c037a4721ab1dd7d422480c97bf1da41473baad7f87eaf29b9e16a1646c",
+    "a6a603714df417d43b5cfbe53ad16aa38f3e9aaed7c09e94db468d500ce7fd23",
+    "4602d90174743266394888d3ee1cb53a9d3e6fc1424dbfcf4133ff7b8879ce6a",
+})
 
 
-def remove_retired_skills(worktree: Path | str) -> list[str]:
-    """Delete the retired skill copies Convoy itself wrote; return their paths.
-
-    Only a SKILL.md whose front matter says exactly `name: <that skill>` is
-    Convoy's; anything else is left alone. The folder goes only once empty.
-    """
-    removed: list[str] = []
-    for home in RETIRED_SKILL_HOMES:
-        for name in RETIRED_SKILL_NAMES:
-            dest = Path(worktree) / home / name / "SKILL.md"
-            if not dest.is_file():
-                continue
-            lines = dest.read_text(encoding="utf-8-sig", errors="replace").splitlines()
-            front = lines[1:lines.index("---", 1)] if lines[:1] == ["---"] and "---" in lines[1:] else []
-            if "name: " + name not in (line.rstrip() for line in front):
-                continue
-            dest.unlink()
-            removed.append(str(dest))
-            if not any(dest.parent.iterdir()):
-                dest.parent.rmdir()
-    return removed
+def _block_sha(core: str) -> str:
+    return hashlib.sha256(core.replace("\r\n", "\n").encode("utf-8")).hexdigest()
 
 
-def end_skill_source_path() -> Path:
-    return Path(__file__).resolve().parent / "harness_skills" / END_SKILL_NAME / "SKILL.md"
+def _merge_agents_block(existing: str, path: Path | str = "AGENTS.md") -> tuple[str, str | None]:
+    """(text to write, warning). The text is existing, unchanged byte for byte, unless Convoy owns
+    the change: a file with no block gains the pointer, and a block an earlier Convoy wrote (its
+    hash is in KNOWN_AGENTS_BLOCKS) is replaced by the pointer. Everything outside the markers is
+    kept as it is, line endings included. A block somebody edited, or an incomplete pair of
+    markers, is left alone and the warning names the file."""
+    current = _AGENTS_BLOCK[:-1]   # opening marker through closing marker
+    nl = "\r\n" if "\r\n" in existing else "\n"
+    begins, ends = existing.count(SKILL_BEGIN), existing.count(SKILL_END)
+    if begins == 0 and ends == 0:
+        block = current.replace("\n", nl) + nl
+        prefix = existing.rstrip("\r\n")
+        return (prefix + nl + nl + block if prefix.strip() else block), None
+    start, stop = existing.find(SKILL_BEGIN), existing.find(SKILL_END)
+    if begins == 1 and ends == 1 and start < stop:
+        stop += len(SKILL_END)
+        core = existing[start:stop]
+        sha = _block_sha(core)
+        if sha == _block_sha(current):
+            return existing, None
+        if sha in KNOWN_AGENTS_BLOCKS:
+            block_nl = "\r\n" if "\r\n" in core else "\n"
+            return existing[:start] + current.replace("\n", block_nl) + existing[stop:], None
+    return existing, (str(path) + ": the Convoy block in this file is not one Convoy wrote (edited, or "
+                      "its markers are incomplete); left as it is")
 
 
-def end_skill_text() -> str:
-    return end_skill_source_path().read_text(encoding="utf-8")
-
-
-def _merge_agents_block(existing: str) -> str:
-    text = existing.replace("\r\n", "\n")
-    if SKILL_BEGIN in text and SKILL_END in text:
-        before = text.split(SKILL_BEGIN, 1)[0]
-        after = text.split(SKILL_END, 1)[1]
-        if after.startswith("\n"):
-            after = after[1:]
-        return before.rstrip("\n") + ("\n\n" if before.strip() else "") + _AGENTS_BLOCK + after
-    prefix = text.rstrip()
-    if prefix:
-        return prefix + "\n\n" + _AGENTS_BLOCK
-    return _AGENTS_BLOCK
-
-
-# Name kept for callers: it now writes the AGENTS.md pointer (and convoy-end)
-# and removes retired skill copies; it no longer installs an identity skill.
+# Name kept for callers: it writes the AGENTS.md pointer, nothing else.
 def install_neuron_identity(worktree: Path | str, *, person_files: bool = True) -> dict[str, Any]:
-    """Write the AGENTS.md pointer and Convoy-owned copies into worktree;
-    remove the retired skill copies Convoy wrote before. Idempotent.
-    person_files False (the person's repo): only the convoy-end copies; AGENTS.md, the retired
-    copies and the end command are left as they are."""
+    """Write the AGENTS.md pointer into worktree. Idempotent. Writes no skill text and removes
+    nothing. person_files False (the person's repo): AGENTS.md is left as it is."""
     out: dict[str, Any] = {
         "ok": True,
         "written": False,
         "removed": [],
         "agents": None,
     }
+    if not person_files:
+        return out
     wt = Path(worktree)
     try:
-        out["removed"] = remove_retired_skills(wt) if person_files else []
-        if out["removed"]:
-            out["written"] = True
-        end_text = end_skill_text()
-        end_paths: list[str] = []
-        for rel in END_SKILL_RELATIVE:
-            dest = wt / rel
-            dest.parent.mkdir(parents=True, exist_ok=True)
-            prev = dest.read_text(encoding="utf-8") if dest.is_file() else None
-            if prev != end_text:
-                dest.write_text(end_text, encoding="utf-8")
-                out["written"] = True
-            end_paths.append(str(dest))
-        out["end_paths"] = end_paths
-        if not person_files:
-            return out
         agents = wt / "AGENTS.md"
-        before = agents.read_text(encoding="utf-8") if agents.is_file() else ""
-        merged = _merge_agents_block(before)
-        if merged != before:
-            agents.write_text(merged, encoding="utf-8")
+        # newline="": read and write the characters as they are, so CRLF stays CRLF.
+        before = ""
+        if agents.is_file():
+            with agents.open(encoding="utf-8", newline="") as f:
+                before = f.read()
+        merged, warning = _merge_agents_block(before, agents)
+        if warning:
+            out["warnings"] = [warning]
+        elif merged != before:
+            agents.write_text(merged, encoding="utf-8", newline="")
             out["written"] = True
         out["agents"] = str(agents)
-        prompt = install_codex_prompt()
-        out["codex_prompt"] = prompt
-        if prompt.get("written"):
-            out["written"] = True
-        if not prompt.get("ok"):
-            out["ok"] = False
-        # The plugin's convoy-end skill carries the end command. A copy Convoy wrote earlier, still
-        # exactly Convoy's text, is removed; one the person changed is theirs and stays.
-        claude_command = wt / CLAUDE_END_COMMAND_RELATIVE
-        command_text = (Path(__file__).resolve().parent / "harness_skills" / "end.md").read_text(encoding="utf-8")
-        if claude_command.is_file() and claude_command.read_text(encoding="utf-8") == command_text:
-            claude_command.unlink()
-            out["removed"] = list(out.get("removed") or []) + [str(claude_command)]
         return out
     except OSError as e:
         out["ok"] = False
@@ -269,28 +153,6 @@ def stale_codex_hooks(worktree: Path | str) -> str | None:
     if _existing_hook_commands(text, END_HOOK_ARGS) or _existing_hook_commands(text, INBOX_HOOK_ARGS):
         return str(dest)
     return None
-
-
-def ensure_grok_agent(worktree: Path | str) -> dict[str, Any]:
-    """Write the Convoy-owned grok agent file into worktree. Idempotent.
-
-    Points grok --agent at seat identity (role.md + the plugin's convoy-operate).
-    Never overwrites a user agent elsewhere; owns only GROK_AGENT_RELATIVE.
-    """
-    out: dict[str, Any] = {"ok": True, "written": False, "agent": None}
-    dest = Path(worktree) / GROK_AGENT_RELATIVE
-    try:
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        prev = dest.read_text(encoding="utf-8") if dest.is_file() else None
-        if prev != _GROK_AGENT_TEXT:
-            dest.write_text(_GROK_AGENT_TEXT, encoding="utf-8")
-            out["written"] = True
-        out["agent"] = str(dest)
-        return out
-    except OSError as e:
-        out["ok"] = False
-        out["error"] = type(e).__name__ + ": " + str(e)
-        return out
 
 
 def _command_hook_entry(command: str) -> dict[str, Any]:
@@ -385,32 +247,6 @@ def _merge_claude_inbox_hooks(data: dict[str, Any], command: str) -> tuple[dict[
     return data, changed
 
 
-def _strip_convoy_entries(data: dict[str, Any], marker: str) -> tuple[dict[str, Any], bool]:
-    """Remove every Convoy-owned entry (by command marker) from every event
-    list, keeping foreign entries. Live 2026-09-09: a private client repo commits a
-    .claude/settings.json carrying bare `convoy inbox --hook-pretooluse`; on
-    a box where no hook-shell interpreter imports convoy, resolution fails and
-    the installer used to return without touching the file, so two
-    cursor-agent seats booted with a hook that exits 127 under Git Bash and
-    every tool was refused. No hook (cli-drain) beats a dead hook."""
-    hooks = data.get("hooks")
-    if not isinstance(hooks, dict):
-        return data, False
-    changed = False
-    for event, events in list(hooks.items()):
-        if not isinstance(events, list):
-            continue
-        kept = [e for e in events if not _commands_in(e, marker)]
-        if kept != events:
-            changed = True
-            if kept:
-                hooks[event] = kept
-            else:
-                del hooks[event]
-    data["hooks"] = hooks
-    return data, changed
-
-
 def is_convoy_written(path: str) -> bool:
     """A repo path Convoy writes into a worktree: its hooks, root pointers, local Claude settings and
     convoy-* copies. A push whose commits carry one is warned about."""
@@ -431,25 +267,6 @@ def _json_object_or_none(text: str | None) -> dict[str, Any] | None:
     return raw if isinstance(raw, dict) else None
 
 
-def _strip_dead_hook_file(dest: Path, prev_text: str | None, markers: tuple[str, ...]) -> bool:
-    """Rewrite dest without Convoy's entries for the given markers. True when written."""
-    if prev_text is None or not dest.is_file():
-        return False
-    try:
-        raw = json.loads(prev_text)
-    except json.JSONDecodeError:
-        return False
-    if not isinstance(raw, dict):
-        return False
-    data, changed = raw, False
-    for m in markers:
-        data, c = _strip_convoy_entries(data, m)
-        changed = changed or c
-    if changed:
-        dest.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
-    return changed
-
-
 def _existing_hook_commands(text: str | None, marker: str = INBOX_HOOK_ARGS) -> list[str]:
     """Every matching command inside an existing hook document, or []."""
     if not text:
@@ -461,26 +278,10 @@ def _existing_hook_commands(text: str | None, marker: str = INBOX_HOOK_ARGS) -> 
     return _commands_in(data, marker)
 
 
-def _resolved_or_kept(prev_text: str | None) -> dict[str, Any]:
-    """Keep an existing Convoy hook command that still probes ok (audit
-    2026-09-03: the only hook that ever delivered was a baked path a later
-    first-run would have overwritten); else resolve fresh."""
-    for c in _existing_hook_commands(prev_text):
-        if _cmd.probe_existing_hook_command(c):
-            return {"command": c, "resolved_via": "kept-existing", "error": None, "kept_existing": c}
-    r = _cmd.resolve_inbox_hook_command()
-    r["kept_existing"] = None
-    return r
-
-
-def _resolved_end_or_kept(prev_text: str | None) -> dict[str, Any]:
-    for command in _existing_hook_commands(prev_text, END_HOOK_ARGS):
-        if _cmd.probe_existing_end_hook_command(command):
-            return {"command": command, "resolved_via": "kept-existing", "error": None,
-                    "kept_existing": command}
-    result = _cmd.resolve_end_hook_command()
-    result["kept_existing"] = None
-    return result
+def _unresolved(out: dict[str, Any], error: Any) -> dict[str, Any]:
+    """A failed probe: nothing written, nothing removed. `unresolved` tells the launch to refuse."""
+    out.update({"ok": False, "error": error, "unresolved": True})
+    return out
 
 
 def _merge_end_hook(data: dict[str, Any], command: str) -> tuple[dict[str, Any], bool]:
@@ -504,21 +305,14 @@ def _ensure_end_hook_file(
 ) -> dict[str, Any]:
     dest = Path(worktree) / relative
     prev_text = dest.read_text(encoding="utf-8-sig") if dest.is_file() else None
-    resolved = _resolved_end_or_kept(prev_text)
+    resolved = _cmd.resolve_end_hook_command()
     out: dict[str, Any] = {
         "ok": True, "written": False, "hook": None,
         "command": resolved.get("command"), "resolved_via": resolved.get("resolved_via"),
-        "kept_existing": resolved.get("kept_existing"),
     }
     command = resolved.get("command")
     if not command:
-        out.update({"ok": False, "error": resolved.get("error")})
-        try:
-            if _strip_dead_hook_file(dest, prev_text, (END_HOOK_ARGS, INBOX_HOOK_ARGS)):
-                out["removed_dead"] = str(dest)
-        except OSError as e:
-            out["error"] = str(out["error"]) + "; and could not strip the dead hook: " + str(e)
-        return out
+        return _unresolved(out, resolved.get("error"))
     try:
         dest.parent.mkdir(parents=True, exist_ok=True)
         data = _json_object_or_none(prev_text)
@@ -568,27 +362,20 @@ def ensure_end_hooks(worktree: Path | str, root: Path | str | None = None, *, sk
 
 def ensure_grok_inbox_hook(worktree: Path | str, root: Path | str | None = None) -> dict[str, Any]:
     """Write the Convoy-owned Grok PreToolUse inbox hook. Project-local only.
-    The command is PROBED where it runs; a bare name that resolves to a shim
-    or to nothing is never written (fail closed with the install hint)."""
+    The bare command is PROBED where it runs; when it resolves to a shim or to
+    nothing, no file is written or removed (fail closed with the PATH error)."""
     dest = Path(worktree) / GROK_INBOX_HOOK_RELATIVE
     prev = dest.read_text(encoding="utf-8") if dest.is_file() else None
-    res = _resolved_or_kept(prev)
+    res = _cmd.resolve_inbox_hook_command()
     out: dict[str, Any] = {"ok": True, "written": False, "hook": None, "command": res["command"],
-                           "resolved_via": res["resolved_via"], "kept_existing": res.get("kept_existing")}
+                           "resolved_via": res["resolved_via"]}
     if not res["command"]:
-        out.update({"ok": False, "error": res["error"]})
-        if dest.is_file():
-            try:
-                dest.unlink()
-                out["removed_dead"] = str(dest)
-            except OSError as e:
-                out["error"] = str(out["error"]) + "; and could not remove the dead hook: " + str(e)
-        return out
+        return _unresolved(out, res["error"])
     doc = grok_inbox_hook_document(res["command"])
     payload = json.dumps(doc, indent=2) + "\n"
     # A kept command still needs the CURRENT event set: a file written before
     # the Stop gate existed carries only PreToolUse and leaves the pane deaf
-    # at turn end (live 2026-09-05, four worktrees). Upgrade events, keep cmd.
+    # at turn end. Upgrade events, keep cmd.
     stale_events = False
     if prev is not None:
         try:
@@ -598,7 +385,7 @@ def ensure_grok_inbox_hook(worktree: Path | str, root: Path | str | None = None)
             stale_events = True
     try:
         dest.parent.mkdir(parents=True, exist_ok=True)
-        if (res["resolved_via"] != "kept-existing" or stale_events) and prev != payload:
+        if prev != payload:
             dest.write_text(payload, encoding="utf-8")
             out["written"] = True
             out["upgraded_events"] = stale_events
@@ -617,22 +404,16 @@ def ensure_claude_inbox_hook(worktree: Path | str, root: Path | str | None = Non
     """Merge UserPromptSubmit + PreToolUse into the worktree's .claude/settings.local.json.
 
     Never writes skipDangerousModePermissionPrompt or permissions: the launch argv
-    carries the mode. Refuses a baked interpreter path.
+    carries the mode. Writes only the bare command; a failed probe leaves the file as it is.
     """
     dest = Path(worktree) / CLAUDE_SETTINGS_RELATIVE
     prev_text = dest.read_text(encoding="utf-8-sig") if dest.is_file() else None
-    res = _resolved_or_kept(prev_text)
+    res = _cmd.resolve_inbox_hook_command()
     command = res["command"]
     out: dict[str, Any] = {"ok": True, "written": False, "hook": None, "command": command,
-                           "resolved_via": res["resolved_via"], "kept_existing": res.get("kept_existing")}
+                           "resolved_via": res["resolved_via"]}
     if not command:
-        out.update({"ok": False, "error": res["error"]})
-        try:
-            if _strip_dead_hook_file(dest, prev_text, (INBOX_HOOK_ARGS,)):
-                out["removed_dead"] = str(dest)
-        except OSError as e:
-            out["error"] = str(out["error"]) + "; and could not strip the dead hook: " + str(e)
-        return out
+        return _unresolved(out, res["error"])
     try:
         dest.parent.mkdir(parents=True, exist_ok=True)
         data = _json_object_or_none(prev_text)
@@ -665,14 +446,24 @@ def ensure_inbox_hooks(
     """Swap-safe: write Grok + Claude hook docs for every non-home worktree.
     skip: worktree paths not to write (a tracked .claude/settings.local.json).
 
-    cursor-agent / agy / hermes / pi have no proven vendor hook file — they
-    drain via `convoy inbox --drain`. Codex's hooks come from the convoy plugin; a send
-    native-queues once its Stop hook has recorded the session id.
+    Convoy writes no hook file for cursor-agent, agy, hermes or pi; they drain via
+    `convoy inbox --drain`. cursor-agent does run project hooks (a Convoy command in a project's
+    .claude/settings.json runs there too), but no Convoy cursor hook file is proven to deliver.
+    Codex's hooks come from the convoy plugin; a send native-queues once its Stop hook has
+    recorded the session id.
     Never invent Terminal.app / iTerm adapters.
     """
     from .inbox import HARNESS_INBOX
 
     skip = set(skip)
+    # Resolve every command before writing any file, so one failed probe leaves the worktree as it was.
+    probes = [_cmd.resolve_inbox_hook_command()]
+    if CLAUDE_SETTINGS_RELATIVE.as_posix() not in skip:
+        probes.append(_cmd.resolve_end_hook_command())
+    failed = next((p for p in probes if not p.get("command")), None)
+    if failed is not None:
+        return _unresolved({"written": False, "command": None, "resolved_via": None,
+                            "harness": str(harness or "").strip().lower() or None}, failed.get("error"))
     grok = ensure_grok_inbox_hook(worktree, root=root)
     claude = (_skipped(CLAUDE_SETTINGS_RELATIVE) if CLAUDE_SETTINGS_RELATIVE.as_posix() in skip
               else ensure_claude_inbox_hook(worktree, root=root))
@@ -691,6 +482,8 @@ def ensure_inbox_hooks(
         "harness": hid,
         "harness_kind": kinds.get(hid) if hid else None,
     }
+    if any(card.get("unresolved") for card in (grok, claude, ending.get("claude_hook") or {})):
+        out["unresolved"] = True
     if not grok.get("ok"):
         out["error"] = grok.get("error")
     elif not claude.get("ok"):

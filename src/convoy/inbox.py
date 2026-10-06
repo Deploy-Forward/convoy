@@ -59,9 +59,9 @@ def connect_mode(harness: Any) -> str | None:
 
 
 def inbox_dir(root: Path) -> Path:
-    path = Path(root) / ".convoy" / "inbox"
-    path.mkdir(parents=True, exist_ok=True)
-    return path
+    """Where the inboxes live. Never created on read: each writer creates it (append_line and
+    the drain make the parent), so reading a thread with no mail leaves the root as it was."""
+    return Path(root) / ".convoy" / "inbox"
 
 
 def inbox_path(root: Path, session_id: str) -> Path:
@@ -86,7 +86,7 @@ def enqueue(
 
     A caller may mint the token first when it needs to put that token INSIDE
     the body it hands to a vendor transport, so the receiver can cite it and
-    prove which channel delivered (codex 2026-09-03: a native queue push is
+    prove which channel delivered (a codex native queue push is
     indistinguishable from a human typing unless the token rides along)."""
     sid = str(session_id or "").strip()
     text = str(body or "")
@@ -464,8 +464,9 @@ def _seat_state(seat: dict[str, Any]) -> str:
     never a process-table read)."""
     hosted = seat.get("harness_pid") is not None and str(seat.get("process_state") or "") != "exited"
     if hosted:
-        from .pane_host import pid_alive
-        hosted = pid_alive(seat.get("harness_pid"))
+        from .pane_host import host_alive
+        hosted = host_alive(seat.get("harness_pid"), seat.get("harness_started"),
+                            launched_at=seat.get("launched_at"))
     return "|".join([str(seat.get("resume") or ""), str(seat.get("harness_pid") or ""), "live" if hosted else ""])
 
 

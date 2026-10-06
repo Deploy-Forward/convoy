@@ -39,7 +39,8 @@ def newest_handoff(root: Path) -> str | None:
     files = [p for p in cands if p.is_file()]
     return str(files[0]) if files else None
 
-def pack(root: Path, instance_id: str | None = None) -> dict[str, Any]:
+def pack(root: Path, instance_id: str | None = None, *, write: bool = True) -> dict[str, Any]:
+    """The pointer pack. write=False (a dry send) refreshes no contract copy."""
     root = Path(root).resolve()
     out: dict[str, Any] = {}
     for key, rel in POINTER_FILES:
@@ -57,7 +58,7 @@ def pack(root: Path, instance_id: str | None = None) -> dict[str, Any]:
     # nothing said where new writes belong. The record is .convoy/; say so, and
     # name every legacy file still being read so the drift is visible.
     from .conductor import contract_pointer, ensure_contract_copy
-    if (root / ".convoy").is_dir():
+    if write and (root / ".convoy").is_dir():
         ensure_contract_copy(root)   # idempotent: rewrites only when the shipped text changed
     ptr = contract_pointer(root)
     out["canonical"] = {"brief": str(root / ".convoy" / "brief.md"),

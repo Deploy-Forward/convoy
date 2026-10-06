@@ -223,12 +223,16 @@ class Phase7Attach(unittest.TestCase):
     def test_dry_run_session_id_null(self):
         _run(self.root, "init")
         seat(self.root, "grok", "sess-grok", worktree=str(self.wt_g))
-        card = send_one(self.root, "grok", "ping", dry_run=True)
+        card = send_one(self.root, "grok", "ping", dry_run=True, instance_id="sess-grok")
         self.assertIsNone(card["session_id"])
         self.assertTrue(card["dry_run"])
-        rc, d = _run(self.root, "send", "--dry-run", "--to", "grok", "ping")
+        rc, d = _run(self.root, "send", "--dry-run", "--to", "grok", "--instance-id", "sess-grok", "ping")
         self.assertEqual(rc, 0)
         self.assertIsNone(d["session_id"])
+        # A bare harness name with a chair seated refuses dry exactly as it would live.
+        bare = send_one(self.root, "grok", "ping", dry_run=True)
+        self.assertFalse(bare["ok"])
+        self.assertEqual(bare["refused"], "occupied")
 
     def test_bind_writes_thread_and_pointer_path(self):
         key = "THREAD_KEY_NOT_A_TRANSCRIPT"

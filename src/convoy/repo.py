@@ -22,7 +22,7 @@ Runner = Callable[..., subprocess.CompletedProcess]
 _SEAT_NAME = re.compile(r"[A-Za-z0-9._-]+")
 MAX_SEATS = 64
 
-# live 2026-09-04: gh version 2.83.2 `gh repo list [<owner>] [flags]`,
+# Quoted from gh version 2.83.2 --help: `gh repo list [<owner>] [flags]`,
 # `--json fields  Output JSON with the specified fields`,
 # `-L, --limit int  Maximum number of repositories to list (default 30)`;
 # JSON FIELDS lists nameWithOwner, url, isPrivate, updatedAt.
@@ -109,7 +109,7 @@ def checkouts_root() -> Path:
 
 def _option_shaped(text: str) -> bool:
     """'--upload-pack=calc x://h/o/r' contains '://' and git reads it as an
-    option (review 2026-09-04). Nothing starting with '-' is a url here."""
+    option. Nothing starting with '-' is a url here."""
     return text.strip().startswith("-")
 
 

@@ -76,15 +76,77 @@ def process_started(pid: Any) -> str | None:
     return fields[19] if len(fields) > 19 else None
 
 
-def host_alive(pid: Any, started: Any = None) -> bool:
-    """The recorded host is still running: its pid is alive and, when both the record and
-    this platform give a start time, the start time matches (a reused pid is not the host)."""
-    if not pid_alive(pid):
+def starts_match(a: Any, b: Any) -> bool:
+    """Two start times name the same process. Windows values are FILETIMEs; the process
+    table's CIM CreationDate carries microseconds, so compare at that precision."""
+    if a is None or b is None:
         return False
-    if started is None:
+    try:
+        x, y = int(str(a)), int(str(b))
+    except ValueError:
+        return str(a) == str(b)
+    return x // 10 == y // 10 if os.name == "nt" else x == y
+
+
+def started_epoch(started: Any) -> float | None:
+    """A start time from process_started as Unix seconds, or None when it cannot be told."""
+    try:
+        value = int(str(started))
+    except (TypeError, ValueError):
+        return None
+    if os.name == "nt":
+        return value / 1e7 - 11644473600.0
+    try:
+        ticks = os.sysconf("SC_CLK_TCK")
+        with open("/proc/stat", "r", encoding="utf-8") as f:
+            boot = next(int(line.split()[1]) for line in f if line.startswith("btime "))
+    except (AttributeError, OSError, ValueError, StopIteration):
+        return None
+    return boot + value / float(ticks)
+
+
+# A body is spawned moments after its launch is stamped. A process holding the recorded pid
+# that started well after that stamp is another process that reused the pid.
+LAUNCH_START_SLACK_S = 120.0
+
+
+def _stamp_epoch(stamp: Any) -> float | None:
+    try:
+        return datetime.fromisoformat(str(stamp).replace("Z", "+00:00")).timestamp()
+    except (TypeError, ValueError):
+        return None
+
+
+def host_alive(pid: Any, started: Any = None, *, launched_at: Any = None,
+               alive: Callable[[Any], bool] | None = None) -> bool:
+    """The recorded process is still running: its pid answers AND it is the process recorded.
+
+    started: the start time recorded for it (process_started at launch); a different start
+    time is a reused pid, not the recorded process. launched_at: for a record that carries no
+    start time, the wall-clock launch stamp; a process that started well after it is a reused
+    pid. When neither can be checked, or this process's start cannot be read, the pid alone
+    answers, so a no-steal guard errs toward occupied."""
+    if not (alive or pid_alive)(pid):
+        return False
+    if started is None and not launched_at:
         return True
-    now = process_started(pid)
-    return True if now is None else str(now) == str(started)
+    return record_matches_start(process_started(pid), started, launched_at)
+
+
+def record_matches_start(current: Any, started: Any = None, launched_at: Any = None) -> bool:
+    """Is the process now holding a recorded pid, started at `current`, the recorded one?
+
+    False only on evidence of reuse: a recorded start time that differs, or (for a record
+    with none) a start well after the recorded launch stamp. An unreadable current start
+    or a record with nothing to compare answers True."""
+    if current is None:
+        return True
+    if started is not None:
+        return starts_match(current, started)
+    at, begun = _stamp_epoch(launched_at), started_epoch(current)
+    if at is None or begun is None:
+        return True
+    return begun <= at + LAUNCH_START_SLACK_S
 
 
 def pid_alive(pid: Any) -> bool:
@@ -276,6 +338,11 @@ def console_key_records(text: str) -> list[tuple[int, str]]:
     return [(0, ch) for ch in text] + [(VK_RETURN, "\r")]
 
 
+def console_injection_supported() -> bool:
+    """The pane host can type into its child only through Windows console input."""
+    return os.name == "nt"
+
+
 def write_console_input(text: str) -> dict[str, Any]:
     """Inject `text` plus Enter into the console THIS process shares with its
     child. The child was spawned with a process-group flag, not
@@ -283,7 +350,7 @@ def write_console_input(text: str) -> dict[str, Any]:
     and is its foreground reader; WriteConsoleInputW on this process's own
     STD_INPUT_HANDLE is therefore the child's stdin, with no window, no
     title, and no focus theft involved."""
-    if os.name != "nt":
+    if not console_injection_supported():
         return {"ok": False, "error": "console injection is Windows only"}
     import ctypes
     from ctypes import wintypes
@@ -462,7 +529,9 @@ def run_host(
         "session_id": session_id,
         "status": "running",
         "host_pid": os.getpid(),
+        "host_started": process_started(os.getpid()),
         "child_pid": int(process.pid),
+        "child_started": process_started(process.pid),
         "child_exe": str(child_argv[0]) if child_argv else None,
         "incarnation": incarnation,
         "started_at": launched_at,
@@ -479,7 +548,9 @@ def run_host(
             process_state="running",
             pane_state="managed",
             pane_host_pid=state["host_pid"],
+            pane_host_started=state["host_started"],
             harness_pid=state["child_pid"],
+            harness_started=state["child_started"],
             incarnation=incarnation,
             launched_at=launched_at,
         )
@@ -657,6 +728,20 @@ def close_managed_pane(
     except ValueError as exc:
         return {"ok": False, "session_id": session_id, "error": str(exc)}
     state = _read_state(root, session_id)
+    if state is None and row.get("attached_at") and not row.get("detached"):
+        # A session someone attached by hand: Convoy never launched it, and Ctrl+D would
+        # end that person's own harness. The session leaves the chair itself.
+        from .cmd import convoy_root_command
+        pid = row.get("harness_pid")
+        return {
+            "ok": False,
+            "session_id": session_id,
+            "state": "attached-session",
+            "pid": pid,
+            "error": "chair is an attached session, not one a Convoy pane host launched",
+            "remedy": ("that session runs `" + convoy_root_command(root) + " detach`, then closes its own terminal"
+                       + (" (pid " + str(pid) + ")" if pid else "")),
+        }
     if state is None or state.get("status") != "running":
         return {
             "ok": False,
@@ -664,6 +749,29 @@ def close_managed_pane(
             "state": "manual-close-required",
             "error": "chair was not launched by a live Convoy pane host",
             "remedy": "Focus the exited pane and press Ctrl+D (or the terminal's closePane binding).",
+        }
+    # Everything that can fail is checked before the consent is asked for or spent: a dead
+    # host cannot honour a close, and a close already on disk needs no second one.
+    if not host_alive(state.get("host_pid"), state.get("host_started"), launched_at=state.get("started_at")):
+        return {
+            "ok": False,
+            "session_id": session_id,
+            "state": "host-exited",
+            "host_pid": state.get("host_pid"),
+            "error": "the pane host for " + session_id + " (pid " + str(state.get("host_pid")) +
+                     ") is not running; there is nothing for it to close",
+            "remedy": "Close the pane by hand if it is still open; process exit alone is not pane proof.",
+        }
+    if close_request_path(root, session_id).exists():
+        return {
+            "ok": True,
+            "session_id": session_id,
+            "state": "close-requested",
+            "already": True,
+            "host_pid": state.get("host_pid"),
+            "child_pid": state.get("child_pid"),
+            "pane_closed": None,
+            "next": "The host has not consumed the earlier close request yet; verify the pane disappeared.",
         }
     worktree = str(row.get("worktree") or "")
     to = str(row.get("to") or "")
@@ -691,14 +799,15 @@ def close_managed_pane(
         request_close(root, session_id, incarnation=incarnation, reason="close-chair")
         update_seat(root, session_id, close_state="requested")
         # The launch claim says "a pane exists for this chair". Once close is
-        # requested it must not block the next launch (2026-09-03: relaunch of
-        # a closed chair refused "already claimed" until the file was removed).
+        # requested it must not block the next launch (otherwise relaunching
+        # a closed chair refuses "already claimed" until the file is removed).
         from .targeted_launch import release_launch_claim
         release_launch_claim(root, session_id)
         return {
             "ok": True,
             "session_id": session_id,
             "state": "close-requested",
+            "already": False,
             "host_pid": state.get("host_pid"),
             "child_pid": state.get("child_pid"),
             "pane_closed": None,

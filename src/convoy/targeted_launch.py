@@ -19,12 +19,12 @@ import uuid
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping
 
+from .refusal import next_step
 from .bringup import (
     _absolute_harness,
     _harness_bin,
     _is_abs_exe,
     _pane_title,
-    _seat_with_agent,
     _with_claude_live_flags,
     ensure_first_run,
     resume_argv,
@@ -39,6 +39,10 @@ from .inbox import connect_mode
 Which = Callable[[str], str | None]
 Runner = Callable[[list[str]], dict[str, Any]]
 GitWorktrees = Callable[[Iterable[Path]], list[str]]
+
+
+# No pane to split names the listing of what is supported (linted by printed_commands_test).
+CHOICES = next_step("choices")
 
 
 def terminal_capability(
@@ -600,14 +604,23 @@ def launch_seat(
             raise ValueError("refuse launch: chair is not a fresh join/swap")
         if row.get("where") == "cloud":
             # A pane is a local process; splitting one for a cloud chair would
-            # label a local session "cloud". No cloud launcher exists (2026-09-04).
+            # label a local session "cloud". No cloud launcher exists.
             raise ValueError("refuse launch: chair " + session_id + " is where=cloud and no cloud launcher exists; a pane is not a cloud session")
         worktree = str(row.get("worktree") or "").strip()
         if not worktree:
             raise ValueError("refuse targeted launch without a worktree")
         if not Path(worktree).is_dir():
             raise ValueError("refuse missing worktree: " + worktree)
-        if not trust_probe(row) and not row.get("trust_worktree"):
+        # A recorded consent answers before the probe; a probe that cannot answer asks for
+        # consent (its error on the card) instead of refusing the launch.
+        trusted = bool(row.get("trust_worktree"))
+        probe_error: str | None = None
+        if not trusted:
+            try:
+                trusted = bool(trust_probe(row))
+            except ValueError as exc:
+                probe_error = str(exc)
+        if not trusted:
             if not consent:
                 waiting = request_consent(
                     root,
@@ -616,7 +629,10 @@ def launch_seat(
                     to=str(row.get("to") or ""),
                     worktree=worktree,
                 )
-                return {"session_id": session_id, **waiting}
+                card = {"session_id": session_id, **waiting}
+                if probe_error:
+                    card["probe_error"] = probe_error
+                return card
             consume_consent(
                 root,
                 consent,
@@ -633,7 +649,7 @@ def launch_seat(
         capability = placement_capability(root, row, env=env, which=which, platform_name=platform_name)
         if capability is None:
             raise ValueError(
-                "no supported active pane; use `convoy choices` and open a pane manually"
+                "no supported active pane; use `" + CHOICES + "` and open a pane manually"
             )
 
         effective = row
@@ -642,7 +658,6 @@ def launch_seat(
             first_run = ensure_first_run(row, root=root, write_repo_files=write_repo_files)
             if first_run.get("ok") is False:
                 raise ValueError(str(first_run.get("error") or "first-run preparation failed"))
-            effective = _seat_with_agent(root, row, first_run)
         harness_argv = pane_child_argv(effective)
         argv = active_pane_argv(effective, capability, root=root)
         card: dict[str, Any] = {

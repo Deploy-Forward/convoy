@@ -13,10 +13,10 @@ node_modules/
 .wrangler/
 
 # Convoy's own first-run writes these into every seat worktree (CANON:
-# ensure_first_run writes convoy-end into .grok/.claude/.agents skills and
-# an AGENTS.md pointer). This repo is itself a seat worktree for the agents
-# building it, so here they are generated artifacts, not repo content.
-# If a curated AGENTS.md is ever wanted, `git add -f` it.
+# ensure_first_run writes an AGENTS.md pointer and the hook files; earlier
+# versions also wrote skill copies under .grok/.claude/.agents). A checkout of
+# this repository can itself be a seat worktree, so here they are generated
+# artifacts, not repo content. If a curated AGENTS.md is ever wanted, `git add -f` it.
 .claude/
 .grok/
 .codex/

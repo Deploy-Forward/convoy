@@ -153,7 +153,7 @@ def _effort_block(harness_id: str) -> dict[str, Any]:
 def _accepted_efforts(eff: dict[str, Any]) -> list[str] | None:
     """What seat/join accept as `effort` for this harness: the harness-scoped
     keys, else the flag's own values when the harness only exposes a flag
-    (pi --thinking, live 2026-09-01). None when the contract has no vocabulary
+    (pi --thinking). None when the contract has no vocabulary
     (cursor-agent unknown, hermes model-driven) — Convoy cannot judge those."""
     keys = eff.get("keys")
     if isinstance(keys, list) and keys:
@@ -195,8 +195,8 @@ def live_flags(harness_id: str) -> list[str]:
 def model_flag(harness_id: str) -> dict[str, Any]:
     """{flag, evidence}: the harness's own model flag, applied only when the
     contract quotes a live --help for it. None means Convoy passes no model
-    and the vendor's config default wins (live 2026-09-06: a relaunched codex
-    seat declared gpt-5.6/high booted as gpt-6-astra medium for that reason)."""
+    and the vendor's config default wins (a relaunched codex seat boots the
+    model its config.toml names, not the one the seat declared)."""
     wanted = canonical_harness_id(harness_id)
     for row in harness_entries():
         if row["id"] == wanted:
@@ -291,9 +291,8 @@ def effective_model(harness_id: str, model: Any, effort: Any) -> str | None:
 def model_catalog(harness_id: str) -> dict[str, Any]:
     """Per-harness model catalog for the wire: {models, evidence}. models is
     the contract's list or None; None means no local --help enumerates a
-    closed list (live 2026-09-04: none does — every CLI present on this box
-    takes a free-form --model; cursor-agent was not on PATH, so nothing was
-    observed for it), so the card offers a field, not a menu. Never a
+    closed list (the CLIs quoted take a free-form --model; a harness not on
+    PATH has nothing observed), so the card offers a field, not a menu. Never a
     remembered name."""
     wanted = canonical_harness_id(harness_id)
     for row in harness_entries():
@@ -312,7 +311,7 @@ WHERE = ("local", "cloud")
 def cloud_contract(harness_id: str) -> dict[str, Any]:
     """Per-harness cloud block for the wire: {mode, cli, evidence}. mode is one
     of unsupported | unverified | interactive-session | task, set ONLY from a
-    local --help that was run and quoted (live 2026-09-04: claude --cloud
+    local --help that was run and quoted (claude --cloud
     attaches an interactive session; codex cloud exec submits a task; grok
     names remote sessions only on its resume path; the rest quote nothing).
     Unknown harness: all null."""

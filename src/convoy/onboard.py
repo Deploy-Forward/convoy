@@ -85,7 +85,7 @@ def _resolve_root(root: Path, checkout_root: str | None,
             if not card.get("ok"):
                 # A failed clone (no gh auth, offline, not found) binds NOTHING:
                 # a thread bound on a failed clone is a silent write. The "soft
-                # continue-local" the design asks for (2026-09-05) is an ASK on
+                # continue-local" the design asks for is an ASK on
                 # the refusal card: the exact onboard that binds this root with
                 # github=no, for the human to run. No owner/repo is invented.
                 repo["error"] = str(card.get("error") or "git clone failed")
@@ -107,20 +107,24 @@ def _thread_bind(root: Path, thread: str | None) -> tuple[str | None, str | None
         "bound": bound,
         "changed": False,
     }
-    if requested is None:
-        return convoy_id, bound, status
-    if bound is not None and bound != requested:
-        status["error"] = "thread already bound to " + bound
-        return convoy_id, bound, status
-    if bound is None:
-        row = bind(root, requested)
-        convoy_id = row["convoy_id"]
-        bound = row["thread"]
-        status["bound"] = bound
-        status["changed"] = True
-        return convoy_id, bound, status
-    if convoy_id is None:
+    try:
+        if requested is None:
+            if convoy_id is not None:
+                convoy_id = ensure_id(root)   # an existing id is indexed, or refused as a copy
+            return convoy_id, bound, status
+        if bound is not None and bound != requested:
+            status["error"] = "thread already bound to " + bound
+            return convoy_id, bound, status
+        if bound is None:
+            row = bind(root, requested)
+            convoy_id = row["convoy_id"]
+            bound = row["thread"]
+            status["bound"] = bound
+            status["changed"] = True
+            return convoy_id, bound, status
         convoy_id = ensure_id(root)
+    except ValueError as exc:
+        status["error"] = str(exc)
     return convoy_id, bound, status
 
 
@@ -139,7 +143,10 @@ def _install_hint(hid: str) -> dict[str, Any] | None:
 
 
 def _first_run_card(hid: str, root: Path, write_repo_files: bool) -> dict[str, Any]:
-    row = ensure_first_run({"to": hid, "worktree": str(root)}, write_repo_files=write_repo_files)
+    # Onboarding describes the first run; only an explicit write_repo_files performs it. The
+    # home files (settings, trust stores) are written by the live launch, never here.
+    row = ensure_first_run({"to": hid, "worktree": str(root)}, live=bool(write_repo_files),
+                           write_repo_files=write_repo_files)
     out: dict[str, Any] = {
         "prepared": bool(row.get("prepared")),
         "wrote": bool(row.get("wrote")),
@@ -148,6 +155,7 @@ def _first_run_card(hid: str, root: Path, write_repo_files: bool) -> dict[str, A
         "home_key": row.get("home_key"),
         "settings_home": row.get("settings_home"),
         "would_write": list(row.get("would_write") or []),
+        "would_write_home": list(row.get("would_write_home") or []),
     }
     if row.get("error"):
         out["error"] = row["error"]
@@ -159,19 +167,20 @@ def _first_run_card(hid: str, root: Path, write_repo_files: bool) -> dict[str, A
         out["identity_removed"] = row["identity_removed"]
     if row.get("identity_agents"):
         out["identity_agents"] = row["identity_agents"]
-    out["agent_written"] = bool(row.get("agent_written"))
-    if row.get("agent_path"):
-        out["agent_path"] = row["agent_path"]
     return out
 
 
-def _harness_card(hid: str, target_root: Path, run_first_run: bool, write_repo_files: bool) -> dict[str, Any]:
+def _harness_card(hid: str, target_root: Path, run_first_run: bool, write_repo_files: bool,
+                  probe_usage: bool = False) -> dict[str, Any]:
     path = _which(hid)
     present = path is not None
     usage_remaining = None
     limited = False
     availability = "missing"
-    if present:
+    if present and not probe_usage:
+        # No vendor binary is started without probe: usage is unknown (null), not zero.
+        availability = "unprobed"
+    elif present:
         probed = probe(hid)
         usage_remaining = normalize_usage_remaining(probed.get("usage_remaining"))
         if usage_remaining == 0 and probed.get("raw") is None:
@@ -186,6 +195,7 @@ def _harness_card(hid: str, target_root: Path, run_first_run: bool, write_repo_f
         "availability": availability,
         "usage_remaining": usage_remaining,
         "limited": limited,
+        "probed": bool(present and probe_usage),
     }
     if run_first_run:
         out["first_run"] = _first_run_card(hid, target_root, write_repo_files)
@@ -205,10 +215,13 @@ def onboard(
     github: bool | None = None,
     clone_runner: Runner | None = None,
     write_repo_files: bool = False,
+    probe: bool = False,
 ) -> dict[str, Any]:
     """Bind a root to a thread and prepare the named harnesses. On a repo root nothing is
     written into the repo except under .convoy/: the files a first run would add are listed
-    as would_write, and written only with write_repo_files."""
+    as would_write, and written only with write_repo_files. No home file is written (the
+    home files a launch writes are listed as would_write_home) and no harness binary is
+    started: usage is read only with probe."""
     named, unknown, refused = _normalize_harnesses(harnesses)
     if not named:
         return {
@@ -247,11 +260,11 @@ def onboard(
     except ValueError as e:
         return {"ok": False, "error": str(e)}
 
-    path_card = ensure_interactive_path()
+    path_card = ensure_interactive_path(write=False)
     convoy_id, bound_thread, bind_status = _thread_bind(target_root, thread)
     if bind_status.get("error"):
         # Refused: this root belongs to another thread. Nothing below is
-        # written onto it, the GitHub answer included (review 2026-09-04).
+        # written onto it, the GitHub answer included.
         return {
             "ok": False,
             "error": str(bind_status["error"]),
@@ -273,7 +286,7 @@ def onboard(
     standing = read_lead(target_root) if convoy_id is not None else None
     lead_card = {"harness": standing, "set": False}
 
-    harness_cards = [_harness_card(hid, target_root, declared_checkout, write_repo_files) for hid in named]
+    harness_cards = [_harness_card(hid, target_root, declared_checkout, write_repo_files, probe) for hid in named]
     would_write = sorted({f for h in harness_cards for f in (h.get("first_run") or {}).get("would_write") or []})
     missing = [h["to"] for h in harness_cards if not h.get("present")]
     return {

@@ -61,6 +61,7 @@ from .layer import SCHEMA_VERSION, conductor_stamp, feed_since, neuron_note, par
 from .synapse import fake_runner, is_wrapper_name, native_runner, send_one
 from .convoy import CONDUCTOR as CONDUCTOR_ID
 from . import bearer as _bearer
+from . import version as _version
 from .usage import CachedProbe, normalize_usage_remaining, probe as _live_probe
 
 # roster and glance once took about twenty seconds even on loopback, because
@@ -76,15 +77,19 @@ probe: Any = CachedProbe(_live_probe, ttl_s=60.0)
 PROTOCOL_LATEST = "2025-03-26"
 PROTOCOL_SUPPORTED = frozenset({PROTOCOL_LATEST, "2024-11-05"})
 SERVER_NAME = "convoy"
-_BASE_VERSION = "1.3.0"
+_BASE_VERSION = _version.package_version()
 
 
 def _server_version(repo_dir: Path | None = None) -> str:
     """Base version plus `git describe --always --dirty` when the package sits
-    in a git checkout, so deploy drift — including a patched-in-place deploy —
-    is detectable in one initialize call. Unknown stays the bare base version —
+    in its own source checkout, so deploy drift — including a patched-in-place deploy —
+    is detectable in one initialize call. An installed package gets the bare base
+    version: a site-packages dir inside some other repository (a venv in a checkout)
+    must not borrow that repository's describe. Unknown stays the bare base version —
     never an invented sha. SubprocessError is caught too: TimeoutExpired is NOT
     an OSError, and a hung git must not stop the server from importing."""
+    if repo_dir is None and not _version.in_checkout():
+        return _BASE_VERSION
     try:
         r = subprocess.run(
             ["git", "-C", str(repo_dir or Path(__file__).resolve().parent), "describe", "--always", "--dirty"],
@@ -107,9 +112,8 @@ HARNESSES = tuple((row["id"], str(row.get("name") or row["id"])) for row in harn
 # RPC-layer only — CLI and in-process call_tool stay usable; a gated/loopback
 # deploy opts in via CONVOY_MCP_WRITE_TOOLS=1.
 # send is also hidden: even its non-live form appends a synapse/feed row, so it
-# is not read-only. seat/join/launch joined this set with the wizard verbs
-# (2026-09-04). They
-# are HIDDEN from a public tools/list, not listed-and-refusing, on purpose:
+# is not read-only. seat/join/launch are in this set with the wizard verbs.
+# They are HIDDEN from a public tools/list, not listed-and-refusing, on purpose:
 # the @convoy wizard's Gate 0 reads tools/list to decide whether it can seat
 # and launch, and a public endpoint that cannot do those must not say it can.
 # Gate 0 goes RED there and stops with an install card - fail-closed, which is
@@ -129,7 +133,8 @@ _THREAD_PROPS = {
     "thread": {"type": "string", "description": "which thread this call touches: the thread key from the `threads` tool. Required when the origin is not pinned to one root; overrides the pin when it is."},
     "convoy_id": {"type": "string", "description": "which thread this call touches, by cvy_ id (alternative to `thread`)"},
 }
-_THREAD_IS_A_NAME_NOT_A_ROUTE = frozenset({"onboard", "crew"})
+# onboard takes `thread` as the NAME of the thread it creates; crew routes by it (and checks it).
+_THREAD_IS_A_NAME_NOT_A_ROUTE = frozenset({"onboard"})
 _WRITE_TOOLS = frozenset({"send", "stamp", "note", "seat", "join", "launch", "onboard", "clone", "mint", "repos",
                           "crew", "seated", "consent", "await_seated", "focus", "nudge"})
 # MCP safety annotations describe what a tool can do on THIS process. Some
@@ -316,15 +321,15 @@ _EFFORT_ARG = {
     "description": "declared effort, validated for the named harness; valid keys are choices.harnesses[].effort.keys, refused otherwise naming them. Reaches argv only where effort.applied is true.",
 }
 # Model is checked the same way, against choices.harnesses[].models. That
-# catalog is null wherever no local --help enumerates a closed list (live
-# 2026-09-04: every harness), and null accepts anything — a field, not a menu.
+# catalog is null wherever no local --help enumerates a closed list, and
+# null accepts anything — a field, not a menu.
 _MODEL_ARG = {
     "type": "string",
     "description": "declared model, passed through as typed when choices.harnesses[].models is null; when that catalog is a list, a model outside it is refused naming the list.",
 }
 # where IS a closed axis, so an enum is honest here. cloud is refused per
 # harness unless choices.harnesses[].where.cloud.offered is true (only an
-# evidenced interactive attach; live 2026-09-04: claude --cloud).
+# evidenced interactive attach, such as claude --cloud).
 _WHERE_ARG = {
     "type": "string",
     "enum": ["local", "cloud"],
@@ -386,6 +391,7 @@ TOOLS: list[dict[str, Any]] = [
                 "thread": {"type": "string"},
                 "checkout_root": {"type": "string", "description": "an existing path, or a git URL (https://... or git@...) cloned under <CONVOY_HOME>/checkouts/<owner>/<repo>"},
                 "github": {"type": "boolean", "description": "the wizard's GitHub? answer, recorded on the bind as yes|no; a URL records yes by itself; omitted stays null"},
+                "probe": {"type": "boolean", "default": False, "description": "read each named harness's usage by running its CLI; omitted: usage is null and no harness binary is started"},
             },
             required=["to"],
         ),
@@ -603,6 +609,11 @@ TOOLS: list[dict[str, Any]] = [
     # the card carries its Gate 0 verdict. outputSchema is declared so a host
     # can render structuredContent as a card without parsing the text copy.
     {
+        "name": "contract",
+        "description": "Read-only: the conductor contract itself (conductor.md): its text and sha, the same sha glance, roster and context name. Read it before your first write. Each thread mirrors it at <root>/.convoy/conductor.md.",
+        "inputSchema": _schema({}),
+    },
+    {
         "name": "start_card",
         "description": "Read-only: the start card for the bound thread, so a new session starts synced: where (repo, branch, ahead/behind, dirty, thread, lead), who (the neurons), commitments (open sends, the latest handoff per neuron, recent commits, asks from limited sends), board, next. One line per item with a path or id; never file contents. Send tokens are withheld on the ungated wire (behind the write gate they are shown). all=true lifts the 60-line budget.",
         "inputSchema": _schema({"all": {"type": "boolean", "default": False}}),
@@ -735,9 +746,10 @@ def _known_threads() -> list[dict[str, Any]]:
     return out
 
 
-def _resolve_root(bound: Path | None, args: dict[str, Any]) -> Path | dict[str, Any]:
+def _resolve_root(bound: Path | None, args: dict[str, Any], tool: str | None = None) -> Path | dict[str, Any]:
     """The root one call touches. A named thread (key or cvy_ id) wins; else the
-    pinned root; else a refusal that lists the choices. Move 3 (2026-09-14): the
+    pinned root; else onboard's checkout_root on an unbound origin; else a refusal that
+    names an argument this tool accepts and lists the choices. The
     origin serves every thread on the machine and nothing is pointed at startup."""
     want_t = _opt_str(args, "thread")
     want_id = _opt_str(args, "convoy_id")
@@ -754,6 +766,14 @@ def _resolve_root(bound: Path | None, args: dict[str, Any]) -> Path | dict[str, 
                 "threads": _known_threads()}
     if bound is not None:
         return bound
+    if tool == "onboard":
+        want = _opt_str(args, "checkout_root")
+        if want:
+            # onboard binds the thread at its checkout: that path is the route.
+            return (checkout_path_for(want) if is_repo_url(want) else Path(want).expanduser()).resolve()
+        return {"ok": False, "error": "this origin serves every thread on the machine; name the checkout to onboard with "
+                "checkout_root=<path or git URL>, or an existing thread with convoy_id=<cvy_...> (the `threads` tool lists them)",
+                "threads": _known_threads()}
     return {"ok": False, "error": "this origin serves every thread on the machine; name one with thread=<key> or convoy_id=<cvy_...> (the `threads` tool lists them)",
             "threads": _known_threads()}
 
@@ -932,8 +952,15 @@ def _call_tool(bound: Path | None, name: str, arguments: dict[str, Any] | None) 
             return thread_list(all_threads=bool(args.get("all")), since=_opt_str(args, "since"))
         except (ValueError, OSError) as exc:
             return {"ok": False, "error": str(exc)}
+    if name == "contract":
+        from .conductor import CONTRACT_RELATIVE, contract_sha, contract_text
+        return {"ok": True, "sha": contract_sha(), "text": contract_text(),
+                "mirror": "<root>/" + CONTRACT_RELATIVE.as_posix()}
     if name == "threads":
-        card = _call_tool_at(bound if bound is not None else Path.cwd(), name, args)
+        try:
+            card = _call_tool_at(bound if bound is not None else Path.cwd(), name, args)
+        except ValueError as exc:
+            return {"ok": False, "error": str(exc)}
         if isinstance(card, dict):
             card["bound"] = read_thread(bound) if bound is not None else None
             card["bound_root"] = str(bound) if bound is not None else None
@@ -942,11 +969,15 @@ def _call_tool(bound: Path | None, name: str, arguments: dict[str, Any] | None) 
     # validate, not as a route; for them only convoy_id routes.
     route_args = {k: v for k, v in args.items() if not (name in _THREAD_IS_A_NAME_NOT_A_ROUTE and k == "thread")}
     named = bool(_opt_str(route_args, "thread") or _opt_str(route_args, "convoy_id"))
-    resolved = _resolve_root(bound, route_args)
+    resolved = _resolve_root(bound, route_args, name)
     if isinstance(resolved, dict):
         return resolved
     root: Path = resolved
-    card = _call_tool_at(root, name, args)
+    try:
+        card = _call_tool_at(root, name, args)
+    except ValueError as exc:
+        # A verb's refusal is a tool error with its text, never a bare protocol error.
+        return {"ok": False, "error": str(exc)}
     # A card that was routed by name, or served by an unbound origin, says which
     # thread it touched so a conductor can never mistake one record for another.
     # A pinned call without a name keeps its CLI shape untouched.
@@ -965,7 +996,7 @@ def _call_tool_at(root: Path, name: str, args: dict[str, Any]) -> dict[str, Any]
         # onboard writes the thread at the root its checkout_root resolves to.
         # This call was resolved to ONE root (pinned or named); a checkout
         # elsewhere would bind a thread this call is not about, and every later
-        # card would describe the wrong place (e2e walk 2026-09-04). Refuse,
+        # card would describe the wrong place. Refuse,
         # and say to name that thread on the next call instead.
         want = _opt_str(args, "checkout_root")
         if want:
@@ -993,6 +1024,7 @@ def _call_tool_at(root: Path, name: str, args: dict[str, Any]) -> dict[str, Any]
             thread=_opt_str(args, "thread"),
             checkout_root=_opt_str(args, "checkout_root"),
             github=None if args.get("github") is None else _opt_bool(args, "github", False),
+            probe=_opt_bool(args, "probe", False),
         )
     if name == "repos":
         if not _write_tools_enabled():
@@ -1102,7 +1134,7 @@ def _call_tool_at(root: Path, name: str, args: dict[str, Any]) -> dict[str, Any]
         if args.get("prune"):
             if not _write_tools_enabled():
                 return {"ok": False, "dropped": [], "n_dropped": None, "kept": None,
-                        "error": "threads prune=true is behind the write gate on this process (set CONVOY_MCP_WRITE_TOOLS=1 on a gated/loopback deploy); dry list allowed"}
+                        "error": _gate_text("threads prune=true") + "; the dry list is allowed"}
             return prune_threads()
         return {"ok": True, "index": str(index_path()), "threads": list_threads()}
     if name == "panes":
@@ -1112,7 +1144,7 @@ def _call_tool_at(root: Path, name: str, args: dict[str, Any]) -> dict[str, Any]
         go = bool(args.get("go"))
         if go and not _write_tools_enabled():
             return {"ok": False, "neuron": neuron, "spawned": False,
-                    "error": "resume go=true is behind the write gate on this process (set CONVOY_MCP_WRITE_TOOLS=1 on a gated/loopback deploy); dry read allowed"}
+                    "error": _gate_text("resume go=true") + "; the dry read is allowed"}
         try:
             return resume_neuron(root, neuron, go=go, allow_unverified_launch=args.get("allow_unverified_launch", False))
         except ValueError as e:
@@ -1412,7 +1444,7 @@ def _call_tool_at(root: Path, name: str, args: dict[str, Any]) -> dict[str, Any]
             return {"ok": False, "chairs": [], "error": _gate_text("await_seated")}
         # Coerce like _opt_bool does, never default past a value the caller
         # sent: the string "0" (what an LLM client sends for the documented
-        # snapshot) fell through to 120 real seconds (review 2026-09-04).
+        # snapshot) would fall through to 120 real seconds.
         # Out-of-schema values are refused, not replaced.
         raw = args.get("timeout")
         if raw is None:
@@ -1443,10 +1475,9 @@ def _redact_public(name: str, card: Any) -> None:
     is the arbiter: behind it (conductor-local loopback) the cards are whole;
     on the ungated public wire a row carries only the shape graph already
     uses, {available, for}, so a chip can still say "resumable" and nobody
-    can lift a session id off a public endpoint. glance found live 2026-09-04
-    (2196fd7); adversarial review the same day reproduced the identical leak
-    on terminals / bring_up / open / hide windows and the resume dry read, and
-    a second one: the inbox token join/swap mint (the receiver's proof of
+    can lift a session id off a public endpoint. The same leak applies to
+    glance, terminals / bring_up / open / hide windows and the resume dry
+    read, and a second one: the inbox token join/swap mint (the receiver's proof of
     receipt) rides the kind=join feed row and the boot prompt, which is the
     last argv element bring_up would exec. So argv takes the same shape (it
     is a fact here, not a payload), and feed rows drop the token key the way
@@ -1600,7 +1631,7 @@ def _log_line(text: str) -> None:
     """One line to stderr when a console exists, else to CONVOY_HOME/origin.log.
     Under pythonw (the supervised origin since #101) sys.stderr and sys.stdout
     are None; writing to them raised inside the request handler and every
-    request died with EOF (public 502, 2026-09-15). Logging must never be the
+    request died with EOF (a public 502). Logging must never be the
     reason a request fails, so any failure here is swallowed."""
     line = text.rstrip("\n") + "\n"
     stream = sys.stderr
@@ -1806,7 +1837,8 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--host", default="127.0.0.1")
     p.add_argument("--port", type=int, default=8788)
     args = p.parse_args(argv)
-    return serve(Path(args.root).resolve(), host=args.host, port=args.port)
+    # No --root serves every thread in the machine index; each call names its thread.
+    return serve(Path(args.root).resolve() if args.root else None, host=args.host, port=args.port)
 
 
 if __name__ == "__main__":

@@ -33,7 +33,7 @@ from .usage import CachedProbe, probe
 SITE = Path(__file__).resolve().parent / "site"
 PAGE = SITE / "widget"
 ASSETS = {
-    "/assets/logo.svg": (Path(__file__).resolve().parents[2] / "plugin" / "convoy" / "assets" / "logo.svg", "image/svg+xml"),
+    "/assets/logo.svg": (Path(__file__).resolve().parent / "assets" / "logo.svg", "image/svg+xml"),
     "/assets/fonts/work-sans-latin.woff2": (SITE / "fonts" / "work-sans-latin.woff2", "font/woff2"),
     "/assets/fonts/jetbrains-mono-latin.woff2": (SITE / "fonts" / "jetbrains-mono-latin.woff2", "font/woff2"),
 }
@@ -209,24 +209,26 @@ class WidgetApi:
             return {"ok": False, "delivery": "refused", "error": str(e)}
 
     def tune(self, root: str, seat: str, model: Any = "__keep__", effort: Any = "__keep__") -> dict[str, Any]:
-        """Rewrite one chair's declared model/effort through the same `seat`
-        write the CLI uses (validated against the harness contract; a refused
-        value never lands). Everything else on the row is kept."""
-        from .convoy import list_seats, seat as write_seat
+        """Change one chair's declared model/effort with a field-preserving update
+        (validated against the harness contract; a refused value never lands).
+        Every other field on the row is kept, and a tune that changes nothing writes nothing."""
+        from .convoy import list_seats, update_seat
         r = Path(root)
         row = next((x for x in list_seats(r) if x.get("session_id") == seat), None)
         if row is None:
             return {"ok": False, "error": "unknown seat: " + seat}
-        new_model = row.get("model") if model == "__keep__" else (model or None)
-        new_effort = row.get("effort") if effort == "__keep__" else (effort or None)
+        changes = {k: (v or None) for k, v in (("model", model), ("effort", effort)) if v != "__keep__"}
+        changes = {k: v for k, v in changes.items() if v != row.get(k)}
+        if not changes:
+            return {"ok": True, "seat": row, "changed": False, "applied_to_live_pane": False,
+                    "note": "nothing to change"}
         try:
-            out = write_seat(r, str(row.get("to")), seat, worktree=row.get("worktree"), model=new_model,
-                             resume=row.get("resume"), title=row.get("title"), agent=row.get("agent"),
-                             effort=new_effort, where=row.get("where"))
+            out = update_seat(r, seat, **changes)
         except ValueError as e:
             return {"ok": False, "error": str(e)}
         return {"ok": True, "seat": out, "applied_to_live_pane": False,
-                "note": "the seat row is rewritten; a running pane keeps its own settings until its next launch"}
+                "changed": True,
+                "note": "the seat row is updated; a running pane keeps its own settings until its next launch"}
 
     def send(self, root: str, seat: str, body: str, label: str | None = None) -> dict[str, Any]:
         """Queue one message into a chair's inbox (delivery: queued, delivered:
@@ -498,7 +500,7 @@ def serve(api: WidgetApi, host: str = "127.0.0.1", port: int = 0) -> ThreadingHT
 def raise_window(hwnd: int) -> dict[str, Any]:
     """Bring one top-level window to the foreground (Windows). An Alt tap +
     AttachThreadInput is what lets a background process take the foreground;
-    a bare SetForegroundWindow is refused (live 2026-09-05)."""
+    a bare SetForegroundWindow is refused."""
     if os.name != "nt":
         return {"ok": False, "error": "raise-window: windows only"}
     try:

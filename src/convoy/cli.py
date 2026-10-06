@@ -14,7 +14,7 @@ from .install import install as install_harness
 from .onboard import onboard as run_onboard
 from .start import start as run_start
 from .context import pack
-from .convoy import attach, bind, ensure_id, list_seats, read_id, seat, CONDUCTOR
+from .convoy import attach, bind, ensure_id, list_seats, read_id, remint_id, seat, CONDUCTOR
 from .crew import add as add_neuron, await_seated, crew
 from .glance import build_glance, run_tray
 from .graph import build_graph, neighborhood
@@ -211,10 +211,24 @@ def _with_launcher(card: dict[str, Any], recorded: dict[str, Any] | None) -> Non
         card["warnings"] = list(card.get("warnings") or []) + [warning]
 
 
-def main(argv: list[str] | None = None) -> int:
-    raw_argv = list(argv) if argv is not None else sys.argv[1:]
+class _VersionAction(argparse.Action):
+    """`convoy --version`: which Convoy runs, as one JSON object, then exit 0."""
+
+    def __init__(self, option_strings, dest=argparse.SUPPRESS, default=argparse.SUPPRESS, help=None):
+        super().__init__(option_strings=option_strings, dest=dest, default=default, nargs=0, help=help)
+
+    def __call__(self, parser, namespace, values, option_string=None):
+        from .version import version_card
+        print(json.dumps(version_card()))
+        parser.exit(0)
+
+
+def build_parser() -> argparse.ArgumentParser:
+    """Every verb and flag the CLI accepts (refusal next steps are linted against it)."""
     p = argparse.ArgumentParser(prog="convoy")
     p.add_argument("--root", default=".", help="layer root")
+    p.add_argument("--version", action=_VersionAction,
+                   help="print the version, the executable, the source and whether it is an editable install")
     sub = p.add_subparsers(dest="cmd", required=True)
 
     h = sub.add_parser("hook")
@@ -241,6 +255,8 @@ def main(argv: list[str] | None = None) -> int:
 
     rl = sub.add_parser("rail", help="the strip under the panes: feed events since, seats connected, usage per harness (null is unknown, never 0), last stamp; reads only the thread, so any neuron sees the same rail")
     rl.add_argument("--since", default="10m", help="feed window (default 10m)")
+    rl.add_argument("--probe", action="store_true",
+                    help="read each seated harness's usage by running its CLI; without it usage is null and nothing is started")
 
     cm = sub.add_parser("committed", help="append one kind=commit provenance row for a Git revision")
     author = cm.add_mutually_exclusive_group(required=True)
@@ -309,7 +325,8 @@ def main(argv: list[str] | None = None) -> int:
     prb = sub.add_parser("probe")
     prb.add_argument("--to", required=True)
 
-    sub.add_parser("init")
+    it = sub.add_parser("init", help="give this root a convoy id (kept when it has one); --new-id re-mints it for a copied root")
+    it.add_argument("--new-id", action="store_true", help="a copy of another thread's root: give this root its own id; the original keeps its own")
     sub.add_parser("id")
 
     se = sub.add_parser("seat")
@@ -426,7 +443,7 @@ def main(argv: list[str] | None = None) -> int:
     gr.add_argument("--out", help="file to write with --html (default .convoy/graph.html under the root)")
     gr.add_argument("--also-root", action="append", default=[], help="another root whose thread the page should also show")
 
-    sk = sub.add_parser("skills", help="(re)install the Convoy-owned AGENTS.md pointer and convoy-end copies into a worktree; refreshes stale copies after an upgrade")
+    sk = sub.add_parser("skills", help="(re)write the Convoy-owned AGENTS.md pointer and hooks into a worktree; skills ship from the convoy plugin, and nothing is deleted")
     sk.add_argument("--worktree", required=True)
     sk_opt = sk.add_mutually_exclusive_group()
     sk_opt.add_argument("--write-repo-files", action="store_true", help=_WRITE_REPO_FILES_HELP)
@@ -530,6 +547,8 @@ def main(argv: list[str] | None = None) -> int:
     gl.add_argument("--json", action="store_true", default=True)
     gl.add_argument("--tray", action="store_true", help="render glance in tray/app-indicator")
     gl.add_argument("--refresh-seconds", type=int, default=60)
+    gl.add_argument("--probe", action="store_true",
+                    help="read each present harness's usage by running its CLI; without it usage is null and nothing is started")
 
     go = sub.add_parser("start", help="resolve a path, URL, owner/repo or project name; safely refresh and onboard; never launch")
     go.add_argument("repo", nargs="?", help="local path, git URL, owner/repo or semantic project name; omitted: thread picker")
@@ -542,6 +561,8 @@ def main(argv: list[str] | None = None) -> int:
     go.add_argument("--scan-budget", type=float, default=5.0, help="local discovery time budget in seconds")
     go.add_argument("--create", action="store_true", help="explicitly create an unmatched bare-name private GitHub repo")
     go.add_argument("--all", action="store_true", help="expand linked worktrees in an ambiguous checkout picker")
+    go.add_argument("--probe", action="store_true",
+                    help="read each named harness's usage by running its CLI; without it usage is null and nothing is started")
 
     ob = sub.add_parser("onboard")
     ob.add_argument("--to", action="append", required=True, help="named harness id(s) you already have")
@@ -550,6 +571,8 @@ def main(argv: list[str] | None = None) -> int:
     ob.add_argument("--github", choices=("yes", "no"), default=None, help="record the wizard's GitHub? answer on the bind")
     ob.add_argument("--write-repo-files", action="store_true",
                     help="also write the hooks, AGENTS.md pointer and skill copies listed as would_write into the repo")
+    ob.add_argument("--probe", action="store_true",
+                    help="read each named harness's usage by running its CLI; without it usage is null and nothing is started")
 
     pf = sub.add_parser("preflight", help="fail-closed wizard preflight: live MCP tools/list vs the verbs the @convoy wizard needs")
     pf.add_argument("--url", default=None, help="MCP endpoint (default: your own Convoy, http://127.0.0.1:8788/mcp)")
@@ -560,6 +583,12 @@ def main(argv: list[str] | None = None) -> int:
     mcp.add_argument("--host", default="127.0.0.1")
     mcp.add_argument("--port", type=int, default=8788)
 
+    return p
+
+
+def main(argv: list[str] | None = None) -> int:
+    raw_argv = list(argv) if argv is not None else sys.argv[1:]
+    p = build_parser()
     args = p.parse_args(raw_argv)
     root_explicit = any(arg == "--root" or arg.startswith("--root=") for arg in raw_argv)
     root = Path(args.root).resolve()
@@ -686,7 +715,7 @@ def main(argv: list[str] | None = None) -> int:
             # thread root, so the rail it reads is the lead's rail.
             root = root_for(root) or root
         try:
-            card = build_rail(root, since=args.since)
+            card = build_rail(root, since=args.since, probe=args.probe)
         except ValueError as e:
             print(json.dumps({"ok": False, "error": str(e)}))
             return 1
@@ -778,7 +807,11 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(probe(args.to)))
         return 0
     if args.cmd == "init":
-        cid = ensure_id(root)
+        try:
+            cid = remint_id(root) if args.new_id else ensure_id(root)
+        except ValueError as e:
+            print(json.dumps({"ok": False, "convoy_id": read_id(root), "error": str(e)}))
+            return 1
         print(json.dumps({"ok": True, "convoy_id": cid}))
         return 0
     if args.cmd == "id":
@@ -997,7 +1030,7 @@ def main(argv: list[str] | None = None) -> int:
         from .start_card import LINE_BUDGET, build_start_card
         card = build_start_card(root, budget=None if args.all else LINE_BUDGET)
         print(json.dumps(card) if args.json else "\n".join(card["lines"]))
-        return 0
+        return 0 if card.get("ok") else 1
     if args.cmd == "neurons":
         if getattr(args, "all", False):
             from .activity import neurons_everywhere
@@ -1006,9 +1039,8 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(neuron_activity(root, since=args.since)))
         return 0
     if args.cmd == "skills":
-        # Refresh BOTH halves of a neuron's install: the skill text and the
-        # inbox hooks (probed command + root pointer). A long-lived pane that
-        # got only the text stayed deaf (audit 2026-09-03).
+        # Refresh both halves of a neuron's install that Convoy owns: the AGENTS.md pointer and
+        # the inbox hooks (probed command + root pointer). Skill text ships from the convoy plugin.
         # The same rule as a launch: every file in a worktree Convoy minted or one the person opted
         # into before, else only the Convoy-named ones (kept out of git) until --write-repo-files.
         withdrawn = withdraw_repo_files_opt_in(args.worktree) if args.no_write_repo_files else None
@@ -1018,6 +1050,8 @@ def main(argv: list[str] | None = None) -> int:
         local = CLAUDE_SETTINGS_RELATIVE.as_posix()
         skip = {local} if is_tracked(args.worktree, local) else set()
         skills = install_neuron_identity(args.worktree, person_files=person)
+        for warning in skills.get("warnings") or []:
+            print("convoy skills: " + warning, file=sys.stderr)
         hooks = ensure_inbox_hooks(args.worktree, root=root if read_id(root) else None, skip=skip)
         missing = [] if person else person_files_missing(args.worktree)
         card = {**skills, "skills_ok": bool(skills.get("ok")), "hooks": hooks,
@@ -1220,11 +1254,13 @@ def main(argv: list[str] | None = None) -> int:
                 thread=getattr(args, "thread", None),
                 convoy_id=getattr(args, "convoy_id", None),
                 refresh_seconds=max(0, int(getattr(args, "refresh_seconds", 60))),
+                probe=bool(getattr(args, "probe", False)),
             )
             if args.json:
                 print(json.dumps(card))
             return 0 if card.get("ok") else 1
-        card = build_glance(root, thread=getattr(args, "thread", None), convoy_id=getattr(args, "convoy_id", None))
+        card = build_glance(root, thread=getattr(args, "thread", None), convoy_id=getattr(args, "convoy_id", None),
+                            probe=bool(getattr(args, "probe", False)))
         print(json.dumps(card))
         return 0 if card.get("ok") else 1
 
@@ -1240,13 +1276,14 @@ def main(argv: list[str] | None = None) -> int:
             scan_budget=args.scan_budget,
             create=args.create,
             all_worktrees=args.all,
+            probe=bool(args.probe),
         )
         print(json.dumps(card))
         return 0 if card.get("ok") else 1
     if args.cmd == "onboard":
         card = run_onboard(root, args.to, thread=args.thread, checkout_root=args.checkout_root,
                            github=None if args.github is None else args.github == "yes",
-                           write_repo_files=bool(args.write_repo_files))
+                           write_repo_files=bool(args.write_repo_files), probe=bool(args.probe))
         print(json.dumps(card))
         return 0 if card.get("ok") else 1
     if args.cmd == "preflight":
@@ -1258,7 +1295,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.cmd == "mcp":
         from .mcp_http import serve
         # No explicit --root: the origin serves every thread the machine index
-        # knows and each call names its thread (move 3). --root pins it.
+        # knows and each call names its thread. --root pins it.
         return serve(root if root_explicit else None, host=args.host, port=args.port)
     if args.cmd == "adopt":
         from .adopt import adopt

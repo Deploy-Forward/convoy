@@ -25,7 +25,7 @@ from .harness_contract import (
 )
 from .gitstate import git_state
 from .layer import feed_since
-from .usage import normalize_usage_remaining, probe, surface
+from .usage import no_reading, normalize_usage_remaining, probe, surface
 
 ProbeFn = Callable[[str], dict[str, Any]]
 WhichFn = Callable[[str], str | None]
@@ -259,6 +259,10 @@ def discover_threads(root: Path) -> list[dict[str, Any]]:
     return [grouped[cid] for cid in sorted(grouped)]
 
 
+def _live_probe(harness: str) -> dict[str, Any]:
+    return probe(harness)
+
+
 def build_glance(
     root: Path,
     *,
@@ -266,8 +270,12 @@ def build_glance(
     convoy_id: str | None = None,
     probe_fn: ProbeFn | None = None,
     which_fn: WhichFn | None = None,
+    probe: bool = False,
 ) -> dict[str, Any]:
-    fn = probe_fn or probe
+    """A read verb: no harness binary is started unless probe (or a caller's own probe_fn)
+    asks for usage. Without one every usage field is null (unknown) and probed is false."""
+    probed = probe_fn is not None or bool(probe)
+    fn = probe_fn or (_live_probe if probe else no_reading)
     wf = which_fn or shutil.which
     conductor = _conductor_view(fn)
     from .conductor import contract_pointer
@@ -281,8 +289,10 @@ def build_glance(
             probe_fn=fn,
             which_fn=wf,
         )
-        return {"ok": bool(by_thread.get("ok")), "conductor": conductor, "overall": overall["overall"], "by_thread": by_thread}
-    return {"ok": True, "conductor": conductor, "overall": overall["overall"], "threads": discover_threads(root)}
+        return {"ok": bool(by_thread.get("ok")), "probed": probed, "conductor": conductor,
+                "overall": overall["overall"], "by_thread": by_thread}
+    return {"ok": True, "probed": probed, "conductor": conductor, "overall": overall["overall"],
+            "threads": discover_threads(root)}
 
 
 def _fmt_remaining(value: Any) -> str:
@@ -344,15 +354,17 @@ def run_tray(
     refresh_seconds: int = 60,
     probe_fn: ProbeFn | None = None,
     which_fn: WhichFn | None = None,
+    probe: bool = False,
 ) -> dict[str, Any]:
-    """Best-effort tray/indicator renderer for the glance JSON contract."""
+    """Best-effort tray/indicator renderer for the glance JSON contract. Usage is read
+    (a harness binary started per refresh) only with probe."""
     try:
         import pystray
         from PIL import Image, ImageDraw
     except Exception as e:  # pragma: no cover - optional dependency path
         return {"ok": False, "error": "tray requires optional pystray + pillow", "detail": type(e).__name__}
 
-    fn = probe_fn or probe
+    fn = probe_fn or (_live_probe if probe else no_reading)
     wf = which_fn or shutil.which
     state: dict[str, Any] = {
         "card": build_glance(root, thread=thread, convoy_id=convoy_id, probe_fn=fn, which_fn=wf)

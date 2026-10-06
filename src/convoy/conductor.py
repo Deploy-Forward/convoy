@@ -27,8 +27,13 @@ def contract_text() -> str:
     return CONTRACT_PATH.read_text(encoding="utf-8")
 
 
+def _sha(text: str) -> str:
+    """The contract's sha over LF line endings, so a checkout's CRLF copy hashes the same."""
+    return hashlib.sha256(text.replace("\r\n", "\n").encode("utf-8")).hexdigest()
+
+
 def contract_sha() -> str:
-    return hashlib.sha256(contract_text().encode("utf-8")).hexdigest()
+    return _sha(contract_text())
 
 
 def contract_pointer(root: Path | str) -> dict[str, Any]:
@@ -36,7 +41,10 @@ def contract_pointer(root: Path | str) -> dict[str, Any]:
     dest = Path(root) / CONTRACT_RELATIVE
     sha = contract_sha()
     present = dest.is_file()
-    matches = present and hashlib.sha256(dest.read_bytes()).hexdigest() == sha
+    try:
+        matches = present and _sha(dest.read_bytes().decode("utf-8")) == sha
+    except (OSError, UnicodeDecodeError):
+        matches = False
     return {"path": str(dest), "sha": sha, "present": present, "current": bool(matches)}
 
 
@@ -45,7 +53,7 @@ def ensure_contract_copy(root: Path | str) -> dict[str, Any]:
     copy is never rewritten (its mtime does not move); a changed shipped text is."""
     dest = Path(root) / CONTRACT_RELATIVE
     text = contract_text()
-    out: dict[str, Any] = {"ok": True, "written": False, "path": str(dest), "sha": hashlib.sha256(text.encode("utf-8")).hexdigest()}
+    out: dict[str, Any] = {"ok": True, "written": False, "path": str(dest), "sha": _sha(text)}
     data = text.encode("utf-8")   # bytes, so the copy's sha equals the shipped sha on every OS
     try:
         if dest.is_file() and dest.read_bytes() == data:

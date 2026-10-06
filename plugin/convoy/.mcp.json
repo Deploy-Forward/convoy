@@ -1,9 +1,0 @@
-{
-  "mcpServers": {
-    "convoy": {
-      "type": "http",
-      "url": "http://127.0.0.1:8788/mcp",
-      "note": "Convoy runs on your own machine: start it with `convoy mcp` and this plugin talks to it on loopback. The wizard checks the live tools/list and fails closed when required verbs are absent. A hosted client that cannot reach your machine connects to the Deploy Forward board instead. No API key is read by this plugin."
-    }
-  }
-}

@@ -96,7 +96,7 @@ class Glance(unittest.TestCase):
         with mock.patch("convoy.glance.probe", side_effect=fake_probe), mock.patch(
             "convoy.glance.shutil.which", side_effect=_which_map(mapping)
         ):
-            rc, card = _run(self.root, "glance", "--json")
+            rc, card = _run(self.root, "glance", "--json", "--probe")
         self.assertEqual(rc, 0)
         conductor = card["conductor"]
         self.assertEqual(conductor["to"], "grok-bot")

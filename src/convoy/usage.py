@@ -47,7 +47,7 @@ def _run(cmd: list[str], timeout: int = 15, cwd: Any = None) -> tuple[int, str]:
                 ["taskkill", "/F", "/T", "/PID", str(p.pid)],
                 capture_output=True,
                 timeout=5,
-                **quiet_spawn_kwargs(),   # a probe timeout popped a 'taskkill' console every minute (live 2026-09-05)
+                **quiet_spawn_kwargs(),   # without it a probe timeout pops a 'taskkill' console every minute
             )
         else:
             p.kill()
@@ -172,11 +172,18 @@ def _parse_claude(raw: str) -> tuple[Any, bool]:
         # Fallback only when nothing parsed, and only for a session line that
         # is itself at 100%. The old test was `"100%" in text and "session" in
         # text`, so ANY 100% in the blob — a per-model weekly cap sitting
-        # beside a session at 8% — refused every send to that harness (live
-        # 2026-09-03: blocked the whole receive path on any machine with
-        # Claude Code installed).
+        # beside a session at 8% — refused every send to that harness and
+        # blocked the whole receive path on any machine with Claude Code
+        # installed.
         limited = bool(re.search(r"session[^\n%]{0,40}?100\s*%", text, re.I))
     return remaining, limited
+
+
+def no_reading(harness: str) -> dict[str, Any]:
+    """The reading a read verb reports without --probe: unknown, never zero, and no vendor
+    binary is started to get it."""
+    del harness
+    return {"usage_remaining": None, "limited": False, "raw": None}
 
 
 def probe(harness: str, runner: ProbeFn | None = None, *, cwd: Any = None) -> dict[str, Any]:
@@ -228,9 +235,9 @@ def probe(harness: str, runner: ProbeFn | None = None, *, cwd: Any = None) -> di
         low = (raw or "").lower()
         timed_out = code == 124 or low == "probe timeout"
         # A probe that TIMED OUT measured nothing. Unknown is null; it is not
-        # "out of quota". Treating it as limited refused every send to a codex
-        # chair on this machine for a full day (live 2026-09-03: the codex
-        # probe times out here, so the neuron could never be reached at all).
+        # "out of quota". Treating it as limited refuses every send to a codex
+        # chair wherever the codex probe times out, so the neuron can never be
+        # reached at all.
         # If the vendor really is out of credits it says so, and it will
         # refuse the work itself - that refusal is evidence, ours was a guess.
         limited = "out of credits" in low
@@ -527,9 +534,9 @@ class CachedProbe:
     The first ask for a harness returns {usage_remaining: null, limited: false,
     probing: true} and starts ONE background probe; later asks return the
     cached vendor answer until ttl_s passes, then refresh once in the
-    background again. Live 2026-09-05: codex's probe times out at ~17 s and
-    claude's takes ~10 s, so probing on the paint path froze the strip for
-    30 s at start and on every tick. Unknown stays null, never 0.
+    background again. codex's probe can take ~17 s and claude's ~10 s, so
+    probing on the paint path would freeze the strip at start and on every
+    tick. Unknown stays null, never 0.
     """
 
     def __init__(self, probe_fn: ProbeFn | None = None, *, ttl_s: float = 60.0,

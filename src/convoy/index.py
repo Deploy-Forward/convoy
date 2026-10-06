@@ -124,6 +124,47 @@ def record(root: str | Path, convoy_id: str, thread: str | None) -> dict[str, An
     return row
 
 
+def _same_root(a: str | Path, b: str | Path) -> bool:
+    try:
+        return os.path.normcase(str(Path(a).resolve())) == os.path.normcase(str(Path(b).resolve()))
+    except OSError:
+        return os.path.normcase(str(a)) == os.path.normcase(str(b))
+
+
+def claim(root: str | Path, convoy_id: str, thread: str | None) -> None:
+    """Index this root under its id, or refuse a copy of another live thread.
+
+    Recorded when the id is not indexed yet, or indexed at this same path. An id indexed at
+    another path whose .convoy/id still holds it is that thread, not this one: refused, with
+    the re-mint that gives this root its own id. An index row whose root is gone or now holds
+    another id is a moved thread, and this root takes it over. Best-effort like record: an
+    unreadable or unwritable index never blocks the thread."""
+    try:
+        loaded, error = _load_checked()
+    except OSError:
+        return
+    if error:
+        return
+    for row in loaded:
+        if row.get("convoy_id") != convoy_id:
+            continue
+        other = str(row.get("root") or "")
+        if not other or _same_root(other, root):
+            if row.get("thread") != thread and thread is not None:
+                record(root, convoy_id, thread)
+            return
+        try:
+            other_id = (Path(other) / ".convoy" / "id").read_text(encoding="utf-8-sig").strip()
+        except OSError:
+            other_id = None
+        if other_id == convoy_id:
+            from .cmd import _fwd
+            raise ValueError("refuse: convoy id " + convoy_id + " is already the thread at " + str(Path(other).resolve()) +
+                             "; " + str(Path(root).resolve()) + " is a copy of it. Give this root its own id with "
+                             "`convoy --root " + _fwd(str(Path(root).resolve())) + " init --new-id`")
+    record(root, convoy_id, thread)
+
+
 def set_hidden(convoy_id: str, hidden: bool) -> dict[str, Any]:
     """Archive (hide) or unarchive a thread on the widget strip. The index
     row, the root, and every seat stay exactly as they are; only the strip

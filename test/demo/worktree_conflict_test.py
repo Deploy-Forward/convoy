@@ -8,8 +8,8 @@ real thread went unread. Three guarantees follow:
 1. seat/join refuse a worktree that is bound to a DIFFERENT thread.
 2. whoami reports the thread the root names AND the thread the cwd walks up
    to, with conflict=true when they differ.
-3. `convoy skills --worktree W` refreshes the Convoy-owned skill copies so a
-   long-lived pane is not left reading a stale sheet.
+3. `convoy skills --worktree W` refreshes the Convoy-owned pointer and hooks,
+   and leaves any skill copy in the worktree as it is.
 """
 import io
 import json
@@ -23,7 +23,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 
 from convoy.cli import main
 from convoy.convoy import bind, ensure_id, seat, update_seat
-from convoy.identity import end_skill_text, install_neuron_identity
+from convoy.identity import install_neuron_identity
 from convoy.lifecycle import join
 from convoy.panes import identify
 
@@ -96,16 +96,17 @@ class ForeignWorktreeRefused(unittest.TestCase):
 
 
 class SkillsRefresh(unittest.TestCase):
-    def test_stale_copies_are_rewritten(self):
+    def test_an_old_skill_copy_is_neither_rewritten_nor_removed(self):
+        """Skills ship from the plugin; `convoy skills` leaves an earlier copy as it is."""
         wt = Path(tempfile.mkdtemp())
         first = install_neuron_identity(wt)
         self.assertTrue(first["written"])
         stale = wt / ".claude" / "skills" / "convoy-end" / "SKILL.md"
-        stale.write_text("old sheet: python -m convoy send\n", encoding="utf-8")
+        stale.parent.mkdir(parents=True, exist_ok=True)
+        stale.write_bytes(b"old sheet: python -m convoy send\n")
         rc, card = _run_cli(wt, "skills", "--worktree", str(wt))
         self.assertEqual(rc, 0)
-        self.assertTrue(card["written"])
-        self.assertEqual(stale.read_text(encoding="utf-8"), end_skill_text())
+        self.assertEqual(stale.read_bytes(), b"old sheet: python -m convoy send\n")
         rc, again = _run_cli(wt, "skills", "--worktree", str(wt))
         self.assertFalse(again["written"])
 

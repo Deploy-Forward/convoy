@@ -59,7 +59,7 @@ explicitly records a lead transfer between already identified chairs.
 
 ## OpenAI plugin flow
 
-Installing `convoy@convoy` grants the declared MCP connection and bundled skill.
+Installing the convoy plugin from Deploy-Forward/plugins grants the declared MCP connection and its skills.
 The plugin uses MCP tools rather than translating the shell commands above:
 
 1. Inspect the configured endpoint's live tool list.

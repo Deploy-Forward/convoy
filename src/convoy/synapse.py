@@ -245,8 +245,8 @@ def deliver_to_live_seat(
     sid = str(session_id or "").strip()
     # Mint the token BEFORE any vendor push so it can ride inside the body:
     # a `codex queue` message arrives as an ordinary user turn, which the
-    # receiver cannot tell from a human typing (codex said exactly that,
-    # 2026-09-03, and rightly refused to certify delivery). With the token
+    # receiver cannot tell from a human typing, so it cannot certify
+    # delivery. With the token
     # in the text, an ack citing it is proof only Convoy could have sourced.
     token = uuid.uuid4().hex
     native: dict[str, Any] | None = None
@@ -260,7 +260,7 @@ def deliver_to_live_seat(
         )
         native = try_codex_queue(resume_token, framed)
     # `codex queue` exiting 0 is NOT proof codex consumed the message (a row
-    # was found sitting in codex's sqlite for a dead pane, 2026-09-03), so the
+    # can sit in codex's sqlite for a dead pane), so the
     # inbox row stays PENDING until the receiver drains it, exactly as for
     # every other harness. path_name records that a native route was used.
     path_name = "codex-queue" if native else "inbox"
@@ -386,7 +386,7 @@ def _send_one(
     home_thread = read_thread(root)
 
     def _pack_message(current_instance_id: str | None) -> tuple[dict[str, Any], str]:
-        packed_row = pack(cwd_root, instance_id=current_instance_id)
+        packed_row = pack(cwd_root, instance_id=current_instance_id, write=not dry_run)
         packed_row["worktree"] = str(cwd_root) if worktree else packed_row.get("worktree")
         # Seat worktrees have no .convoy; the home --root layer owns thread
         # identity. Overlay only real values — null never clobbers a seat id.
@@ -405,6 +405,19 @@ def _send_one(
             "model": None,
             "usage_remaining": None,
             "error": "refuse wrapper target: " + target_name,
+            "pointers": packed,
+            "convoy_id": cid,
+        }
+    if not resolved_instance_id and not resume_token and cid and \
+            any(s.get("to") == to for s in list_seats(root, convoy_id=cid)):
+        # A harness name is not a neuron: a seated chair of that harness is addressed by its
+        # id. Checked before the dry plan, so a dry run refuses exactly as the send would.
+        return {
+            "ok": False,
+            "refused": "occupied",
+            "to": to,
+            "session_id": None,
+            "error": "seat exists; attach and resume session_id",
             "pointers": packed,
             "convoy_id": cid,
         }
@@ -513,6 +526,10 @@ def _send_one(
     seat_row = None
     if resolved_instance_id:
         seat_row = lookup_any(root, resolved_instance_id, to=target_name, worktree=worktree)
+        if seat_row is None:
+            # The registry is a resume map a send fills in; a chair seated without one is
+            # still a known instance: its seats.jsonl row answers before any refusal.
+            seat_row = _seated_row(root, resolved_instance_id)
         if seat_row is None and lookup(root, resolved_instance_id) is None:
             if steal_blocked:
                 return _refuse_steal(resolved_instance_id)
@@ -542,7 +559,8 @@ def _send_one(
     packed, message = _pack_message(resolved_instance_id)
     if steal_blocked and not resolved_instance_id:
         return _refuse_steal(None)
-    if resolved_instance_id and lookup(root, resolved_instance_id) is None:
+    if resolved_instance_id and lookup(root, resolved_instance_id) is None and \
+            _seated_row(root, resolved_instance_id) is None:
         if steal_blocked:
             return _refuse_steal(resolved_instance_id)
         return {
@@ -569,19 +587,6 @@ def _send_one(
             local_writer=local_writer,
             sender=sender,
         )
-    if not resolved_instance_id and not resume_token:
-        cid = read_id(root)
-        if cid:
-            for s in list_seats(root, convoy_id=cid):
-                if s.get("to") == to:
-                    return {
-                        "ok": False,
-                        "to": to,
-                        "session_id": None,
-                        "error": "seat exists; attach and resume session_id",
-                        "pointers": packed,
-                        "convoy_id": cid,
-                    }
     branch = packed.get("branch")
     if not resolved_instance_id and not resume_token and not worktree:
         siblings = live_on_branch(root, branch)
@@ -673,8 +678,14 @@ def send_many(
     return [c for c in cards if c is not None]
 
 
+def _seated_row(root: Path, session_id: str) -> dict[str, Any] | None:
+    """The chair's own seat row when seats.jsonl has it, else None."""
+    rows = [s for s in list_seats(root, require_session=True) if s.get("session_id") == session_id]
+    return rows[-1] if rows else None
+
+
 def send_one(root, to, body, *args, **kwargs):
-    """send_one with an honest delivery label (codex/grok finding 2026-09-02):
+    """send_one with an honest delivery label:
     recorded = a feed row exists and nothing reached a neuron (fake runner or
     dry run); executed = a fresh headless vendor session ran the body (not the
     open pane); refused / error = nothing happened; queued = named live seat

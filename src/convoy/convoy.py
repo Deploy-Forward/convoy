@@ -12,7 +12,7 @@ from typing import Any
 from .context import pack
 from .filelock import append_line
 from .harness_contract import effort_applied, validate_effort, validate_model, validate_where
-from .index import record as index_record
+from .index import claim as index_claim, record as index_record
 from .layer import SCHEMA_VERSION, feed_since, hook
 from .registry import register
 from .repo import exclude_convoy_files
@@ -56,9 +56,21 @@ def read_id(root: Path) -> str | None:
     return text or None
 
 def ensure_id(root: Path) -> str:
+    """This root's convoy id, minted once. An existing id is claimed in the machine index:
+    indexed when it is not, refused (ValueError) when it is another live thread's id."""
     existing = read_id(root)
     if existing:
+        index_claim(root, existing, read_thread(root))
         return existing
+    return _mint_id(root)
+
+
+def remint_id(root: Path) -> str:
+    """Give a copied root its own id (`init --new-id`); the original keeps the old one."""
+    return _mint_id(root)
+
+
+def _mint_id(root: Path) -> str:
     cid = "cvy_" + secrets.token_urlsafe(16)
     path = _id_path(root)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -201,8 +213,8 @@ def seat(
     title_val = title.strip() if isinstance(title, str) and title.strip() else None
     agent_val = agent.strip() if isinstance(agent, str) and agent.strip() else None
     # Effort is the seat's declared level, real-or-null (chip front matter),
-    # validated against THIS harness's keys (harness_effort.json). Since the
-    # wizard pass (2026-09-04) Convoy does set the vendor flag — exactly when
+    # validated against THIS harness's keys (harness_effort.json). Convoy
+    # sets the vendor flag — exactly when
     # the contract carries cli_flag + evidence; effort_applied records which.
     effort_val = validate_effort(to, effort)
     # Model likewise: refused only against a NON-null catalog (harness_effort.json
@@ -376,8 +388,6 @@ def update_seat(root: Path, session_id: str, **changes: Any) -> dict[str, Any]:
             updated["effort"] = validate_effort(str(updated.get("to") or ""), row.get("effort"))
         except ValueError:
             updated["effort"] = None
-    if "effort" in changes or harness_changed:
-        updated["effort_applied"] = effort_applied(str(updated.get("to") or ""), updated.get("effort"), updated.get("model"))
     if "model" in changes:
         updated["model"] = validate_model(str(updated.get("to") or ""), changes["model"])
     elif harness_changed:
@@ -387,6 +397,10 @@ def update_seat(root: Path, session_id: str, **changes: Any) -> dict[str, Any]:
             updated["model"] = validate_model(str(updated.get("to") or ""), row.get("model"))
         except ValueError:
             updated["model"] = None
+    # A model-id harness carries effort inside the model id, so a model change alone can
+    # flip whether the effort is applied. Computed after validation, from the stored model.
+    if "effort" in changes or "model" in changes or harness_changed:
+        updated["effort_applied"] = effort_applied(str(updated.get("to") or ""), updated.get("effort"), updated.get("model"))
     # where is re-validated for the harness it now sits on: a cloud chair
     # cannot swap onto a harness with no evidenced cloud attach (refused, not
     # dropped — there is no local fallback for a chair that has no worktree).
@@ -469,9 +483,9 @@ def observe_resume(root: Path, session_id: str, vendor_id: Any, *, to: str | Non
     # binding resume_target checks.
     if not current:
         return update_seat(root, sid, resume=value)
-    from .pane_host import pid_alive
+    from .pane_host import host_alive
     if row.get("harness_pid") is not None and str(row.get("process_state") or "") != "exited" \
-            and pid_alive(row.get("harness_pid")):
+            and host_alive(row.get("harness_pid"), row.get("harness_started"), launched_at=row.get("launched_at")):
         return None  # the pane host's live body is the chair; a different id beside it is a second body
     rows = [r for r in feed_since(root, "1970-01-01T00:00:00.000000Z")
             if r.get("instance_id") == sid and r.get("kind") in ("resume-changed", "resume-flap")]

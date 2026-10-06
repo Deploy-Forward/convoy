@@ -83,12 +83,6 @@ class ContractCarriesAModelCatalog(unittest.TestCase):
                 self.assertTrue(all(isinstance(m, str) and m.strip() for m in models), row["id"])
                 self.assertFalse(evidence.startswith("unverified"), (row["id"], evidence))
 
-    def test_plugin_copy_is_byte_identical(self):
-        bundled = (REPO / "plugin" / "convoy" / "harness_effort.json").read_bytes()
-        packaged = (REPO / "src" / "convoy" / "harness_effort.json").read_bytes()
-        self.assertEqual(bundled, packaged)
-        self.assertIn("models", json.loads(bundled)["harnesses"][0])
-
     def test_model_catalog_view_is_null_where_unverified_and_the_list_where_listed(self):
         for row in load_harness_contract()["harnesses"]:
             view = model_catalog(row["id"])
@@ -243,26 +237,6 @@ class ModelOverTheMcpWire(unittest.TestCase):
             desc = tools[name]["inputSchema"]["properties"]["model"].get("description", "")
             self.assertIn("choices.harnesses[].models", desc, name)
             self.assertNotIn("enum", tools[name]["inputSchema"]["properties"]["model"])
-
-
-class WizardSkillTakesModelsFromTheWire(unittest.TestCase):
-    def test_wizard_takes_models_from_the_wire_not_the_pack_file(self):
-        # The artifact under test IS the prose. Intent is unchanged since this
-        # test was written: the model source must be the WIRE, never a file on
-        # disk. Only the wire verb moved - `choices` became `card`, whose rows
-        # carry models/effort/usage per harness - so the
-        # test names the source generically instead of one tool.
-        text = (REPO / "plugin" / "convoy" / "skills" / "convoy-wizard" / "SKILL.md").read_text(encoding="utf-8")
-        seq = text[text.index("## Mandatory wizard sequence"):]
-        body = " ".join(seq.split())          # the prose wraps; match on claims, not layout
-        self.assertIn("rows[].models", body, "the sequence must name the wire row as the model source")
-        self.assertIn("card", body)
-        self.assertNotIn("Read model/effort constraints from the bundled", body)
-        # And no step may send the host to a file: a remote grok-bot has no
-        # filesystem, so a read instruction there is unrunnable, not merely wrong.
-        for path in ("../../harness_effort.json", "src/convoy/harness_effort.json"):
-            self.assertNotIn("Read `" + path + "`", body)
-            self.assertNotIn("read " + path, body.lower())
 
 
 if __name__ == "__main__":

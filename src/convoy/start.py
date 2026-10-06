@@ -12,6 +12,7 @@ from .panes import bodies, identify
 from .repo import checkout_path_for, is_repo_url, redact_credentials
 from .start_card import TRUST_NOTE, build_start_card
 from .project_resolve import _resolve_target as resolve_target, update_checkout
+from .usage import no_reading
 
 IdentifyFn = Callable[[Path], dict[str, Any]]
 BodiesFn = Callable[[Path], dict[str, Any]]
@@ -64,9 +65,11 @@ def _start(
     scan_budget: float = 5.0,
     create: bool = False,
     all_worktrees: bool = False,
+    probe: bool = False,
 ) -> dict[str, Any]:
     """Compose existing verbs. Never auto-picks newest. Never bring_up. Writes nothing into the
-    repo outside .convoy/ unless write_repo_files (see onboard)."""
+    repo outside .convoy/ unless write_repo_files (see onboard), writes no home file and starts
+    no harness binary: usage is read only with probe."""
     if cancel:
         return {"ok": True, "bound": False, "ask": "cancelled", "brought_up": False}
 
@@ -123,7 +126,7 @@ def _start(
             card["local_note"] = resolution["note"]
         return card
     if existing.exists() and read_id(existing) is not None and _live_on_root(existing, who, roster):
-        card = attach(existing)
+        card = attach(existing, probe_fn=None if probe else no_reading)
         card["attached"] = True
         card["brought_up"] = False
         card["start_card"] = build_start_card(existing, notes=notes)
@@ -137,6 +140,7 @@ def _start(
         github=github,
         clone_runner=clone_runner,
         write_repo_files=write_repo_files,
+        probe=probe,
     )
     card["brought_up"] = False
     if card.get("ok") and read_id(Path(str(card.get("root") or root))) is not None:

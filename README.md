@@ -22,42 +22,41 @@ install. To run from a checkout without installing, put `src` on the path:
 `PYTHONPATH=src python test/run.py` on bash, or
 `$env:PYTHONPATH='src'; python test/run.py` in PowerShell.
 
-### Grok Marketplace plugin
+### Skills and plugins
 
-The xAI-compatible plugin root is [`plugin/convoy`](plugin/convoy): it ships
-`.grok-plugin/plugin.json`, `.mcp.json`, and the `convoy` +
-`convoy-wizard` skills. The official source of truth for Grok Marketplace
-discovery is
-[`xai-org/plugin-marketplace`](https://github.com/xai-org/plugin-marketplace);
-its third-party entry must pin a reviewed full commit SHA from this repository
-and set `path` to `plugin/convoy`. After that catalog PR merges, Grok Build
-install is `/marketplace` → **convoy** → `i`, the same path
-[`exa-labs/exa-grok-plugin`](https://github.com/exa-labs/exa-grok-plugin)
-documents. There is no OAuth step: `.mcp.json` points at your own Convoy on
-loopback, `http://127.0.0.1:8788/mcp`. The Agent Plugins/Cursor manifests remain
-compatibility surfaces, not the xAI catalog. A Grok Bot Settings path is
-unverified here.
+Skills ship from Deploy-Forward/plugins
+([github.com/Deploy-Forward/plugins](https://github.com/Deploy-Forward/plugins)):
+the convoy and worklanes plugins carry the Convoy skills and the MCP connection
+to your own Convoy (`http://127.0.0.1:8788/mcp`). The `convoy-wizard` skill is
+not in the plugins repository; `convoy preflight` still checks the verbs a guided
+setup needs, from the list in `src/convoy/wizard_preflight.py`. This repository is the CLI and
+the MCP server. It ships no skill text and no plugin pack, so there is one source
+for the skills a neuron reads. Claude Code installs with
+`claude plugin install convoy@deploy-forward`; the plugins repository's README
+has the install for every other harness.
 
-### OpenAI plugin
+A launch writes one Convoy file a neuron reads, the `AGENTS.md` pointer (see
+below): one paragraph naming the convoy plugin's `convoy-operate` skill and
+`convoy-dictionary`. Convoy replaces that block only when it is a block an
+earlier Convoy wrote; a block you edited is left as it is and the card names the
+file. Convoy deletes nothing in a worktree: skill copies, agent files or prompts
+an earlier version wrote stay where they are, and removing them is your call.
 
-The OpenAI package lives at [`plugins/convoy`](plugins/convoy), with the
-required `.codex-plugin/plugin.json`, a remote HTTP `.mcp.json`, the canonical
-Deploy Forward logo, and a bundled fail-closed Convoy skill. The repository's
-local Codex marketplace is [`.agents/plugins/marketplace.json`](.agents/plugins/marketplace.json).
+`convoy --version` prints the version, the executable that ran, the package
+source it imported and whether that source is an editable install. Run it first
+when a skill and the CLI seem to disagree.
 
-```bash
-codex plugin marketplace add <checkout-root>
-codex plugin add convoy@convoy
-```
+### Host rendering
 
-This package is intentionally separate from `plugin/convoy`: OpenAI, Cursor,
-xAI, and Agent Plugins use different discovery manifests. Installing the
-OpenAI plugin is the revocable permission grant for its declared MCP connection
-and skill; endpoint write gates and exact action consent still apply. Public
-directory submission remains a publisher step after Deploy Forward approves
-privacy and terms URLs and, if used, OpenAI issues a real connector ID. The
-release gates and exact submission sequence are tracked in
-[`docs/openai-plugin-publication.md`](docs/openai-plugin-publication.md).
+Host rendering: unverified. Whether Grok Bot surfaces Convoy as
+`@convoy` or `/convoy`, and whether it renders the `card` tool's
+`structuredContent` as one card with a drill-down or only shows the text copy,
+is a fact about the host that nothing in this repository observes. The server
+declares `card` with an MCP `outputSchema` and answers through
+`structuredContent` so a host that renders cards can; the claim that it does
+stays unverified until a maintainer records a live run in
+`test/demo/fixtures/host_rendering.json` (date + verbatim evidence), which flips
+`host_rendering_contract_test` from skipped to asserting.
 
 The canonical local, plugin, and future hosted sequence is documented in
 [`docs/convoy-happy-path.md`](docs/convoy-happy-path.md), including the exact
@@ -67,9 +66,10 @@ word "cloud."
 ### Receiving messages needs a command that resolves
 
 Neurons receive through a harness hook, and a hook runs in its own shell that
-inherits nothing from yours. Convoy therefore **probes** its own command line
-before writing any hook file, and refuses to write one that would not run.
-Check what it picked:
+inherits nothing from yours. A hook file only ever carries the bare
+`convoy inbox --hook-pretooluse` or `convoy end --hook`, never an interpreter
+path, and Convoy **probes** that command before writing any hook file. Check
+what it found:
 
 ```bash
 convoy --root <thread-root> skills --worktree <worktree>
@@ -80,14 +80,15 @@ files; add `--write-repo-files` for `AGENTS.md`. Convoy writes no
 `.codex/hooks.json`: Codex runs Convoy's hooks from the convoy plugin, once the
 person trusts them with `/hooks` in Codex.
 
-The card's `hooks.resolved_via` is one of `console-script` (the installed
-`convoy` is on PATH — the best case), `interpreter` (this Python can
-`-m convoy`), `interpreter+src` (no install: the command carries the
-checkout's `src` with it), or `kept-existing` (a hook already there still
-works and was left alone). If nothing resolves, the card carries an install
-hint and **no hook file is written**; install the console script and re-run.
-The same command is the repair when a hook goes stale: it prunes Convoy's own
-dead entries and leaves your own hooks untouched.
+The card's `hooks.resolved_via` is `console-script` when the installed
+`convoy` answers in the hook shell. When it does not (it is not on PATH, or an
+unrelated `convoy` shim shadows it), the card names the PATH problem with an
+install hint, **no hook file is written or removed**, and a launch refuses
+rather than start a pane that cannot receive. Put the console script first on
+PATH (`convoy --version` names the one that runs) and re-run. The same command
+is the repair when a hook goes stale: it replaces Convoy's own older entries,
+an interpreter-pinned one included, with the bare command and leaves your own
+hooks untouched.
 
 ## CLI reference
 
@@ -109,14 +110,14 @@ Read (no writes to thread state):
 - `seats [--convoy-id <id>]` — seat rows.
 - `feed --since <10m|2h|1d|45s|ISO>` — events in a window; the card echoes `since_iso`.
 - `relaunch [--thread <name>] [--timeout <s>] [--dry-run]` — after the panes died (shutdown): brings every chair up again from `seats.jsonl` in its own worktree, queues each chair an inbox row saying when it left off (`last_seen`, `unread`, the exact `feed --since <ts>` to run), stamps `kind=relaunch`, and proves connected only from seated acks stamped after the relaunch. Dry shows the timeline and spawns nothing.
-- `rail [--since <window>]` — the strip under the panes: feed events, seats connected | pending | stale (from the seated acks), usage remaining per harness (`null` is unknown, never 0), last stamp, lead. Reads only the thread; from a chair's worktree it finds its thread through the machine index, so every neuron sees one rail.
+- `rail [--since <window>] [--probe]` — the strip under the panes: feed events, seats connected | pending | stale (from the seated acks), usage remaining per harness (`null` is unknown, never 0; read by running each harness's CLI only with `--probe`), last stamp, lead. Reads only the thread; from a chair's worktree it finds its thread through the machine index, so every neuron sees one rail.
 - `context [--instance-id <chair>]` — pointer pack for a neuron.
 - `glance [--thread <name>] [--tray]` — one-screen status.
 - `resume --neuron <chair>` — dry: prints native argv + cwd, spawns nothing.
 - `choices` — installed harnesses, known worktrees, chairs, terminal adapter; no resume tokens.
 - `probe --to <harness>`, `id`, `terminals`.
 - `widget [--topmost/--no-topmost] [--refresh 3] [--service]` — always-on-top tkinter strip: one dot per thread from `recent()`, expand chairs, click → `focus`; a stale chair shows a `nudge` button (dry card first, keys typed only on confirm, then the feed is polled 60 s for the chair's own row — that row alone means delivered). `pin` toggles topmost; `x` hides to the tray where `pystray`+`PIL` import, else minimizes. `--service` starts one detached strip per machine behind `$CONVOY_HOME/widget.pid` (`already: true` when the pid is alive and its image is our interpreter; a reused pid respawns). `crew --launch` and `relaunch` start it unless `--no-widget`. A start with seats from the widget records the thread's held lead chair as each neuron's launcher (the card says `launcher.source: "widget-lead"`), so the neurons report to the lead; a thread with no held lead refuses until an agent session attaches (`convoy attach <thread>`). Stdlib only.
-- `focus --seat <chair>` — ask the pane host to highlight that chair. `{focused: false, reason}` until a host adapter is evidenced (tmux `select-pane -t` is tested; Windows Terminal `wt focus-pane` is not evidenced on this machine).
+- `focus --seat <chair>` — ask the pane host to highlight that chair. `{focused: false, reason}` until a host adapter is evidenced (tmux `select-pane -t` is tested; Windows Terminal `wt focus-pane` is not evidenced).
 
 Write (thread state):
 
@@ -258,8 +259,7 @@ written by `crew` / `mint` when they create it, naming that worktree and its
 checkout) every file in the table goes in. Anywhere else, often your own repo, a
 launch and `skills` write only the Convoy-named files git excludes
 (`.claude/settings.local.json`, the `convoy-root` pointers,
-`.grok/hooks/convoy-inbox.json`, the convoy-end copies, and for a launch of a
-grok seat the grok agent). `AGENTS.md` is written there
+`.grok/hooks/convoy-inbox.json`). `AGENTS.md` is written there
 only after an opt-in: `--write-repo-files` on the CLI, `write_repo_files: true`
 on MCP `bring_up` / `open` / `launch` / `crew` behind the write gate (never on a
 dry run: a dry `bring-up` / `open` / `relaunch` on the CLI, or a dry MCP
@@ -277,9 +277,9 @@ The card names each home trust store a launch wrote (`trust_stores_written`).
 
 | Harness | `onboard` / `roster` id | `resume_argv` shape | `ensure_first_run` behavior | `send --live` behavior |
 | --- | --- | --- | --- | --- |
-| `grok` | `grok` | `grok -m <model?> --agent <path?> --resume <vendor-id?>` | Writes PATH ungate block; writes the `AGENTS.md` plugin-skills pointer (minted worktree, or `--write-repo-files`); writes Convoy-owned `--agent` file; writes project PreToolUse hook (`convoy inbox --hook-pretooluse`). | Native CLI on PATH. Named live seats queue (`delivery: queued`); never steals `--resume`. |
+| `grok` | `grok` | `grok -m <model?> --agent <path?> --resume <vendor-id?>` | Writes PATH ungate block; writes the `AGENTS.md` plugin-skills pointer (minted worktree, or `--write-repo-files`); passes `--agent` only for an agent file the seat names; writes project PreToolUse hook (`convoy inbox --hook-pretooluse`). | Native CLI on PATH. Named live seats queue (`delivery: queued`); never steals `--resume`. |
 | `claude` | `claude` | `claude --resume <vendor-id?>` | Writes PATH ungate block; writes the `AGENTS.md` plugin-skills pointer (minted worktree, or `--write-repo-files`); writes `.claude/settings.local.json` (inbox hooks + Stop heartbeat + auto-compact; no permission keys), merges user `~/.claude/settings.json` skip key, and writes `~/.claude.json` trust project keys. | Native CLI on PATH. Named live seats queue (`delivery: queued`); never steals `--resume`. |
-| `codex` | `codex` | `codex resume <vendor-id?>` (**not** `--resume`) | Writes PATH ungate block; writes `.agents/skills/convoy-end`; writes the `AGENTS.md` plugin-skills pointer (minted worktree, or `--write-repo-files`). No `.codex/hooks.json`: the convoy plugin's `codex-hooks.json` (in [`plugins/convoy`](plugins/convoy) here and in Deploy-Forward/plugins, named by the manifest's `hooks` field) carries the Stop heartbeat and PostToolUse inbox hook, keyed `convoy@<marketplace>:codex-hooks.json:<event>:0:0` (`convoy@convoy` from this repository's marketplace); `add` / `crew` cards warn until the person trusts them with `/hooks`. No Claude permission-ungate writes. | Native CLI on PATH. A send `codex queue`s (`delivery: native-queued`, `wake: "codex-queue-accepted"`: accepted, not a turn started) once the plugin's Stop hook has recorded the session id; before that it is `queued`, `wake: "inbox-only"`, with `why`. |
+| `codex` | `codex` | `codex resume <vendor-id?>` (**not** `--resume`) | Writes PATH ungate block; writes the `AGENTS.md` plugin-skills pointer (minted worktree, or `--write-repo-files`). No `.codex/hooks.json`: the convoy plugin's `codex-hooks.json` (in Deploy-Forward/plugins, named by the manifest's `hooks` field) carries the Stop heartbeat and PostToolUse inbox hook, keyed `convoy@<marketplace>:codex-hooks.json:<event>:0:0`; `add` / `crew` cards warn until the person trusts them with `/hooks`. No Claude permission-ungate writes. | Native CLI on PATH. A send `codex queue`s (`delivery: native-queued`, `wake: "codex-queue-accepted"`: accepted, not a turn started) once the plugin's Stop hook has recorded the session id; before that it is `queued`, `wake: "inbox-only"`, with `why`. |
 | `cursor-agent` | `cursor-agent` | `cursor-agent --resume <vendor-id?>` | Writes PATH ungate block; writes the `AGENTS.md` plugin-skills pointer (minted worktree, or `--write-repo-files`); writes Grok/Claude inbox hook files (swap-safe). Drain via `convoy inbox --drain` (no vendor hook proven). | Native CLI on PATH. Named live seats queue (`delivery: queued`); never steals `--resume`. |
 | `agy` | `agy` | `agy --conversation <vendor-id?>` (live `--help` 2026-09-01: no `--resume`) | Writes PATH ungate block; writes the `AGENTS.md` plugin-skills pointer (minted worktree, or `--write-repo-files`); inbox hook files as above. | Native CLI on PATH. Named live seats queue (`delivery: queued`); never steals `--resume`. |
 | `hermes` | `hermes` | `hermes --resume <vendor-id?>` (live `--help` 2026-09-01) | Writes PATH ungate block; writes the `AGENTS.md` plugin-skills pointer (minted worktree, or `--write-repo-files`); inbox hook files as above. | Native CLI on PATH. Named live seats queue (`delivery: queued`); never steals `--resume`. |

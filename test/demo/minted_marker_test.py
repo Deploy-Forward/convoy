@@ -3,7 +3,7 @@
 `repo.mint_worktrees` writes `<worktree>/.convoy/minted.json` when it creates a worktree, and only
 then. `repo.is_minted_worktree` is true for that marker inside a linked git worktree. Anywhere else
 is the person's repo: a launch there writes only the files Convoy names and git excludes (the local
-Claude settings, the root pointers, the Grok inbox hook, the convoy-end copies, the grok agent),
+Claude settings, the root pointers, the Grok inbox hook),
 never `AGENTS.md` without `--write-repo-files`. No launch writes `.codex/hooks.json`: the convoy
 plugin carries Codex's hooks, so a Codex neuron needs no opt-in to receive and the card carries no
 opt-in note. `terminals` is a listing and writes nothing.
@@ -430,7 +430,10 @@ class EveryLaunchVerbOnARealRepo(Sandbox):
         rc, card = _run(self.repo, "crew", "--seat", "codex,title=one")
         self.assertEqual(rc, 0, card)
         wt = Path(card["mint"]["worktrees"][0]["path"])
-        self.assertTrue((wt / "AGENTS.md").is_file())
+        # Crew without --launch is a dry pass: the minted worktree's files are named, not written.
+        self.assertFalse((wt / "AGENTS.md").exists())
+        [win] = card["windows"]
+        self.assertIn("AGENTS.md", win["first_run"]["dry_run_writes"])
         self.assert_clean()
 
     def test_relaunch_on_a_root_seat(self):

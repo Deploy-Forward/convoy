@@ -21,7 +21,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 
 REPO = Path(__file__).resolve().parents[2]
 FIXTURE = REPO / "test" / "demo" / "fixtures" / "host_rendering.json"
-README = REPO / "plugin" / "convoy" / "README.md"
+README = REPO / "README.md"
 FIELDS = ("verified", "verified_on", "host", "invocation", "renders_structured_content_as_card", "evidence")
 
 
@@ -31,7 +31,7 @@ def _fixture() -> dict:
 
 def _readme_line() -> str:
     lines = [ln for ln in README.read_text(encoding="utf-8-sig").splitlines() if ln.startswith("Host rendering:")]
-    assert len(lines) == 1, "plugin/convoy/README.md must carry exactly one 'Host rendering:' line, found " + repr(lines)
+    assert len(lines) == 1, "README.md must carry exactly one 'Host rendering:' line, found " + repr(lines)
     return lines[0]
 
 

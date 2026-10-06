@@ -353,7 +353,10 @@ class OriginLoop:
             reason = str((sent or {}).get("refused") or "harness_absent")
             if reason not in REFUSED_REASONS:
                 reason = "harness_absent"
-            return self._fulfil(card_id, link_id, {"outcome": "refused", "refusedReason": reason})
+            refusal = {"outcome": "refused", "refusedReason": reason}
+            if (sent or {}).get("detail"):
+                refusal["detail"] = str(sent["detail"])
+            return self._fulfil(card_id, link_id, refusal)
         chair = self._seat_of(root, str(sent.get("session_id") or ""))
         return self._fulfil(card_id, link_id, {
             "outcome": "active",
@@ -540,8 +543,24 @@ def start_daemon(home: Path | str | None = None, **kw: Any) -> Any:
 def _deliver_via_synapse(*, root: Path, link: dict[str, Any], body: str) -> dict[str, Any]:
     """Default delivery: the brief goes to a live seat the way every other
     Convoy message does. Imported late so the loop's pure parts stay cheap."""
+    from .harness_contract import canonical_harness_id
     from .synapse import send_one
     to = str(link.get("harness") or "").strip()
     if not to:
         return {"ok": False, "refused": "harness_absent"}
-    return send_one(root, to, body, label="worklanes", local_writer=False)
+    # The link names a harness; the brief goes to that harness's one seated chair, by id.
+    # Nothing is spawned here: no chair is a refusal the board can read, never "active".
+    want = canonical_harness_id(to) or to
+    chairs = [s for s in list_seats(root) if (canonical_harness_id(s.get("to")) or s.get("to")) == want]
+    live = [s for s in chairs if not s.get("detached")]
+    if not chairs:
+        return {"ok": False, "refused": "harness_absent", "detail": "no " + to + " chair on this thread"}
+    if not live:
+        return {"ok": False, "refused": "no_resume_target",
+                "detail": "every " + to + " chair is detached: " + ", ".join(str(s.get("session_id")) for s in chairs)}
+    if len(live) > 1:
+        return {"ok": False, "refused": "no_resume_target",
+                "detail": "ambiguous: " + str(len(live)) + " " + to + " chairs (" +
+                          ", ".join(str(s.get("session_id")) for s in live) + "); address one by id"}
+    return send_one(root, str(live[0].get("to") or to), body, instance_id=str(live[0]["session_id"]),
+                    label="worklanes", local_writer=False)

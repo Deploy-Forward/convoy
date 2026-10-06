@@ -1,7 +1,6 @@
 """The widget's '+' flow IS the original specification, walked end to end.
 
-The original spec (recorded in plugin/convoy/skills/convoy-wizard/SKILL.md
-and docs/HAPPY_PATH.md): "@convoy allows for a connect GitHub, yes/no; if yes
+The original spec (the convoy wizard, and docs/HAPPY_PATH.md): "@convoy allows for a connect GitHub, yes/no; if yes
 which repository; selected repository; then select which harnesses are
 available on either local or cloud; how many neurons desired; model selection
 with effort. Terminal launches with the thread, then they all connect!" plus
@@ -30,7 +29,6 @@ from convoy.widget_web import WidgetApi, serve
 
 NULL_PROBE = {"usage_remaining": None, "limited": False, "raw": None}
 FAKES = Path(__file__).resolve().parents[1] / "fakes"
-SPEC = Path(__file__).resolve().parents[2] / "plugin" / "convoy" / "skills" / "convoy-wizard" / "SKILL.md"
 
 
 def _git(cwd, *argv):
@@ -81,11 +79,6 @@ class WidgetWalksTheOriginalSpec(unittest.TestCase):
     def get(self, path):
         with urllib.request.urlopen(self.url + path, timeout=60) as r:
             return json.loads(r.read())
-
-    def test_the_spec_is_on_disk_and_says_what_the_flow_does(self):
-        text = SPEC.read_text(encoding="utf-8")
-        for clause in ("GitHub?", "repos", "installed", "cloud", "`N` neurons", "model", "effort", "usage_remaining", "crew", "await_seated"):
-            self.assertIn(clause, text, clause)
 
     def test_plus_flow_walks_every_clause(self):
         # "select which harnesses are available on either local or cloud ... usage remaining"

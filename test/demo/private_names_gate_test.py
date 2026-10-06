@@ -171,7 +171,7 @@ class PublicTreeCarriesNoPrivateNames(unittest.TestCase):
         self.assertGreater(len(scanned), 150, "the tracked-file list came back nearly empty")
         for must in ("README.md", "SPEC.md", "SECURITY_GATES.md", "pyproject.toml", ".gitignore"):
             self.assertIn(must, scanned, must)
-        for prefix in ("scripts/", ".agents/", ".cursor-plugin/", "test/fakes/", "docs/", "src/", "skills/"):
+        for prefix in ("scripts/", "test/fakes/", "docs/", "src/"):
             self.assertTrue(any(rel.startswith(prefix) for rel in scanned), prefix)
 
     def test_the_detectors_fire_on_synthetic_bad_input(self):

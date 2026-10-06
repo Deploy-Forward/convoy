@@ -1,8 +1,8 @@
 """focus --seat: ask the pane host to highlight one chair.
 
 tmux: `select-pane -t` is proven via an injectable runner.
-Windows Terminal: `wt focus-pane` is NOT evidenced on this machine
-(2026-09-05: wt.exe is the WindowsApps stub; `wt.exe --help` and
+Windows Terminal: `wt focus-pane` is NOT evidenced
+(wt.exe as the WindowsApps stub: `wt.exe --help` and
 `wt.exe focus-pane --help` produced no targeting documentation). The card
 stays `{focused: false, reason}` until an adapter is evidenced.
 """

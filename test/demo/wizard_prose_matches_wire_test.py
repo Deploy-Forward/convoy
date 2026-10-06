@@ -14,6 +14,9 @@ The repo-root sheet skills/convoy/SKILL.md still had that CLI-only list
 `consent`) after Gate 0 moved on; this test now covers that file and every
 name in TOOLS, not only current Gate 0.
 
+Those skill files now ship from Deploy-Forward/plugins; here the test reads the
+README and the spec.
+
 Truth here is DERIVED from mcp_http.TOOLS and _WRITE_TOOLS, never a frozen
 list, so this test cannot itself drift. It checks the docs for the specific
 false claims, per registered verb, rather than for phrasing.
@@ -29,11 +32,11 @@ import convoy.wizard_preflight as wp
 from convoy.mcp_http import TOOLS, _WRITE_TOOLS
 
 REPO = Path(__file__).resolve().parents[2]
+# The skills that describe the wire ship from Deploy-Forward/plugins; here the docs are the
+# README and the spec.
 DOCS = {
-    "plugin/convoy/README.md": REPO / "plugin" / "convoy" / "README.md",
-    "plugin/convoy/skills/convoy/SKILL.md": REPO / "plugin" / "convoy" / "skills" / "convoy" / "SKILL.md",
-    "plugin/convoy/skills/convoy-wizard/SKILL.md": REPO / "plugin" / "convoy" / "skills" / "convoy-wizard" / "SKILL.md",
-    "skills/convoy/SKILL.md": REPO / "skills" / "convoy" / "SKILL.md",
+    "README.md": REPO / "README.md",
+    "SPEC.md": REPO / "SPEC.md",
 }
 # Each pattern, with a verb substituted, is a claim that the verb is NOT served.
 # Same-line only: a multiline "CLI-only: `a`,\\n`b`" list is caught separately.
@@ -108,13 +111,10 @@ class WizardProseMatchesWire(unittest.TestCase):
         # stay gated tools but are no longer verbs Gate 0 requires.
         gated = sorted(v for v in _registered_wizard_verbs() if v in _WRITE_TOOLS)
         self.assertEqual(gated, ["await_seated", "clone", "consent", "crew", "onboard", "repos", "send"])
-        readme = DOCS["plugin/convoy/README.md"].read_text(encoding="utf-8-sig")
+        readme = DOCS["README.md"].read_text(encoding="utf-8-sig")
         self.assertIn("CONVOY_MCP_WRITE_TOOLS", readme, "README must name the gate that hides seat/join/launch")
         for verb in gated:
             self.assertIn("`" + verb + "`", readme, "README must name " + verb + " among the write-gated verbs")
-        pack_skill = DOCS["plugin/convoy/skills/convoy/SKILL.md"].read_text(encoding="utf-8-sig")
-        self.assertIn("write-gated", pack_skill, "pack skill must name the third #51 class, not only redeploy/not-registered")
-        self.assertIn("`card`", pack_skill, "pack skill must read model/effort from card, not only choices")
 
 
 if __name__ == "__main__":

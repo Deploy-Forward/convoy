@@ -7,6 +7,7 @@ import subprocess
 from typing import Any, Callable
 from urllib.parse import urlparse
 
+from .refusal import next_step
 from .bringup import ensure_interactive_path
 
 Installer = Callable[[str], dict[str, Any]]
@@ -156,6 +157,10 @@ def default_installer(url: str) -> dict[str, Any]:
     return {"ok": True, "url": url}
 
 
+# A live install without consent names the flag (linted by printed_commands_test).
+INSTALL_OPT_IN = next_step("install", "--to", "<harness>", "--live", "--opt-in")
+
+
 def install(
     to: str,
     *,
@@ -178,7 +183,7 @@ def install(
         return card
     if not opt_in:
         card["ok"] = False
-        card["error"] = "opt_in required"
+        card["error"] = "opt_in required: pass --opt-in (" + INSTALL_OPT_IN.replace("<harness>", str(to)) + "), or opt_in=true on MCP"
         return card
     run = (installer or default_installer)(str(card["url"]))
     card["install"] = {k: run.get(k) for k in ("ok", "error", "url") if k in run}

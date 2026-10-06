@@ -139,15 +139,15 @@ class Replies(unittest.TestCase):
             gb = json.loads(gated["result"]["content"][0]["text"])
             self.assertFalse(gb["ok"]); self.assertIn("write gate", gb["error"])
 
-    def test_agents_block_points_at_convoy_listen_for_the_token_ack(self):
+    def test_agents_block_points_at_the_plugin_for_the_token_ack(self):
         from convoy.identity import install_neuron_identity
         wt = Path(tempfile.mkdtemp())
         install_neuron_identity(wt)
         text = (wt / "AGENTS.md").read_text(encoding="utf-8")
-        # Since 2026-09-28: the block is a pointer; convoy-listen carries the
-        # ack-with-a-note-citing-the-token rule (and convoy-operate how to
-        # answer the conductor).
-        self.assertIn("convoy-listen (wait, drain your inbox, acknowledge with `convoy reply <token> \"...\"`)", text)
+        # The block is a pointer; the plugin's convoy-operate skill carries the ack rule and how
+        # to answer the conductor, so the block never restates a stale spelling of it.
+        self.assertIn("convoy-operate", text)
+        self.assertNotIn("convoy hook note", text)
 
 
 class ReceiptsAreProvenByTheSession(unittest.TestCase):
@@ -253,10 +253,3 @@ class OneProofSetForReceipts(unittest.TestCase):
         self.assertIn('convoy reply <token> "', section)
         self.assertNotIn("hook note", section)
         self.assertNotIn("from its worktree", section)
-
-    def test_the_skills_teach_convoy_reply(self):
-        repo = Path(__file__).resolve().parents[2]
-        for rel in ("skills/convoy/SKILL.md", "plugin/convoy/skills/convoy/SKILL.md"):
-            text = (repo / rel).read_text(encoding="utf-8")
-            self.assertIn("convoy reply <token>", text, rel)
-            self.assertNotIn('hook note "re token <token>', text, rel)

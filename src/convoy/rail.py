@@ -25,9 +25,14 @@ from .provenance import rail_provenance
 from .pulse import chair_reachable, read_pulse
 from .wait import listening_wait_file
 from .bringup import is_conductor
-from .usage import probe, surface
+from .usage import no_reading, probe, surface
 
 ProbeFn = Callable[[str], dict[str, Any]]
+
+
+def live_probe(harness: str) -> dict[str, Any]:
+    """The vendor reading --probe asks for (looked up at call time, so a test can stub it)."""
+    return probe(harness)
 
 
 def root_for(start: Path | str) -> Path | None:
@@ -47,8 +52,13 @@ def root_for(start: Path | str) -> Path | None:
     return hits[0] if len(hits) == 1 else None
 
 
-def build_rail(root: Path | str, *, since: str = "10m", probe_fn: ProbeFn | None = None) -> dict[str, Any]:
+def build_rail(root: Path | str, *, since: str = "10m", probe_fn: ProbeFn | None = None,
+               probe: bool = False) -> dict[str, Any]:
+    """A read verb: no harness binary is started unless probe (or a caller's own probe_fn)
+    asks for usage. Without one every usage field is null (unknown) and probed is false."""
     root = Path(root)
+    probed = probe_fn is not None or bool(probe)
+    fn = probe_fn or (live_probe if probe else no_reading)
     cid = read_id(root)
     card: dict[str, Any] = {
         "ok": False,
@@ -81,7 +91,7 @@ def build_rail(root: Path | str, *, since: str = "10m", probe_fn: ProbeFn | None
                                                     listening_wait_file(root, st["session_id"]), now)}
                       for st in states]
 
-    fn = probe_fn or probe
+    card["probed"] = probed
     usage: dict[str, Any] = {}
     for harness in sorted({str(s.get("to")) for s in chairs if s.get("to")}):
         usage[harness] = surface(harness, fn(harness))
