@@ -3,10 +3,10 @@
 The wizard may only drive verbs the live MCP endpoint actually lists. It never
 freezes a menu (PR23) and never assumes a redeploy will fix a gap. Each missing
 verb is classified from the packaged server's own registry, so the card says
-WHICH gap it is: `redeploy` (registered on main, the live deploy lags),
-`write-gated` (registered, but tools/list hides it until
-CONVOY_MCP_WRITE_TOOLS=1 on that deploy), or `not-registered` (no MCP tool on
-main either; needs a server commit). There is no CLI fallback: a marketplace
+WHICH gap it is: `redeploy` (registered on main, the running server lags),
+`write-gated` (registered, but tools/list hides it until a conductor bearer is
+minted on that machine with `convoy conductor mint`), or `not-registered` (no
+MCP tool on main either; needs a server commit). There is no CLI fallback: a marketplace
 install is not a source checkout.
 """
 from __future__ import annotations
@@ -29,9 +29,9 @@ REQUIRED_WIZARD_VERBS: tuple[str, ...] = (
     "neurons", "graph", "send", "inbox",
 )
 
-REMEDY_REDEPLOY = "redeploy"              # packaged server registers it; the live deploy lags main
+REMEDY_REDEPLOY = "redeploy"              # packaged server registers it; the running server lags main
 REMEDY_NOT_REGISTERED = "not-registered"  # no MCP tool on main either; needs a server commit, not a redeploy
-REMEDY_WRITE_GATED = "write-gated"        # packaged, but tools/list hides it until CONVOY_MCP_WRITE_TOOLS=1 on the deploy
+REMEDY_WRITE_GATED = "write-gated"        # packaged, but tools/list hides it until a conductor bearer is minted
 
 
 def packaged_tool_names() -> list[str]:
@@ -83,10 +83,11 @@ def preflight(listed: list[str] | None, *, url: str | None = None, error: str | 
             card["next"] = "reconnect-or-redeploy-mcp"
         parts = []
         if redeploy:
-            parts.append("redeploy the public MCP to pick up: " + ", ".join(redeploy))
+            parts.append("upgrade and restart your Convoy MCP (`convoy mcp`) to pick up: " + ", ".join(redeploy))
         if gated:
-            parts.append("the deploy hides write tools until CONVOY_MCP_WRITE_TOOLS=1: " + ", ".join(gated) +
-                         "; that is a deploy decision, not a redeploy")
+            parts.append("the server lists write tools only once a conductor bearer exists: " + ", ".join(gated) +
+                         "; run `convoy conductor mint` on that machine and send the bearer as "
+                         "`Authorization: Bearer`, not a redeploy")
         if unregistered:
             parts.append("no MCP tool is registered on main for: " + ", ".join(unregistered) + "; a redeploy cannot fix that, the server needs a commit")
         card["ask"] = ("wizard fail-closed. " + ". ".join(parts) +

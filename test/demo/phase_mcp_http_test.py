@@ -12,7 +12,11 @@ from unittest import mock
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 from convoy.convoy import bind, ensure_id, seat
 from convoy.layer import hook
-from convoy.mcp_http import HOME_LINE, make_server
+from convoy.mcp_http import make_server
+try:
+    from test.demo.write_gate_fixture import write_gate
+except ModuleNotFoundError:  # discovered as a top-level module
+    from write_gate_fixture import write_gate
 
 def _rpc(url, method, params=None, rpc_id=1):
     body = {"jsonrpc": "2.0", "method": method, "id": rpc_id}
@@ -41,7 +45,7 @@ class PhaseMcpHttp(unittest.TestCase):
     def setUp(self):
         # This phase exercises the complete MCP contract, including send.
         # Anonymous/public behavior has dedicated gate and redaction suites.
-        self._write_gate = mock.patch.dict(os.environ, {"CONVOY_MCP_WRITE_TOOLS": "1"})
+        self._write_gate = write_gate()
         self._write_gate.start()
         self.addCleanup(self._write_gate.stop)
         self.root = Path(tempfile.mkdtemp())
@@ -137,7 +141,7 @@ class PhaseMcpHttp(unittest.TestCase):
         # The raw id and argv are the conductor's contract, so they read behind
         # the gate; public_wire_redaction_test owns the ungated shape.
         with mock.patch("convoy.mcp_http.live_runner") as spawned, \
-                mock.patch.dict(os.environ, {"CONVOY_MCP_WRITE_TOOLS": "1"}):
+                write_gate():
             spawned.side_effect = AssertionError("live_runner must not run when dry_run true")
             resp = _rpc(self.mcp, "tools/call", {"name": "bring_up", "arguments": {"dry_run": True}})
         payload = _tool_payload(resp)
@@ -156,20 +160,14 @@ class PhaseMcpHttp(unittest.TestCase):
         self.assertNotIn("spawned-grok", after)
         spawned.assert_not_called()
 
-    def test_get_root_contains_convoy_bot(self):
+    def test_get_root_is_one_line_about_this_machine(self):
         req = urllib.request.Request(self.base + "/", method="GET")
         with urllib.request.urlopen(req, timeout=5) as r:
             body = r.read().decode("utf-8")
             ctype = r.headers.get("Content-Type", "")
-        self.assertIn("convoy.bot", body)
-        self.assertIn(HOME_LINE, body)
-        self.assertIn("<!doctype html>", body.lower())
-        self.assertIn('property="og:image" content="https://convoy.bot/og.png"', body)
-        self.assertIn('name="twitter:card" content="summary_large_image"', body)
-        self.assertIn("Rendered from <code>tools/list</code> on <code>/mcp</code>", body)
-        self.assertIn("reading the wire", body)
-        self.assertNotIn("grok · claude · codex", body)
-        self.assertTrue(ctype.startswith("text/html"))
+        self.assertIn("on this machine. POST JSON-RPC to /mcp. Threads: ", body)
+        self.assertNotIn("<", body, "no markup, no assets")
+        self.assertTrue(ctype.startswith("text/plain"))
 
     def test_get_mcp_is_post_only(self):
         req = urllib.request.Request(self.mcp, method="GET")
@@ -184,26 +182,15 @@ class PhaseMcpHttp(unittest.TestCase):
         self.assertEqual(ping["jsonrpc"], "2.0")
         self.assertEqual(ping["result"], {})
 
-    def test_favicon_routes_exist(self):
-        cases = (
-            ("/favicon.svg", "image/svg+xml"),
-            ("/favicon.ico", "image/x-icon"),
-            ("/favicon-96.png", "image/png"),
-            ("/apple-touch-icon.png", "image/png"),
-            ("/og.png", "image/png"),
-        )
-        for path, expected_type in cases:
+    def test_the_retired_site_routes_are_gone(self):
+        for path in ("/favicon.svg", "/favicon.ico", "/favicon-96.png", "/apple-touch-icon.png", "/og.png"):
             req = urllib.request.Request(self.base + path, method="GET")
-            with urllib.request.urlopen(req, timeout=5) as r:
-                body = r.read()
-                ctype = r.headers.get("Content-Type", "")
-            self.assertTrue(body)
-            self.assertTrue(ctype.startswith(expected_type), msg=f"{path} -> {ctype}")
-        with urllib.request.urlopen(self.base + "/favicon.svg", timeout=5) as svg_res:
-            self.assertIn("<svg", svg_res.read().decode("utf-8"))
+            with self.assertRaises(urllib.error.HTTPError) as ctx:
+                urllib.request.urlopen(req, timeout=5)
+            self.assertEqual(ctx.exception.code, 404, path)
 
     def test_open_alias_dry(self):
-        with mock.patch.dict(os.environ, {"CONVOY_MCP_WRITE_TOOLS": "1"}):   # raw id is gated
+        with write_gate():   # raw id is gated
             resp = _rpc(self.mcp, "tools/call", {"name": "open", "arguments": {"dry_run": True}})
         payload = _tool_payload(resp)
         self.assertTrue(payload["ok"])

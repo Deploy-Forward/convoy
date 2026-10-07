@@ -10,7 +10,6 @@ build/
 HTTP_MCP_STATUS.md
 ConvoyLayer.ps1
 node_modules/
-.wrangler/
 
 # Convoy's own first-run writes these into every seat worktree (CANON:
 # ensure_first_run writes an AGENTS.md pointer and the hook files; earlier

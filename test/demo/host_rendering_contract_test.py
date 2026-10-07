@@ -3,7 +3,7 @@
 Whether Grok Bot maps the convoy skill to `@convoy` or `/convoy`, and whether
 it renders the card tool's structuredContent as a card (the way `@treg` renders
 its provider drill-down), is a fact about the HOST. No test here can observe
-it: there is no host in the suite and the public URL is not live. So the claim
+it: there is no host in the suite. So the claim
 is held in test/demo/fixtures/host_rendering.json with every value null, the
 README says "Host rendering: unverified", and this test skips.
 

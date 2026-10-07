@@ -43,6 +43,10 @@ from convoy.harness_contract import load_harness_contract  # noqa: E402
 from convoy.lifecycle import join  # noqa: E402
 from convoy.mcp_http import TOOLS, _WRITE_TOOLS, make_server  # noqa: E402
 from convoy.wizard_preflight import REQUIRED_WIZARD_VERBS  # noqa: E402
+try:
+    from test.demo.write_gate_fixture import open_write_gate, write_gate, write_gate_if  # noqa: F401
+except ModuleNotFoundError:  # discovered as a top-level module
+    from write_gate_fixture import open_write_gate, write_gate, write_gate_if  # noqa: F401
 
 RESUME_ID = "LEAK-RESUME-card-7c3e91"
 NULL_PROBE = {"usage_remaining": None, "limited": False, "raw": None}
@@ -217,9 +221,6 @@ class CardWire(unittest.TestCase):
         self.mcp = "http://127.0.0.1:%s/mcp" % self.httpd.server_address[1]
         threading.Thread(target=self.httpd.serve_forever, daemon=True).start()
         self.addCleanup(self.httpd.shutdown)
-        self._env = mock.patch.dict(os.environ, {"CONVOY_MCP_WRITE_TOOLS": ""})
-        self._env.start()
-        self.addCleanup(self._env.stop)
         self.probe = mock.Mock(return_value=dict(NULL_PROBE))
         # PR #87 moved the usage seam to mcp_http.probe (one CachedProbe per process); card gets it as probe_fn
         for target, kw in (("convoy.mcp_http.probe", {"new": self.probe}),
@@ -286,9 +287,9 @@ class CardWire(unittest.TestCase):
         _require(tools["card"]["outputSchema"], named["structuredContent"])
 
     def test_a_seeded_resume_id_and_inbox_token_appear_nowhere_in_the_card(self):
-        for gate in ("", "1"):
-            os.environ["CONVOY_MCP_WRITE_TOOLS"] = gate
-            blob = json.dumps(self._call("card")["structuredContent"])
+        for gate in (False, True):
+            with write_gate_if(gate):
+                blob = json.dumps(self._call("card")["structuredContent"])
             self.assertNotIn(RESUME_ID, blob, gate)
             self.assertNotIn(self.join_token, blob, gate)
             self.assertNotIn("boot_prompt", blob, gate)
@@ -299,7 +300,7 @@ class CardWire(unittest.TestCase):
         self.assertFalse(public["ok"])
         self.assertEqual(public["listed"], sorted(self._tools()))
         self.assertEqual(public["next"], "enable-write-tools-on-deploy")
-        os.environ["CONVOY_MCP_WRITE_TOOLS"] = "1"
+        open_write_gate(self)
         gated = self._call("card")["structuredContent"]["preflight"]
         self.assertTrue(gated["ok"], gated)
         self.assertEqual(gated["listed"], sorted(self._tools()))

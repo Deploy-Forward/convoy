@@ -1,8 +1,10 @@
 # Convoy
 
-Convoy is shared project memory for Grok Bot: attach one MCP endpoint, route work to your existing CLIs, and keep every neuron grounded in one durable thread state.
+Convoy: local-first multi-agent orchestration. Run Claude Code, Codex, Cursor, Grok and agy side by side on your machine, on one durable thread.
 
-Convoy's MCP runs on your own machine, at `http://127.0.0.1:8788/mcp`. A named thread is a `--root` binding, not a second MCP URL.
+Convoy's MCP runs on your machine at `http://127.0.0.1:8788/mcp` (`convoy mcp`). There is no hosted Convoy endpoint. One local server serves every thread on the machine; each call names its thread, and `--root` pins one.
+
+Remote access to your loopback MCP is not a Convoy feature; if you build it, put it behind your own access control.
 
 ## Install
 
@@ -58,10 +60,10 @@ stays unverified until a maintainer records a live run in
 `test/demo/fixtures/host_rendering.json` (date + verbatim evidence), which flips
 `host_rendering_contract_test` from skipped to asserting.
 
-The canonical local, plugin, and future hosted sequence is documented in
+The canonical local and plugin sequence is documented in
 [`docs/convoy-happy-path.md`](docs/convoy-happy-path.md), including the exact
-chair-addressed `send` path and the tenant-isolation requirement behind the
-word "cloud."
+chair-addressed `send` path and the tenant-isolation requirement any future
+hosted product would have to meet before the word "cloud" applies.
 
 ### Receiving messages needs a command that resolves
 
@@ -159,23 +161,35 @@ Launch / panes:
 
 MCP:
 
-- `mcp [--root <thread-root>] [--host 127.0.0.1] [--port 8788]` — serve the MCP endpoint for one root.
+- `mcp [--root <thread-root>] [--host 127.0.0.1] [--port 8788]` — serve the loopback MCP endpoint for every thread in the machine index; `--root` pins one.
 
 ### Run your own MCP
 
 ```bash
-convoy mcp --root <thread-root> --port 8788
+convoy mcp --port 8788
 ```
 
-Then attach `http://127.0.0.1:8788/mcp` in your MCP client. Write tools are
-off by default on the RPC layer: set `CONVOY_MCP_WRITE_TOOLS=1` on a
-gated/loopback deploy to expose `send`, `stamp`, `note`, `join`, `seat`, `launch`,
+Then attach `http://127.0.0.1:8788/mcp` in your MCP client. The server binds only a
+loopback address (`--host` accepts `127.0.0.1`, `localhost` or `::1` and refuses
+anything else) and answers loopback requests only: the connecting peer must be
+this machine's loopback, the `Host` must be `127.0.0.1`, `localhost` or `[::1]`
+on its port, and an `Origin`, when a browser sends one, must be an `http://`
+loopback origin on that same port. Anything else is a 403, which keeps a web
+page (or a DNS-rebinding name) from driving your MCP. No response carries CORS
+headers. The desktop widget's own local server applies the same checks.
+
+Writes need a conductor bearer: run `convoy conductor mint` on this machine and
+send it as `Authorization: Bearer <bearer>` on every request. The bearer opens
+the write gate for `send`, `stamp`, `note`, `join`, `seat`, `launch`,
 `crew`, `seated`, `consent`, `await_seated`, `focus`, `nudge`, `onboard`, `clone`, `mint`,
-`repos`, `resume` with `go=true`, and `inbox` with `drain=true`. An ungated
-public `tools/list` hides the write tools rather than
-listing and refusing them, so a listed verb is a promise. Reads (`choices`,
-`neurons`, `inbox` pending, `graph`) stay public, and a public inbox
-read never echoes the row token. `repos` wraps `gh repo list` on the MCP
+`repos`, `resume` with `go=true`, and `inbox` with `drain=true`. There is no
+process-wide switch: `CONVOY_MCP_WRITE_TOOLS` was removed in 1.3.2. A
+`tools/list` on a machine with no bearer minted hides the write tools. Once a
+bearer exists they are listed for every caller and refused at `tools/call`
+without it, so a listed verb is a promise only to the caller holding the
+bearer. Reads (`choices`,
+`neurons`, `inbox` pending, `graph`) need no bearer, and an inbox read
+without one never echoes the row token. `repos` wraps `gh repo list` on the MCP
 process PATH (name, url, private, updated_at; gh absent is an install hint);
 it lists the gh login on the MCP host, the conductor's account, which is why
 it sits behind the gate rather than handing that inventory to strangers.
@@ -186,8 +200,9 @@ does the whole walk for N seats (validate, mint, join each with a boot prompt,
 one window) and `await_seated` reads the acks back, so "they all connected" is
 observed, never assumed. `convoy preflight` tells you which of the wizard's
 verbs a live `tools/list` is missing and why.
-Your Convoy server is bound to the root you start it with; a different thread
-means a call that names it, or a server with its own `--root`.
+One local server serves every thread on the machine; each call names its
+thread. A server started with `--root` is pinned to that thread, and a call
+that names another thread still wins.
 
 ## Wake service
 
@@ -212,7 +227,7 @@ Detach does not close its pane or terminate its harness.
 
 - **Grok Bot** — the xAI desktop conductor chat that attaches the MCP; not a neuron.
 - **ola-brain** — a private predecessor wrapper; refused by `install`, not needed.
-- **Deploy-Forward/platform** — a closed sibling repo; not needed to run this repo.
+- **platform** — a closed sibling repo; not needed to run this repo.
 
 ## Terms
 
@@ -424,25 +439,3 @@ Other test adapters, including direct top-level discovery by IDEs or pytest,
 must be given their own throwaway `CONVOY_HOME`; their startup shapes are not
 covered by this guard.
 License: MIT.
-
-## Cloudflare split hosting (static site + MCP proxy)
-
-This repo includes a Cloudflare Worker config that serves the landing page/static files at the edge while preserving the existing Python MCP transport.
-
-- Config: `wrangler.jsonc`
-- Worker entry: `workers-site.mjs`
-- Static assets directory: `src/convoy/site`
-- Production runbook: [`docs/deploy-convoy-bot-mcp.md`](docs/deploy-convoy-bot-mcp.md)
-
-Routing behavior:
-
-- `/mcp` and `/mcp/*` are proxied byte-for-byte to `MCP_ORIGIN` (the current Python MCP origin).
-- all other paths are served from Worker static assets (`env.ASSETS.fetch(request)`).
-
-Retired as a public attach point: an earlier deployment used a Worker Route on `convoy.bot/*`,
-`MCP_ORIGIN=https://convoy.bot`, and a proxied Cloudflare Tunnel whose ingress
-is the separate Python process on `127.0.0.1:8788`. A Worker deploy cannot
-update that process. Follow the runbook to restart and prove the Python origin
-first, then deploy the Worker only when its code/config/assets changed. Public
-Gate 0 remains RED when the write gate is correctly closed; do not claim GREEN
-from an updated build stamp or remembered tool count.

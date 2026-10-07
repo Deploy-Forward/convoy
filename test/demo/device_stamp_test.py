@@ -22,6 +22,10 @@ from convoy.layer import conductor_stamp, feed_since, hook
 from convoy.mcp_http import call_tool
 from convoy.origin_loop import _deliver_via_synapse
 from convoy.synapse import send_one
+try:
+    from test.demo.write_gate_fixture import open_write_gate, write_gate, write_gate_if  # noqa: F401
+except ModuleNotFoundError:  # discovered as a top-level module
+    from write_gate_fixture import open_write_gate, write_gate, write_gate_if  # noqa: F401
 
 
 class PairedDeviceStampContract(unittest.TestCase):
@@ -137,7 +141,7 @@ class PairedDeviceStampContract(unittest.TestCase):
         self.assertTrue(neuron["author_claimed"])
 
     def test_mcp_seated_row_does_not_borrow_server_device(self):
-        with mock.patch.dict(os.environ, {"CONVOY_MCP_WRITE_TOOLS": "1"}):
+        with write_gate():
             card = call_tool(self.root, "seated", {"seat": "chair-a", "token": "synthetic-life"})
         self.assertTrue(card["ok"])
         row = [r for r in self._rows() if r["kind"] == "seated"][-1]

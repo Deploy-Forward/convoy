@@ -282,7 +282,7 @@
     if (e.target.id === "s-add") { addSeatRow(); return; }
     const rm = e.target.closest("[data-rm]"); if (rm) { rm.closest(".seat-row").remove(); return; }
     const g = e.target.closest("[data-gh]"); if (g) { g.parentElement.querySelectorAll("span").forEach((x) => x.classList.remove("on")); g.classList.add("on"); return; }
-    if (e.target.closest("#tag")) { e.preventDefault(); await api("/api/open", { url: "https://convoy.bot" }); return; }
+    if (e.target.closest("#tag")) { e.preventDefault(); await api("/api/open", { url: "https://github.com/Deploy-Forward/convoy" }); return; }
   });
 
   // ---------- the "+" flow: GitHub? -> repo -> harnesses -> N seats -> launch (original spec) ----------

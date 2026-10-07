@@ -41,6 +41,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 from convoy import cli
 from convoy.convoy import ensure_id, list_seats
 from convoy.mcp_http import make_server
+try:
+    from test.demo.write_gate_fixture import open_write_gate, write_gate, write_gate_if  # noqa: F401
+except ModuleNotFoundError:  # discovered as a top-level module
+    from write_gate_fixture import open_write_gate, write_gate, write_gate_if  # noqa: F401
 
 NULL_PROBE = {"usage_remaining": None, "limited": False, "raw": None}
 FAKES = Path(__file__).resolve().parents[1] / "fakes"
@@ -236,8 +240,8 @@ class OutsideHarnessJoin(unittest.TestCase):
     # -- MCP attach variant ---------------------------------------------------
 
     def _serve(self, gated):
-        env = mock.patch.dict(os.environ, {"CONVOY_MCP_WRITE_TOOLS": "1" if gated else ""})
-        env.start(); self.addCleanup(env.stop)
+        if gated:
+            open_write_gate(self)
         httpd = make_server(self.root, "127.0.0.1", 0)
         threading.Thread(target=httpd.serve_forever, daemon=True).start()
         self.addCleanup(httpd.shutdown)
@@ -288,10 +292,10 @@ class OutsideHarnessJoin(unittest.TestCase):
         call = self._serve(gated=False)
         n_before = len(list_seats(self.root))
         jn = call("join", to="claude", where="cloud")
-        self.assertFalse(jn.get("ok")); self.assertIn("CONVOY_MCP_WRITE_TOOLS=1", jn["error"], "names the gate, does not pretend the verb is gone")
+        self.assertFalse(jn.get("ok")); self.assertIn("convoy conductor mint", jn["error"], "names the gate, does not pretend the verb is gone")
         self.assertNotIn("seat", jn, "a refusal never claims to have joined")
         se = call("seated", seat="claude-1-demo", token="not-a-real-token")
-        self.assertFalse(se.get("ok")); self.assertIn("CONVOY_MCP_WRITE_TOOLS=1", se["error"])
+        self.assertFalse(se.get("ok")); self.assertIn("convoy conductor mint", se["error"])
         self.assertEqual(len(list_seats(self.root)), n_before, "nothing written by the public server")
         self.assertFalse((self.root / ".convoy" / "feed.jsonl").exists() and
                          "seated" in (self.root / ".convoy" / "feed.jsonl").read_text(encoding="utf-8"))

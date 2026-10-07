@@ -1,8 +1,8 @@
 """Step 3 of the grok-bot rebase (amendment move 2): identity on
 the wire. A conductor bearer minted by `convoy conductor mint`, checked at the
 origin on every write, `from` set from the bearer and never from an argument.
-The global CONVOY_MCP_WRITE_TOOLS flag stops being the way a public caller
-writes: without a bearer the write tools refuse and name the mint verb.
+The global process flag that used to open writes is gone (Convoy 1.3.2):
+without a bearer the write tools refuse and name the mint verb.
 Tests written before the code."""
 import io
 import json
@@ -38,7 +38,6 @@ class Mint(unittest.TestCase):
     def setUp(self):
         self.home = Path(tempfile.mkdtemp())
         p = mock.patch.dict(os.environ, {"CONVOY_HOME": str(self.home)}); p.start(); self.addCleanup(p.stop)
-        os.environ.pop("CONVOY_MCP_WRITE_TOOLS", None)
 
     def test_mint_stores_only_a_hash_and_shows_the_bearer_once(self):
         from convoy import bearer
@@ -82,7 +81,6 @@ class BearerAtTheOrigin(unittest.TestCase):
     def setUp(self):
         self.home = Path(tempfile.mkdtemp())
         p = mock.patch.dict(os.environ, {"CONVOY_HOME": str(self.home)}); p.start(); self.addCleanup(p.stop)
-        os.environ.pop("CONVOY_MCP_WRITE_TOOLS", None)
         # The server reads usage through mcp_http.probe, and the real one runs
         # `claude -p /usage` on the operator's account. A null reading is enough here.
         p = mock.patch("convoy.mcp_http.probe", side_effect=lambda _h: {"usage_remaining": None, "limited": False, "raw": None})
@@ -140,15 +138,12 @@ class BearerAtTheOrigin(unittest.TestCase):
     def test_roster_and_initialize_name_the_write_gate(self):
         from convoy import bearer
         self.assertEqual(_payload(_rpc(self.url, "tools/call", {"name": "roster"}))["conductor"]["write_gate"], "closed")
-        card = bearer.mint()
+        bearer.mint()
         ros = _payload(_rpc(self.url, "tools/call", {"name": "roster"}))["conductor"]
         self.assertEqual(ros["write_gate"], "bearer"); self.assertEqual(ros["bearers"], 1)
-        with mock.patch.dict(os.environ, {"CONVOY_MCP_WRITE_TOOLS": "1"}):
-            self.assertEqual(_payload(_rpc(self.url, "tools/call", {"name": "roster"}))["conductor"]["write_gate"], "legacy-flag",
-                             "the flag still opens writes for loopback deploys, and says so")
-            _rpc(self.url, "tools/call", {"name": "stamp", "arguments": {"summary": "flag"}})
-            row = [x for x in self._feed() if x["kind"] == "conductor"][-1]
-            self.assertIsNone(row["principal"], "a flag-gated stamp carries no principal: it cannot be told from a forged one")
+        r = _rpc(self.url, "tools/call", {"name": "stamp", "arguments": {"summary": "no bearer"}})
+        self.assertTrue(r["result"]["isError"], "a minted bearer elsewhere opens nothing for a caller without one")
+        self.assertFalse([x for x in self._feed() if x["kind"] == "conductor"])
         init = _rpc(self.url, "initialize", {"protocolVersion": "2025-06-18"})["result"]["instructions"]
         self.assertIn("Bearer", init)
 
@@ -159,33 +154,6 @@ class BearerAtTheOrigin(unittest.TestCase):
         nb = nb[:nb.find("## ", 5)]
         self.assertNotIn("bearer", nb.lower())
         self.assertIn("convoy conductor mint", text)
-
-
-class TokenHomeMigration(unittest.TestCase):
-    """A live tunnel can still read its token from a folder outside Convoy while
-    the verb plans CONVOY_HOME. One flag moves the token file into Convoy's home; the
-    bytes are copied, never printed."""
-    def setUp(self):
-        self.home = Path(tempfile.mkdtemp())
-        p = mock.patch.dict(os.environ, {"CONVOY_HOME": str(self.home)}); p.start(); self.addCleanup(p.stop)
-        self.root = Path(tempfile.mkdtemp()); ensure_id(self.root); bind(self.root, "tm")
-        self.old = Path(tempfile.mkdtemp()) / "run.token"; self.old.write_text("SECRET-TOKEN\n", encoding="utf-8")
-
-    def test_migrate_token_copies_into_convoy_home_and_plans_from_there(self):
-        from convoy.local_install import install_local
-        try:
-            from test.demo.local_install_test import FakeRunner
-        except ModuleNotFoundError:  # the repo runner discovers test/demo as top level
-            from local_install_test import FakeRunner
-        card = install_local(self.root, token_file=self.old, migrate_token=True, runner=FakeRunner(), windows=True)
-        self.assertTrue(card["ok"], card)
-        dest = self.home / "tunnel" / "run.token"
-        self.assertTrue(dest.is_file()); self.assertEqual(dest.read_bytes(), self.old.read_bytes())
-        self.assertEqual(Path(card["plan"][1]["token_file"]), dest)
-        self.assertNotIn("SECRET-TOKEN", json.dumps(card))
-        self.assertTrue(card["migrated"]["copied"])
-        again = install_local(self.root, token_file=self.old, migrate_token=True, runner=FakeRunner(), windows=True)
-        self.assertFalse(again["migrated"]["copied"], "an identical file already there is not copied twice")
 
 
 if __name__ == "__main__":

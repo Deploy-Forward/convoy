@@ -5,8 +5,8 @@ A wake is a per-harness FACT, not an assumption. A successful nudge returns
 receipt. Refuse when the pane cannot be proven to be that chair: a keystroke
 into the wrong pane is worse than idle.
 
-Write-gated on MCP. Consent names the pane and the exact keys. Never on the
-public wire. Never a WM_CHAR / SendInput without that proof.
+Write-gated on MCP. Consent names the pane and the exact keys. Never for a
+caller without a bearer. Never a WM_CHAR / SendInput without that proof.
 """
 from __future__ import annotations
 

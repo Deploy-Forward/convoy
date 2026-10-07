@@ -1,13 +1,12 @@
 # Convoy
 
-**Repo:** `deploy-forward/convoy` (Grok Bot HTTP MCP + neuron CLI)
-**Sibling:** `deploy-forward/deploy-forward` (`npx deploy-forward`, tracker, board)
-**Native platform:** `Deploy-Forward/platform` (NOT this MCP)
-**Sites:** https://convoy.bot (Grok Bot MCP + frontmatter, tweet this) · https://convoy.deployforward.dev (launch product, not live yet, not the tweet)
+**Repo:** `https://github.com/Deploy-Forward/convoy` (local-first multi-agent orchestration CLI and loopback MCP)
+**Plugins:** `https://github.com/Deploy-Forward/plugins` (the convoy and worklanes plugins for each harness)
+**Sibling:** `https://github.com/Deploy-Forward/deploy-forward` (`npx deploy-forward`, tracker, board)
 **Audience:** engineers who can read a CLI, a JSON card, and a git checkout.
-**Status of this tree:** work lives at `/workspace/convoy` on the Grok Bot box. Public repo: `https://github.com/Deploy-Forward/convoy`. Names: see `CANON.md`.
+**MCP:** runs on your machine at `http://127.0.0.1:8788/mcp` (`convoy mcp`). There is no hosted Convoy endpoint. Names: see `CANON.md`.
 
-This file is the source of truth for **this repo only**. Native platform Convoy and the public capture layer are sibling products. Do not put this MCP in `Deploy-Forward/platform`.
+This file is the source of truth for **this repo only**. Sibling products keep their own specs.
 
 Convoy lets you stay in one thread and send work to other harnesses (Grok, Claude, Codex, cursor-agent, agy) without merging their native sessions. The other harness works on its own meter. You get a compact result back. Main context stays skinny.
 
@@ -21,7 +20,7 @@ Bring your own harness. Do not bring your own API key into Claude Code. Named re
 
 ## Canonical lock (2026-08-30)
 
-This block is authoritative for Grok Bot MCP layering and native-send DoD. If older notes below disagree, this block wins until they are rewritten.
+This block is authoritative for the conductor's MCP layering and native-send DoD. If older notes below disagree, this block wins until they are rewritten.
 
 ### Terminology lock (2026-09-01)
 
@@ -51,11 +50,12 @@ Locked from the stress findings (audit trail: docs/audits/; further artifacts li
 
 - **Attributed author `from` + addressee `to` on rows (corrected after a verified defect).** `from` is AUTHORSHIP and appears ONLY where an author is actually claimed: note-family rows (`hook`/`neuron_note`, default `author` = `instance_id`) and conductor rows (`stamp`, `from: "grok-bot"`). On `synapse`/`refuse` rows `instance_id` is the row's SUBJECT — the target/spawned session — so `from` is **absent** there (`author=None` at the call sites): sender-unknown recorded as absence, never as a confidently-wrong name. (The original v2.1 wording let `hook` promote any `instance_id` to `from`, which put the RECIPIENT in `from` on every synapse row — a live defect.) `send` has no caller identity yet; giving it one (`from` = caller) is a future increment that must land before any @-addressing surface reads these keys. `from` remains claimed-not-authenticated. `grok-bot` stays refused as author under normalized aliasing (both `instance_id` and `author`); conductor identity is `stamp`-only. CLI: `hook ... --to X`.
 - **`to` disambiguation (pre-existing key, two meanings).** On `note`/`conductor` rows `to` is the addressee. On `synapse`/`refuse` rows `to` remains what it always was: the send-target harness name. Readers filtering "rows addressed to me" must filter on kind `note`/`conductor` first; a bare `row["to"]=="claude"` filter also matches every send to the claude harness.
-- **`note` — the neuron-side write, symmetric to `stamp`.** `layer.neuron_note` / MCP tool `note` (args `summary`, `instance_id` required, `to` optional): kind `note`, same one-line ≤500 clamp as stamp (`truncated: true` on clamp), refuses anonymous or conductor-alias authors. This is the hosted-neuron write path; local neurons may keep using CLI `hook note`.
+- **`note` — the neuron-side write, symmetric to `stamp`.** `layer.neuron_note` / MCP tool `note` (args `summary`, `instance_id` required, `to` optional): kind `note`, same one-line ≤500 clamp as stamp (`truncated: true` on clamp), refuses anonymous or conductor-alias authors. This is the neuron-side write path over MCP; local neurons may keep using CLI `hook note`.
 - **Runner provenance on synapse rows.** Every synapse row stamps `runner` (`"native"`/`"fake"`/`"ola"` by function identity via `synapse.runner_kind`, else the runner's name) and `argv0` (from the card's argv, JSON `null` when absent) — so the SoT can distinguish a native vendor send from a fake ACK. Rows without these fields predate v2.1 and are not evidence of a native send.
-- **Build id on the wire.** `initialize` `serverInfo.version` is `<base>+<git describe --always --dirty>` (base 1.3.1) when the package sits in a git checkout (`-dirty` marks a patched-in-place deploy), the bare base version when unknown (never an invented sha). A hung/missing git degrades to the bare version — it must never stop the server (`OSError` and `SubprocessError` both caught). Scope honesty: one-call drift detection holds only for git-checkout deploys; the bare-version fallback is indistinguishable from a pre-v2.1 deploy.
-- **One process ↔ one bound root.** The public MCP stays bound to exactly one root (demo: <demo-root>). Other threads are CLI/file on their own `--root`; an empty MCP `feed` for an unbound thread is the contract working, not a product fail. No root selector on the public URL (arbitrary-path read hole). Rebinding demo to flip a test GREEN is refused.
-- **Public write-tool gate.** The RPC layer never exposes SoT write tools (`stamp`, `note`) on an ungated process: they are absent from `tools/list` and refused on `tools/call` unless `CONVOY_MCP_WRITE_TOOLS=1` is set (a gated/loopback deploy opts in). CLI and in-process `call_tool` are not gated. The public convoy.bot process stays read-only for the bus until a real writer gate (shared-secret/OAuth) exists; this gate stays RED on the wire until then.
+- **Build id on the wire.** `initialize` `serverInfo.version` is `<base>+<git describe --always --dirty>` (base 1.3.2) when the package sits in a git checkout (`-dirty` marks a patched-in-place deploy), the bare base version when unknown (never an invented sha). A hung/missing git degrades to the bare version — it must never stop the server (`OSError` and `SubprocessError` both caught). Scope honesty: one-call drift detection holds only for git-checkout deploys; the bare-version fallback is indistinguishable from a pre-v2.1 deploy.
+- **One local server, many threads.** `convoy mcp` serves every thread in the machine index and each call names its thread (`thread` or `convoy_id`); `--root` pins one, and a named thread still wins. A read routes by a thread from the index, never by an arbitrary path (arbitrary-path read hole); only the write-gated `onboard` takes a checkout path. Rebinding a thread to flip a test GREEN is refused.
+- **Write-tool gate.** The RPC layer never exposes SoT write tools (`stamp`, `note`) to a caller without identity: with no bearer minted they are absent from `tools/list`, and `tools/call` refuses them unless the request carries a checked conductor bearer (`convoy conductor mint`, sent as `Authorization: Bearer`). There is no process-wide switch; `CONVOY_MCP_WRITE_TOOLS` was removed in 1.3.2. The CLI is not gated.
+- **Loopback only (1.3.2).** The MCP HTTP server binds only a loopback address (`--host` other than `127.0.0.1`, `localhost` or `::1` is refused) and serves a request only when the peer is this machine's loopback, its `Host` is `127.0.0.1`, `localhost` or `[::1]` on the port it listens on, and any `Origin` is an `http://` loopback origin on that same port; a non-loopback peer is a 403 on every method whatever `Host` it sends, and anything else is a 403 before identity or body (DNS-rebinding defense, required by the MCP Streamable HTTP transport). No response carries CORS headers. The desktop widget's local server applies the same checks. A GET through a proxy header is a 404; a loopback `GET /` is one line of text naming the version and the thread count; `GET /mcp` is a 405. Remote access to your loopback MCP is not a Convoy feature; if you build it, put it behind your own access control.
 - **Chip front matter (conductor render contract).** The chip a neuron message surfaces with (`harness / model / effort / session% / week% / convoy_id / vendor session id / worktree / summary`) renders from two existing reads, no jsonl archaeology: the `note` row carries `summary`/`from`/`to`; the glance by-thread seat card carries `to` (harness), `model`, `effort`, `resume` (vendor id), `worktree`, `session_pct` (from the headless `claude -p /usage` probe via `usage.surface`); `week%` comes from glance **Overall** (locked: never duplicated per-thread). `effort` is a declared seat field (`seat --effort`, real-or-null) — validated per harness against `harness_effort.json` keys (grok `xhigh`, codex `extra-high`, pi `--thinking` levels; a refusal names the harness's real keys). Convoy applies it to argv when, and only when, the contract carries `cli_flag` + an `evidence` string (grok `--reasoning-effort`, claude `--effort`, agy `--effort`, pi `--thinking`); the seat row's `effort_applied` records which (`false` = recorded, not applied: codex, cursor-agent, hermes; `null` = no effort declared). `choices` carries `harnesses[].effort = {mode, keys, cli_flag, evidence, applied}`. Unknown `effort`/`resume`/`model` are omitted from the card, never "unknown". No probe ⇒ usage stays null.
 - **`notify` stays JSON `null` per harness** until a documented injection point is proven live. Not a tool, not a promise.
 
@@ -163,7 +163,8 @@ pointed at a `thread.md` that did not exist.
   launch (`crew`, `join`, `launch`, `bring_up` with `dry_run: false`) records
   the conductor its bearer proves: `launched_by: {"kind": "conductor", "name":
   <conductor>}`, on the chairs it spawns (put back on any it did not); with no
-  bearer identity (a legacy-flag call) it refuses with "cannot prove who is
+  bearer the write gate refuses it before anything is recorded or spawned, and
+  an in-process call with no launcher refuses with "cannot prove who is
   launching". A chair launcher keeps its string shape (`launched_by: <chair>`);
   readers take both (`launcher.launcher_of`: a dict without a kind is a chair).
   `add` and `crew` called with no launcher at all refuse the same way, so no
@@ -544,12 +545,12 @@ CLI + MCP:
 
 - CLI: `python -m convoy glance [--thread T|--convoy-id ID] --json`
 - Optional GUI: `python -m convoy glance --tray` (must stay optional/headless-testable).
-- MCP tool: `glance` with optional `thread` / `convoy_id` arguments, read-only and safe for public URL use.
+- MCP tool: `glance` with optional `thread` / `convoy_id` arguments, read-only and safe for a caller without a bearer.
 
 OSS/public vs closed/platform lock:
 
 - **PUBLIC (`deploy-forward/convoy`)**: glance JSON data contract (CLI + MCP), honesty rules, optional lightweight tray JSON renderer.
-- **CLOSED (`Deploy-Forward/platform`)**: polished native tray/notch app, leftover-$ billing scrapers, vendor settings scraping, and platform UI.
+- **CLOSED (the platform repo)**: polished native tray/notch app, leftover-$ billing scrapers, vendor settings scraping, and platform UI.
 
 ### Neighbors (canonical contrast)
 
@@ -569,7 +570,7 @@ OSS/public vs closed/platform lock:
 
 #### Definition
 
-Status: **RED** until live functions pass on `https://convoy.bot/mcp` without shell paste.
+Status: **RED** until live functions pass on the loopback MCP (`http://127.0.0.1:8788/mcp`) without shell paste.
 
 #### Successful functions (today)
 
@@ -622,7 +623,7 @@ Phase gate note: this is the remaining MCP-attach/send hole inside Phase 7. Do n
 |---|---|---|---|
 | Convoy MCP + neuron CLI | `deploy-forward/convoy` | HTTP MCP tools (`roster`, `onboard`, `terminals`, `context`, `send`, `feed`) plus a Python neuron CLI that stamps a layer and fires harness CLIs | Not the native Composer `turn.send`. Not `npx deploy-forward` itself. |
 | Installer / tracker / board | `deploy-forward/deploy-forward` | `npx deploy-forward --convoy --tracker --board`. White-glove attach. Tracking and the public board. | Not the MCP process. Board requires tracker. |
-| Native platform | `Deploy-Forward/platform` | Skinny Convoy thread/layer inside Composer. Native `turn.send`. | Not this HTTP MCP. Do not land MCP code there. |
+| Native platform | the closed platform repo | Skinny Convoy thread/layer inside Composer. Native `turn.send`. | Not this HTTP MCP. Do not land MCP code there. |
 
 Demo talks to Grok Bot. Grok Bot opens synapses through Convoy. Each synapse lands on a harness the human already signed into. Three products, one thread.
 
@@ -649,7 +650,7 @@ Rules that follow from the table:
 
 The canonical lock above is authoritative when this section disagrees.
 
-Transport: HTTP MCP at `https://convoy.bot/mcp` (or a user daemon reachable from Grok Bot's computer). **NOT** stdio on the Grok Bot box pointing at Windows `localhost:4717`. That failed.
+Transport: HTTP MCP on the user's own machine at `http://127.0.0.1:8788/mcp`. There is no hosted Convoy endpoint. **NOT** stdio on a remote box pointing at Windows `localhost:4717`. That failed.
 
 An early wire snapshot (demo): a shell on the demo host running two local wrapper scripts, `Invoke-AgentChannel.ps1` and `ConvoyLayer.ps1` (not in this repository), wrapping `ola-brain.exe`. MCP catalog had no Convoy plugin at that time. Status then: **RED** for HTTP MCP, **GREEN** for PC CLI hop.
 
@@ -748,7 +749,7 @@ GREEN (emulator / tree):
 
 RED (live deploy until proven):
 
-1. Live `https://convoy.bot/mcp` process serving `onboard` in `tools/list`.
+1. A live loopback MCP process (`convoy mcp`) serving `onboard` in `tools/list`.
 2. Chat aliases `/onboard` and `/onboard -convoy` in connected Grok Bot sessions (only true once live MCP serves the tool).
 
 #### `terminals`
@@ -793,7 +794,7 @@ Args: `thread=` or `convoy_id=`. Opens every seated neuron for that thread **vis
 
 Each window: `to`, `session_id`, `resume` (vendor id passed to `--resume`; never null if ok; never invented), `resume_key` (`cvr_` + sha256(convoy_id + "\0" + thread + "\0" + to + "\0" + worktree).hexdigest()[:16] — **four** fields; hash is the map key, resume is the harness argument; because `to` and `worktree` are hashed, the key CHANGES when a seat's harness or checkout changes, so it is a resume map key and never a stable seat identity — `session_id` is the seat), `worktree`, `rect` `{x,y,w,h}`, plus CLI extras `argv`, `ok`. Lookup by thread+to returns the same resume. No PTY dump. A historical snapshot marked HTTP MCP RED; use canonical lock for current status. CLI: `python -m convoy bring-up` / `open` `[convoy_id] [--thread T] [--dry-run]`.
 
-First-run Claude bypass warning is ungated by `bring_up` / `ensure_first_run`. Anthropic ignores `skipDangerousModePermissionPrompt` in project `{worktree}/.claude/settings.json` — that key only works in the **user** file `~/.claude/settings.json`. Merge `skipDangerousModePermissionPrompt: true` into `~/.claude/settings.json` (create `~/.claude/` if missing; merge, do not clobber other keys). Do **not** set `permissions.defaultMode` on the user global file (that would make ALL Claude sessions on the machine bypass). No settings file Convoy writes in a worktree carries `permissions` or `skipDangerousModePermissionPrompt`: a project `permissions.defaultMode` would apply to every Claude session opened there, and the launch argv already carries the mode. The worktree's `.claude/settings.local.json` (never the tracked `.claude/settings.json`) holds the inbox and Stop hooks and `autoCompactEnabled: true`: a neuron runs unattended and must compact on its own, and project settings take precedence over the user file. The user file gets `skipDangerousModePermissionPrompt` only when the key is missing, and a file that does not parse is left alone and reported. Never write `autoCompactEnabled` to `~/.claude/settings.json`; the person's own sessions keep their choice. Also merge `~/.claude.json` `projects[worktree].hasTrustDialogAccepted = true` for both slash spellings of the worktree path. Never write `~/.claude` if the worktree **is** the home dir. Grok/codex no-op on Claude settings. Not a user paste. Not a step-by-step TUI guide. User once-gates only: attach `https://convoy.bot/mcp`, and vendor CLI login. `roster.present` is `shutil.which` on the MCP process PATH, not an already-open desktop terminal. Interactive bash skips `.profile`, so `~/.local/bin` (claude, codex) can be installed and still `command not found` while grok (`.bashrc`) works. `roster` and `bring_up` / `ensure_first_run` call `ensure_interactive_path`, which writes an idempotent `# >>> convoy harness PATH >>>` block into `~/.bashrc` (`$HOME/.local/bin` and `$HOME/.grok/bin`). No-op on Windows (WT inherits user PATH). Does not source a foreign PID; already-open terminals still need `source ~/.bashrc` or a new shell. Roster JSON includes `path` (`path_ok`, `path_written`, `path_bashrc`, `path_host`). Folder trust, Claude Bypass Permissions, `role.md` persona, isolated WT tiling, and agent-driven verify are Convoy's job. A dry run writes nothing: `ensure_first_run(live=False)` returns the plan (`first_run.dry_run` true, `prepared` false, `dry_run_writes` for the worktree, `would_write_home` for home files and trust stores; `settings` stays the project path) and must not Popen `wt`. Claude live argv keeps `--permission-mode bypassPermissions` and `--allow-dangerously-skip-permissions`. Persona is `role.md` in the worktree, not CLI `--append-system-prompt`. Repo files: `mint_worktrees` writes `<worktree>/.convoy/minted.json` only when it creates the worktree, and `is_minted_worktree` is true only when that marker names this folder, git resolves the folder's common dir to the recorded one, and the recorded checkout still lists the worktree. A launch (`bring-up`, `open`, `launch`, `join --launch`, `crew`, `relaunch`, the widget relaunch) and `skills` write every repo file there; anywhere else, often the person's own repo, they write only the Convoy-named files git excludes (`.claude/settings.local.json`, the `convoy-root` pointers, `.grok/hooks/convoy-inbox.json`) and list `AGENTS.md` as `would_write`, read from disk. No launch writes `.codex/hooks.json`: Codex keys a project hook by its absolute path, so each worktree's file is a key nobody trusted, while the convoy plugin's `codex-hooks.json` (named by the manifest's `hooks` field, in Deploy-Forward/plugins) is keyed `convoy@<marketplace>:codex-hooks.json:<event>:0:0` (`convoy@deploy-forward` from the published marketplace) and trusted once. A `.codex/hooks.json` carrying Convoy entries an older Convoy wrote is left as it is, with a card note to remove them. `add` and `crew` cards for a codex chair carry a warning while `codex_hooks_trusted` (read-only; `$CODEX_HOME/config.toml` when set) reads the enabled `convoy@*` plugin's keys as untrusted, disabled (`enabled = false`) or unknown (the config does not parse: "codex hook trust unknown: <reason>", never "not trusted"). An opt-in is recorded in `.convoy/repo-files.json`, bound to its folder and git common dir and added to info/exclude, and honoured by later launches until `skills --no-write-repo-files` removes it; a dry `bring-up` / `open` / `relaunch`, CLI (`--dry-run --write-repo-files`) or MCP `bring_up` / `open` (`dry_run: true` with `write_repo_files: true`), refuses the opt-in and writes nothing. A `.claude/settings.local.json` git tracks is never written. The card's `trust_stores_written` names each home trust store a launch wrote. `terminals` is a listing and writes nothing. The read verbs `start`, `onboard`, `glance` and `rail` write no home file and start no harness binary: onboarding reports the first run as a plan (`first_run.would_write_home`) and the live launch performs it (`start --write-repo-files` / `onboard --write-repo-files` performs it at once); every usage field is `null` (unknown, not zero) and `probed` is false until `--probe` (MCP `onboard`: `probe: true`). MCP `glance` and `rail`, and the widget, read through their cached probe. Reading a thread creates no `.convoy/inbox/` directory, and a dry `send` refreshes no `.convoy/conductor.md` copy.
+First-run Claude bypass warning is ungated by `bring_up` / `ensure_first_run`. Anthropic ignores `skipDangerousModePermissionPrompt` in project `{worktree}/.claude/settings.json` — that key only works in the **user** file `~/.claude/settings.json`. Merge `skipDangerousModePermissionPrompt: true` into `~/.claude/settings.json` (create `~/.claude/` if missing; merge, do not clobber other keys). Do **not** set `permissions.defaultMode` on the user global file (that would make ALL Claude sessions on the machine bypass). No settings file Convoy writes in a worktree carries `permissions` or `skipDangerousModePermissionPrompt`: a project `permissions.defaultMode` would apply to every Claude session opened there, and the launch argv already carries the mode. The worktree's `.claude/settings.local.json` (never the tracked `.claude/settings.json`) holds the inbox and Stop hooks and `autoCompactEnabled: true`: a neuron runs unattended and must compact on its own, and project settings take precedence over the user file. The user file gets `skipDangerousModePermissionPrompt` only when the key is missing, and a file that does not parse is left alone and reported. Never write `autoCompactEnabled` to `~/.claude/settings.json`; the person's own sessions keep their choice. Also merge `~/.claude.json` `projects[worktree].hasTrustDialogAccepted = true` for both slash spellings of the worktree path. Never write `~/.claude` if the worktree **is** the home dir. Grok/codex no-op on Claude settings. Not a user paste. Not a step-by-step TUI guide. User once-gates only: attach `http://127.0.0.1:8788/mcp`, and vendor CLI login. `roster.present` is `shutil.which` on the MCP process PATH, not an already-open desktop terminal. Interactive bash skips `.profile`, so `~/.local/bin` (claude, codex) can be installed and still `command not found` while grok (`.bashrc`) works. `roster` and `bring_up` / `ensure_first_run` call `ensure_interactive_path`, which writes an idempotent `# >>> convoy harness PATH >>>` block into `~/.bashrc` (`$HOME/.local/bin` and `$HOME/.grok/bin`). No-op on Windows (WT inherits user PATH). Does not source a foreign PID; already-open terminals still need `source ~/.bashrc` or a new shell. Roster JSON includes `path` (`path_ok`, `path_written`, `path_bashrc`, `path_host`). Folder trust, Claude Bypass Permissions, `role.md` persona, isolated WT tiling, and agent-driven verify are Convoy's job. A dry run writes nothing: `ensure_first_run(live=False)` returns the plan (`first_run.dry_run` true, `prepared` false, `dry_run_writes` for the worktree, `would_write_home` for home files and trust stores; `settings` stays the project path) and must not Popen `wt`. Claude live argv keeps `--permission-mode bypassPermissions` and `--allow-dangerously-skip-permissions`. Persona is `role.md` in the worktree, not CLI `--append-system-prompt`. Repo files: `mint_worktrees` writes `<worktree>/.convoy/minted.json` only when it creates the worktree, and `is_minted_worktree` is true only when that marker names this folder, git resolves the folder's common dir to the recorded one, and the recorded checkout still lists the worktree. A launch (`bring-up`, `open`, `launch`, `join --launch`, `crew`, `relaunch`, the widget relaunch) and `skills` write every repo file there; anywhere else, often the person's own repo, they write only the Convoy-named files git excludes (`.claude/settings.local.json`, the `convoy-root` pointers, `.grok/hooks/convoy-inbox.json`) and list `AGENTS.md` as `would_write`, read from disk. No launch writes `.codex/hooks.json`: Codex keys a project hook by its absolute path, so each worktree's file is a key nobody trusted, while the convoy plugin's `codex-hooks.json` (named by the manifest's `hooks` field, in Deploy-Forward/plugins) is keyed `convoy@<marketplace>:codex-hooks.json:<event>:0:0` (`convoy@deploy-forward` from the published marketplace) and trusted once. A `.codex/hooks.json` carrying Convoy entries an older Convoy wrote is left as it is, with a card note to remove them. `add` and `crew` cards for a codex chair carry a warning while `codex_hooks_trusted` (read-only; `$CODEX_HOME/config.toml` when set) reads the enabled `convoy@*` plugin's keys as untrusted, disabled (`enabled = false`) or unknown (the config does not parse: "codex hook trust unknown: <reason>", never "not trusted"). An opt-in is recorded in `.convoy/repo-files.json`, bound to its folder and git common dir and added to info/exclude, and honoured by later launches until `skills --no-write-repo-files` removes it; a dry `bring-up` / `open` / `relaunch`, CLI (`--dry-run --write-repo-files`) or MCP `bring_up` / `open` (`dry_run: true` with `write_repo_files: true`), refuses the opt-in and writes nothing. A `.claude/settings.local.json` git tracks is never written. The card's `trust_stores_written` names each home trust store a launch wrote. `terminals` is a listing and writes nothing. The read verbs `start`, `onboard`, `glance` and `rail` write no home file and start no harness binary: onboarding reports the first run as a plan (`first_run.would_write_home`) and the live launch performs it (`start --write-repo-files` / `onboard --write-repo-files` performs it at once); every usage field is `null` (unknown, not zero) and `probed` is false until `--probe` (MCP `onboard`: `probe: true`). MCP `glance` and `rail`, and the widget, read through their cached probe. Reading a thread creates no `.convoy/inbox/` directory, and a dry `send` refreshes no `.convoy/conductor.md` copy.
 
 
 
@@ -807,7 +808,7 @@ Unit GREEN: `test/demo/phase_install_test.py`.
 
 #### `hide` (aliases `minimize`, `background`)
 
-Default synapse (`send`) is headless: it never pops a TUI and never calls `live_runner` / `CREATE_NEW_CONSOLE`. `bring_up` / `open` is the only show command (HTTP `dry_run` still defaults true so a public URL cannot pop windows; CLI `bring-up` without `--dry-run` uses `live_runner`, which Popen's **one** `wt.exe` whose ArgumentList is `isolated_wt_argv` — FileName is wt, not in the list; `-w convoy-<8 hex>` (the thread's own window, see "Placement: one terminal window per thread"); first command `new-tab`, or `split-pane` when the window already holds a live neuron; n=2 one `-V`; n=3 `-V` then `-H`; absolute exe positional after `-d DIR`; never `--` before the exe; never `-w 0`; never per-seat `CREATE_NEW_CONSOLE` + `MoveWindow`; never `WM_CLOSE`). Isolated spawn is a new WINDOW not a new PROCESS. A dry run writes nothing (its `first_run` card is the plan) and must not Popen `wt`. Never ola-brain / side-chat / UltraCode-Shim. `hide` / `minimize` / `background` minimize neuron windows (Win32 `SW_MINIMIZE` = 6; optional `mode=hide` is `SW_HIDE` = 0). Sessions keep running. Not `taskkill`. Never kills `grok.exe` / `claude.exe` / `Grok Bot.exe`. Conductor grok-bot is not a window. `restore` is `bring_up`, not this tool. HTTP MCP attach is still RED.
+Default synapse (`send`) is headless: it never pops a TUI and never calls `live_runner` / `CREATE_NEW_CONSOLE`. `bring_up` / `open` is the only show command (HTTP `dry_run` still defaults true, and `dry_run` false needs a conductor bearer; CLI `bring-up` without `--dry-run` uses `live_runner`, which Popen's **one** `wt.exe` whose ArgumentList is `isolated_wt_argv` — FileName is wt, not in the list; `-w convoy-<8 hex>` (the thread's own window, see "Placement: one terminal window per thread"); first command `new-tab`, or `split-pane` when the window already holds a live neuron; n=2 one `-V`; n=3 `-V` then `-H`; absolute exe positional after `-d DIR`; never `--` before the exe; never `-w 0`; never per-seat `CREATE_NEW_CONSOLE` + `MoveWindow`; never `WM_CLOSE`). Isolated spawn is a new WINDOW not a new PROCESS. A dry run writes nothing (its `first_run` card is the plan) and must not Popen `wt`. Never ola-brain / side-chat / UltraCode-Shim. `hide` / `minimize` / `background` minimize neuron windows (Win32 `SW_MINIMIZE` = 6; optional `mode=hide` is `SW_HIDE` = 0). Sessions keep running. Not `taskkill`. Never kills `grok.exe` / `claude.exe` / `Grok Bot.exe`. Conductor grok-bot is not a window. `restore` is `bring_up`, not this tool. HTTP MCP attach is still RED.
 
 ### Front matter in this chat, never invented
 
@@ -821,7 +822,7 @@ If a field is unknown, write `unknown` or JSON `null`. Do not fill it from memor
 
 ### Definition of done (legacy attach checklist)
 
-Historical attach checklist only. Current canonical DoD is the native-send + structured-talk block above: attach/roster/feed may be PARTIAL GREEN, while native `send` remains RED until a live vendor PATH execution is proven on `https://convoy.bot/mcp`. The code swap already happened (`native_runner`, `75f00c7`); what is missing is live proof, not the implementation.
+Historical attach checklist only. Current canonical DoD is the native-send + structured-talk block above: attach/roster/feed may be PARTIAL GREEN, while native `send` remains RED until a live vendor PATH execution is proven on the loopback MCP. The code swap already happened (`native_runner`, `75f00c7`); what is missing is live proof, not the implementation.
 
 ---
 
@@ -1053,7 +1054,7 @@ A synapse records its worktree / checkout path. Two agents on one branch without
 
 - **GREEN unit:** `test/demo/phase4_worktree_test.py`. Non-git worktree is JSON null. Second send on the same branch without `--worktree` returns explicit error. Two `--worktree` paths do not share cwd.
 - **GREEN code (corrected at `f40b01a`):** CLI `send --worktree <path>`; the worktree is stamped on every synapse row and passed as `cwd` into the runner (`synapse.send_one` -> `native_runner(cwd=...)`). The retired `ola_runner` `--worktree` argv note is history.
-- MCP `send` accepts `worktree`; live MCP proof on `https://convoy.bot/mcp` is still `null`.
+- MCP `send` accepts `worktree`; live MCP proof on the loopback MCP is still `null`.
 - Live **native** dual-worktree hop: `null`. The earlier dual hop was the retired ola-brain path (Phase 6).
 
 ### Pseudo-code
@@ -1337,7 +1338,7 @@ One package, sibling repo `deploy-forward/deploy-forward`. Flags:
 | y / n / i | Interactive per-component (yes / no / install) |
 | `--yes` | Confirm the current prompt. **`--yes` is not all-yes.** |
 
-White-glove path: `npx deploy-forward --convoy`, attach HTTP MCP at `https://convoy.bot/mcp`, `roster` says who will actually hop, then `send` fires grok / claude / codex / agy / cursor-agent as themselves.
+White-glove path: `npx deploy-forward --convoy`, run `convoy mcp` and attach `http://127.0.0.1:8788/mcp`, `roster` says who will actually hop, then `send` fires grok / claude / codex / agy / cursor-agent as themselves.
 
 Keep this section short. Installer code does not live in this tree.
 
@@ -1349,7 +1350,7 @@ The demo thread key is `demo`. Tests live in `test/demo/`. These tests must fail
 
 - Temporal hooks: **GREEN** on the demo host. `convoy hook` stamps `{ts,kind,instance_id,summary}` to `.convoy/feed.jsonl`. `convoy feed --since` returns that window. This is not ola-brain `hook-context` / `precompact` / `session-end`. Unit GREEN: `test/demo/temporal_hooks_test.py`. Code GREEN: `src/convoy/layer.py` `hook()`, `feed_since()`. The demo rows were written to `<demo-root>/.convoy/feed.jsonl` through a local wrapper script (not in this repository).
 - Parallel native chat: **GREEN** on fake runner (`python -m convoy send --to grok --to claude`). **GREEN** on the demo host's `send-dry` (two distinct `session_id` values, two hook rows: `<dry-grok-session>` and `<dry-claude-session>`). **LIVE dual hop not proven:** the Claude session was at its limit and Codex was out of credits. Sequential live hops were proven earlier (synapse-proof / SYNAPSE_OK / SYNAPSE_TURN2 / SYNAPSE_TURN3, registry `<redacted-vendor-session-id>`). The first grok+agy live attempt started both together, but grok argv split and agy printed a generic hello (prompt not seen).
-- Grok Bot HTTP MCP: still absent from the catalog. This chat is not natively connected yet. Status **RED** for HTTP MCP, **GREEN** for PC CLI hop via a shell on the demo host running two local wrapper scripts (not in this repository) around `ola-brain.exe`. Stdio MCP to Windows `localhost:4717` from the Grok Bot box **failed**.
+- History (before 1.3.2): Grok Bot HTTP MCP was absent from the catalog; that chat was not natively connected. Status **RED** for HTTP MCP, **GREEN** for PC CLI hop via a shell on the demo host running two local wrapper scripts (not in this repository) around `ola-brain.exe`. Stdio MCP to Windows `localhost:4717` from the Grok Bot box **failed**.
 - Threaded context: **GREEN** ola-brain `side-chat send grok --label synapse-proof`. **GREEN** the local wrapper's `context` command (packed pointers). **RED** CLI side-chat send skips IDE hydration pointer (cold message). **RED** Codex JSON has no `session_id` so next turn is `resume --last` (hostile). **RED** dry-run printed instance id without `register_agent`. **Corrected at `f40b01a`:** `src/convoy/context.py` ships (`pack` / `stdin_for`, pointers only) and is imported by `synapse.py` and `mcp_http.py`; `registry.parse_session_id` reads JSON or an ola-brain `instance_id:` reply and has no UUID regex. The `ola_runner` line is history: that path is retired.
 - Feature branch understanding: **GREEN code + unit + live artifact (corrected at `f40b01a`).** `gitstate.git_state()` is merged into every synapse row by `synapse.send_one`; rows carry `git_branch` / `git_sha` / `pr_number`. Unit: `phase3_branch_test.py`.
 - Worktree understanding: **GREEN code + unit (corrected at `f40b01a`).** The worktree is stamped on every synapse row and passed as `cwd` into the runner. Unit: `phase4_worktree_test.py`. Live **native** dual-worktree hop stays `null`.
@@ -1362,7 +1363,7 @@ The demo thread key is `demo`. Tests live in `test/demo/`. These tests must fail
 
 Claims in this file must be true of **this tree** or of a named demo run with a timestamp. If a function is not in `src/convoy/`, it is not GREEN for this tree.
 
-The rows below describe this tree (`convoy` 1.3.1); the table began as the inventory of `f40b01a` (merge of PR #24) and has grown with the tree, so it carries no module or test count.
+The rows below describe this tree (`convoy` 1.3.2); the table began as the inventory of `f40b01a` (merge of PR #24) and has grown with the tree, so it carries no module or test count.
 
 | Path | What it actually does |
 |---|---|
@@ -1381,23 +1382,23 @@ The rows below describe this tree (`convoy` 1.3.1); the table began as the inven
 | `src/convoy/assets/logo.svg` | The widget's logo, shipped as package data. |
 | `src/convoy/install.py` | Opt-in vendor install. Refuses unknown or wrapped harnesses and non-vendor hosts. Dry by default. |
 | `src/convoy/layer.py` | `hook()`, `feed_since()`, `conductor_stamp()`, `utc_now()`, `feed_path()`, `SCHEMA_VERSION = 2`. The module writes the feed; branch / worktree / usage reach a row as `extra` from the caller, not from here. Feed contract v2.1 adds `neuron_note` plus an **attributed** `from` and an addressee `to` — see that section, which is the source of truth for it (attributed, not authenticated: the bus records a claimed `instance_id`). |
-| `src/convoy/mcp_http.py` | JSON-RPC POST `/mcp`. Tool availability is always discovered from live `tools/list` at runtime (never copied from docs). Live `send` routes to `native_runner` with `allow_interactive_resume=False`. Attach/read tools may be PARTIAL GREEN when bound; native `send` stays RED until a live vendor execution is proven on the public URL. |
+| `src/convoy/mcp_http.py` | JSON-RPC POST `/mcp`. Tool availability is always discovered from live `tools/list` at runtime (never copied from docs). Live `send` routes to `native_runner` with `allow_interactive_resume=False`. Attach/read tools may be PARTIAL GREEN when bound; native `send` stays RED until a live vendor execution is proven on the loopback MCP. Serves loopback requests only: a foreign `Host` or `Origin` is a 403, and no response carries CORS headers. |
 | `src/convoy/onboard.py` | Declared-harness onboarding: refuse wrappers, probe only named harnesses, optional thread bind, install hints, first-run PATH ungate. |
 | `src/convoy/registry.py` | Instance registry: `register`, `lookup`, `parse_session_id`, `parse_agents_jsonl`, `live_on_branch`. No printed `session_id` without a row. |
 | `src/convoy/synapse.py` | `fake_runner` (default), `native_runner` (`--live`: vendor binary on PATH, wrapper names refused, `cwd=worktree`), `send_one` / `send_many`. Live mode is native on both CLI and MCP. Wrapper names (`ola-brain`, side-chat, UltraCode-Shim) are refused as a harness. |
 | `src/convoy/usage.py` | `probe()`, `normalize_usage_remaining()`, `surface()`. Unknown remaining is JSON `null`; never invent `0`; grok remaining is always `null`. |
-| `test/run.py` + `test/demo/` | 22 test modules, 184 tests, all passing at `f40b01a`. |
-| `pyproject.toml` | `convoy` 1.3.1, packages under `src`, requires-python >= 3.11. |
+| `test/run.py` + `test/demo/` | The suite: `python -m unittest test.demo.<module>` runs one module. |
+| `pyproject.toml` | `convoy` 1.3.2, packages under `src`, requires-python >= 3.11. |
 
 We do not:
 
 - Wrap Grok as `claude-grok-4-6` (or any Anthropic-shaped alias) behind Claude Code / UltraCode-Shim.
 - Proxy `cli-chat-proxy.grok.com` / `api.x.ai` / Codex OAuth / cursor-agent HTTP so another product can wear our meter.
 - Merge native sessions. A synapse execs the harness CLI the human already signed into. The other CLI keeps its own `session_id` and its own meter.
-- Pretend a LAN stdio MCP to Windows `localhost:4717` is a Grok Bot MCP.
+- Pretend a LAN stdio MCP to Windows `localhost:4717` is a conductor's MCP.
 - Invent usage numbers, branch names, session ids, or MCP attach.
-- Claim full HTTP MCP GREEN on unit tests alone. Live `send` routes to `native_runner` in code (`75f00c7`); GREEN needs a timestamped live vendor execution on the public URL, not a passing suite.
-- Land this MCP in `Deploy-Forward/platform`.
+- Claim full HTTP MCP GREEN on unit tests alone. Live `send` routes to `native_runner` in code (`75f00c7`); GREEN needs a timestamped live vendor execution on the loopback MCP, not a passing suite.
+- Land this MCP in the closed platform repo.
 
 If a PR starts looking like UltraCode-Shim (OnlyTerp, https://github.com/OnlyTerp/UltraCode-Shim — local proxy, Claude Code stays the shell, `/model` ids must start with `claude` or `anthropic`, Grok becomes a backend, `grok_build` hits `cli-chat-proxy.grok.com`), it does not land in `deploy-forward/convoy`.
 

@@ -20,15 +20,19 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 from convoy import mcp_http, onboard as onboard_module
 from convoy.conductor import CONTRACT_RELATIVE, contract_pointer, contract_sha, contract_text
 from convoy.convoy import bind, ensure_id, read_id
+try:
+    from test.demo.write_gate_fixture import closed_write_gate, open_write_gate, write_gate, write_gate_if  # noqa: F401
+except ModuleNotFoundError:  # discovered as a top-level module
+    from write_gate_fixture import closed_write_gate, open_write_gate, write_gate, write_gate_if  # noqa: F401
 
-GATED = {"CONVOY_MCP_WRITE_TOOLS": "1"}
 UNROUTED = "this origin serves every thread"
 
 
 class UnboundOriginRoutes(unittest.TestCase):
     def setUp(self):
         self.home = Path(tempfile.mkdtemp())
-        for p in (mock.patch.dict(os.environ, {**GATED, "HOME": str(self.home), "USERPROFILE": str(self.home)}),
+        for p in (mock.patch.dict(os.environ, {"HOME": str(self.home), "USERPROFILE": str(self.home)}),
+                  write_gate(),
                   mock.patch("convoy.bringup.Path.home", return_value=self.home),
                   mock.patch("convoy.index.is_temp_root", return_value=False),
                   mock.patch.object(onboard_module, "probe", return_value={}),
@@ -90,7 +94,7 @@ class ContractAndErrors(unittest.TestCase):
         self.assertTrue(contract_pointer(root)["current"])
 
     def test_gate_texts_name_the_bearer(self):
-        with mock.patch.dict(os.environ, {"CONVOY_MCP_WRITE_TOOLS": ""}):
+        with closed_write_gate():  # no bearer on these calls
             pruned = mcp_http.call_tool(None, "threads", {"prune": True})
             root = Path(tempfile.mkdtemp())
             ensure_id(root)

@@ -1,7 +1,7 @@
 """The conductor bearer: identity on the wire.
 
 Until this landed the only way a public caller wrote to a thread was a global
-process flag, CONVOY_MCP_WRITE_TOOLS=1, which exposed every write tool to
+process flag (removed in Convoy 1.3.2), which exposed every write tool to
 anyone who could reach the origin and left a stamp indistinguishable from a
 forged one. Now:
 

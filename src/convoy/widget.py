@@ -29,7 +29,7 @@ NowFn = Callable[[], str]
 EPOCH = "1970-01-01T00:00:00.000000Z"
 IDLE_FLAG = "CONVOY_STALE_IDLE_S"
 IDLE_DEFAULT = 300.0
-WORDMARK = "convoy.bot"
+WORDMARK = "Convoy"
 DEPLOY_FORWARD = "Deploy Forward"
 
 

@@ -142,7 +142,7 @@ def conductor_stamp(
     transcript is a pointer to where the bubble lives, never its bytes.
     principal: the checked bearer record ({id, conductor, ...}) when the stamp
     arrived over the wire with identity; `from` is read from it and the row
-    carries principal={bearer: id}. None (CLI on the box, or the legacy flag)
+    carries principal={bearer: id}. None (CLI on the box)
     leaves principal null: such a stamp cannot be told from a forged one.
     """
     text, truncated = _compact(summary, "conductor")

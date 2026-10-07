@@ -7,6 +7,10 @@ from test.demo import list_attach_test as fixtures
 from convoy.convoy import bind, list_seats, read_id, seat, update_seat
 from convoy.inbox import enqueue, pending
 from convoy.layer import hook
+try:
+    from test.demo.write_gate_fixture import open_write_gate, write_gate, write_gate_if  # noqa: F401
+except ModuleNotFoundError:  # discovered as a top-level module
+    from write_gate_fixture import open_write_gate, write_gate, write_gate_if  # noqa: F401
 
 
 class ListAttachEdges(unittest.TestCase):
@@ -173,7 +177,7 @@ class ListAttachEdges(unittest.TestCase):
         # An MCP join records the conductor its bearer proves; the gate is the legacy flag here,
         # so the conductor is synthetic. The server's own session is never borrowed.
         conductor = {"kind": "conductor", "name": "grok-bot", "via": "bearer", "why": None}
-        with patch.dict(os.environ, {"CONVOY_MCP_WRITE_TOOLS": "1"}), \
+        with write_gate(), \
              patch("convoy.mcp_http._launch_launcher", return_value=conductor), \
              patch("convoy.panes.identify", return_value={"ok": True, "chair": "synthetic-server", "via": "environment"}):
             card = _call_tool(self.root, "join", {"to": "claude", "session_id": "synthetic-remote"})

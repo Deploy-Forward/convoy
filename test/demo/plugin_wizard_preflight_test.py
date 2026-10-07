@@ -18,9 +18,9 @@ from convoy.wizard_preflight import (
     run_preflight,
 )
 
-# Recorded from https://convoy.bot/mcp tools/list and reconfirmed on
+# Recorded 2026-09-04 from a lagging server's tools/list and reconfirmed on
 # PR #52: still these 13 names. A fixture, not a menu.
-# Live Gate 0 stays RED until redeploy; this list is not a GREEN claim.
+# Gate 0 stays RED until that server is upgraded; this list is not a GREEN claim.
 LIVE_2026_09_04 = ["roster", "glance", "onboard", "terminals", "context", "send", "feed",
                    "bring_up", "open", "hide", "minimize", "background", "install"]
 
@@ -35,7 +35,7 @@ class WizardPreflight(unittest.TestCase):
         self.assertFalse(card["frozen_menu"])
 
     def test_lagging_public_deploy_is_red_and_names_remedy_per_verb(self):
-        card = preflight(LIVE_2026_09_04, url="https://convoy.bot/mcp")
+        card = preflight(LIVE_2026_09_04, url="http://127.0.0.1:8788/mcp")
         self.assertFalse(card["ok"])
         self.assertEqual(card["status"], "RED")
         # onboard, bring_up, send are live already; the rest are missing.
@@ -58,8 +58,9 @@ class WizardPreflight(unittest.TestCase):
             else:
                 self.assertEqual(card["remedy"][verb], REMEDY_REDEPLOY, verb)
         self.assertEqual(card["next"], "enable-write-tools-on-deploy")
-        self.assertIn("redeploy the public MCP", card["ask"])
-        self.assertIn("CONVOY_MCP_WRITE_TOOLS=1", card["ask"])
+        self.assertIn("upgrade and restart your Convoy MCP", card["ask"])
+        self.assertIn("convoy conductor mint", card["ask"])
+        self.assertNotIn("CONVOY_MCP_WRITE_TOOLS", card["ask"])
         self.assertIn("not a source checkout", card["ask"])
         self.assertNotIn("python -m convoy", card["ask"], "the card must not offer a CLI fallback to a marketplace install")
 

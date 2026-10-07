@@ -42,6 +42,10 @@ from convoy.lifecycle import join, swap  # noqa: E402
 from convoy.mcp_http import make_server  # noqa: E402
 from convoy.registry import lookup  # noqa: E402
 from convoy.targeted_launch import launch_choices, launch_seat  # noqa: E402
+try:
+    from test.demo.write_gate_fixture import open_write_gate, write_gate, write_gate_if  # noqa: F401
+except ModuleNotFoundError:  # discovered as a top-level module
+    from write_gate_fixture import open_write_gate, write_gate, write_gate_if  # noqa: F401
 
 REPO = Path(__file__).resolve().parents[2]
 MODES = {"unsupported", "unverified", "interactive-session", "task"}
@@ -330,9 +334,6 @@ class WhereOverTheMcpWire(unittest.TestCase):
         self.mcp = "http://127.0.0.1:%s/mcp" % self.httpd.server_address[1]
         threading.Thread(target=self.httpd.serve_forever, daemon=True).start()
         self.addCleanup(self.httpd.shutdown)
-        self._env = mock.patch.dict(os.environ, {"CONVOY_MCP_WRITE_TOOLS": ""})
-        self._env.start()
-        self.addCleanup(self._env.stop)
 
     def _call(self, name, **arguments):
         return _rpc(self.mcp, "tools/call", {"name": name, "arguments": arguments})["result"]["structuredContent"]
@@ -340,7 +341,7 @@ class WhereOverTheMcpWire(unittest.TestCase):
     def test_public_choices_carries_where_and_the_seat_join_schemas_take_it(self):
         for h in self._call("choices")["harnesses"]:
             self.assertEqual(h["where"], where_options(h["id"]), h["id"])
-        os.environ["CONVOY_MCP_WRITE_TOOLS"] = "1"
+        open_write_gate(self)
         tools = {t["name"]: t for t in _rpc(self.mcp, "tools/list")["result"]["tools"]}
         for name in ("seat", "join"):
             prop = tools[name]["inputSchema"]["properties"]["where"]
@@ -348,7 +349,7 @@ class WhereOverTheMcpWire(unittest.TestCase):
             self.assertIn("choices.harnesses[].where", prop["description"], name)
 
     def test_join_where_cloud_refused_over_the_wire_writes_nothing(self):
-        os.environ["CONVOY_MCP_WRITE_TOOLS"] = "1"
+        open_write_gate(self)
         unverified = _by_mode("unverified")[0]
         card = self._call("join", to=unverified, session_id="w-cloud", where="cloud")
         self.assertFalse(card["ok"])

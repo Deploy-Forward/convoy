@@ -1,5 +1,7 @@
 # Amendment 2026-09-12: productize Convoy
 
+> **Superseded 2026-10: convoy.bot/mcp is retired.** Convoy 1.3.2 removed the hosted endpoint, the tunnel task an install registered, and the `CONVOY_MCP_WRITE_TOOLS` flag with its `legacy-flag` write gate. Convoy's MCP runs on your machine at `http://127.0.0.1:8788/mcp` (`convoy mcp`), answers loopback requests only, and writes need a conductor bearer. This document is kept as dated history; its references to the tunnel, the public origin and the flag describe the past.
+
 An amendment to Convoy's earlier architecture decisions. It amends; it does not
 rewrite. Where this file and an earlier decision disagree, the earlier decision's
 objects stand and this file records the phase that changes them.

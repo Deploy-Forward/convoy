@@ -24,6 +24,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 
 from convoy.convoy import bind, ensure_id, list_seats, seat  # noqa: E402
 from convoy.lifecycle import join  # noqa: E402
+try:
+    from test.demo.write_gate_fixture import open_write_gate, write_gate, write_gate_if  # noqa: F401
+except ModuleNotFoundError:  # discovered as a top-level module
+    from write_gate_fixture import open_write_gate, write_gate, write_gate_if  # noqa: F401
 
 CONDUCTOR = "grok-bot"
 PRINCIPAL = {"id": "bearer-0000", "conductor": CONDUCTOR, "label": "synthetic connector"}
@@ -47,7 +51,6 @@ class Base(unittest.TestCase):
         p = mock.patch.dict(os.environ, {"CONVOY_HOME": home.name})
         p.start()
         self.addCleanup(p.stop)
-        os.environ.pop("CONVOY_MCP_WRITE_TOOLS", None)
         self.root = _git_repo()
         ensure_id(self.root)
         bind(self.root, "conductor-launch")
@@ -97,7 +100,7 @@ class AnMcpLaunchRecordsTheConductor(Base):
         self.assertEqual(self.row("fresh")["launched_by"], LAUNCHER)
 
     def test_a_launch_without_a_bearer_identity_refuses(self):
-        with mock.patch.dict(os.environ, {"CONVOY_MCP_WRITE_TOOLS": "1"}):   # the gate opens, no identity
+        with write_gate():   # the gate opens, no identity
             card = self.call("crew", {"seats": [{"harness": "codex"}]}, principal=None)
             self.assertFalse(card["ok"], card)
             self.assertEqual(card["error"], "cannot prove who is launching")

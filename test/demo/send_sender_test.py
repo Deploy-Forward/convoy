@@ -37,6 +37,10 @@ from convoy.pulse import write_pulse
 from convoy.synapse import fake_runner, send_one
 from convoy.wake_dispatch import Dispatcher
 from convoy.wake_routes import register_route
+try:
+    from test.demo.write_gate_fixture import open_write_gate, write_gate, write_gate_if  # noqa: F401
+except ModuleNotFoundError:  # discovered as a top-level module
+    from write_gate_fixture import open_write_gate, write_gate, write_gate_if  # noqa: F401
 
 RECEIVER = "chair-alpha"
 SENDER = "chair-beta"
@@ -51,7 +55,6 @@ class Thread(unittest.TestCase):
         env = mock.patch.dict(os.environ, {"CONVOY_HOME": home.name})
         env.start()
         self.addCleanup(env.stop)
-        os.environ.pop("CONVOY_MCP_WRITE_TOOLS", None)
         folder = tempfile.TemporaryDirectory(prefix="convoy-sender-root-")
         self.addCleanup(folder.cleanup)
         self.root = Path(folder.name)
@@ -187,8 +190,7 @@ class TheMcp(Thread):
         self.assertEqual((row["from"], row["verified_by"], row["device"]), (CONDUCTOR, "bearer", None))
 
     def test_a_sender_named_in_the_arguments_is_ignored(self):
-        os.environ["CONVOY_MCP_WRITE_TOOLS"] = "1"
-        self.addCleanup(os.environ.pop, "CONVOY_MCP_WRITE_TOOLS", None)
+        open_write_gate(self)
         reply = self.mcp_send({"to": RECEIVER, "body": "synthetic body", "from": CONDUCTOR, "sender": SENDER,
                                "verified_by": "bearer"}, None)
         self.assertTrue(reply["result"]["structuredContent"]["ok"], reply)

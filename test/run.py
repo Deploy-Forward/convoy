@@ -23,10 +23,6 @@ except ImportError:  # python test/run.py: test/ is on sys.path
 def main() -> int:
     # Tests mint temp roots; keep their index rows out of the real ~/.convoy.
     ensure_throwaway_home()
-    # The operator's machine may carry the legacy write flag at User scope
-    # (2026-09-17: four "hidden by default" tests failed for that reason alone).
-    # The suite starts with it unset; a test that wants it sets it explicitly.
-    os.environ.pop("CONVOY_MCP_WRITE_TOOLS", None)
     # No test may start the operator's real claude, codex or other harness CLI.
     harness_guard.install()
     start = ROOT / "test" / "demo"

@@ -1,7 +1,8 @@
 """`convoy install --local`: the machine setup as one verb with a verify card
-(productize move 1). Origin supervisor,
-tunnel supervisor, console script on PATH. Dry by default; --live needs --opt-in;
-every claim in the card is read back, never assumed. Tests written before the code."""
+(productize move 1). Origin supervisor and
+console script on PATH (the tunnel supervisor was removed in 1.3.2). Dry by default;
+--live needs --opt-in; every claim in the card is read back, never assumed. Tests
+written before the code."""
 import json
 import os
 import sys
@@ -40,52 +41,45 @@ class LocalInstall(unittest.TestCase):
     def setUp(self):
         self.root = Path(tempfile.mkdtemp()); ensure_id(self.root); bind(self.root, "li")
         self.home = Path(tempfile.mkdtemp())
-        self.tok = self.home / "run.token"; self.tok.write_text("SECRET-TUNNEL-TOKEN\n", encoding="utf-8")
         self.env = mock.patch.dict(os.environ, {"CONVOY_HOME": str(self.home)}); self.env.start(); self.addCleanup(self.env.stop)
 
     def test_dry_run_plans_three_items_and_touches_nothing(self):
         from convoy.local_install import install_local
         r = FakeRunner()
-        card = install_local(self.root, token_file=self.tok, runner=r, port=8788, windows=True)
+        card = install_local(self.root, runner=r, port=8788, windows=True)
         self.assertTrue(card["ok"]); self.assertTrue(card["dry_run"])
-        self.assertEqual([p["name"] for p in card["plan"]], ["origin", "tunnel", "console-script"])
+        self.assertEqual([p["name"] for p in card["plan"]], ["origin", "console-script"])
         origin = card["plan"][0]
         self.assertEqual(origin["task"], "ConvoyBotMcp")
         self.assertNotIn(str(self.root), origin["arguments"], "unbound by default: the origin serves every thread (move 3)"); self.assertIn("--port 8788", origin["arguments"])
         self.assertEqual(origin["serves"], "all threads")
         self.assertEqual(Path(origin["execute"]).name.lower(), "pythonw.exe", "windowless interpreter so Windows Terminal never opens a window for it")
         self.assertEqual(Path(origin["execute"]).parent, Path(sys.executable).parent, "the origin still runs on the interpreter that installed Convoy")
-        tunnel = card["plan"][1]
-        self.assertEqual(tunnel["task"], "ConvoyBotTunnel")
-        self.assertEqual(Path(tunnel["execute"]).name.lower(), "pythonw.exe")
-        self.assertIn("-m convoy.tunnel_run", tunnel["arguments"]); self.assertIn(str(self.tok), tunnel["arguments"])
-        self.assertTrue(str(tunnel["log"]).startswith(str(self.home)), "the tunnel's home is Convoy's, under CONVOY_HOME, not a folder outside it")
-        self.assertEqual(Path(tunnel["token_file"]), self.tok)
         self.assertEqual(r.scripts, [], "dry run registers nothing")
-        self.assertNotIn("SECRET-TUNNEL-TOKEN", json.dumps(card), "the token never appears in a card")
 
     def test_live_refuses_without_opt_in(self):
         from convoy.local_install import install_local
         r = FakeRunner()
-        card = install_local(self.root, token_file=self.tok, runner=r, live=True, opt_in=False, windows=True)
+        card = install_local(self.root, runner=r, live=True, opt_in=False, windows=True)
         self.assertFalse(card["ok"]); self.assertIn("opt-in", card["error"]); self.assertEqual(r.scripts, [])
 
-    def test_live_registers_both_supervisors_mirrored_and_verifies_by_read_back(self):
+    def test_live_registers_the_origin_mirrored_and_verifies_by_read_back(self):
         from convoy.local_install import install_local
         r = FakeRunner()
         with mock.patch("convoy.local_install._console_script_ok", return_value=(True, "C:/x/Scripts/convoy.exe")):
-            card = install_local(self.root, token_file=self.tok, runner=r, live=True, opt_in=True, port=8788, windows=True)
+            card = install_local(self.root, runner=r, live=True, opt_in=True, port=8788, windows=True)
         self.assertTrue(card["ok"], card)
         reg = [s for s in r.scripts if "Register-ScheduledTask" in s]
-        self.assertEqual(len(reg), 2)
+        self.assertEqual(len(reg), 1)
+        self.assertIn("ConvoyBotMcp", reg[0])
         for s in reg:
             self.assertIn("New-ScheduledTaskTrigger -AtLogOn", s)
             self.assertIn("-RestartCount 99", s); self.assertIn("-RestartInterval", s)
             self.assertIn("ExecutionTimeLimit", s)
-            self.assertIn("pythonw.exe'", s, "both tasks run on the windowless interpreter")
-            self.assertNotIn("SECRET-TUNNEL-TOKEN", s, "the token is read by the runner at run time, never baked into a task")
+            self.assertIn("pythonw.exe'", s, "the origin runs on the windowless interpreter")
         v = {x["name"]: x for x in card["verify"]}
-        self.assertEqual(v["origin"]["state"], "Running"); self.assertEqual(v["tunnel"]["state"], "Running")
+        self.assertEqual(v["origin"]["state"], "Running")
+        self.assertNotIn("tunnel", v)
         self.assertTrue(v["console-script"]["ok"])
         self.assertEqual(card["next"], "convoy install --local --verify to re-check any time")
 
@@ -93,7 +87,7 @@ class LocalInstall(unittest.TestCase):
         from convoy.local_install import install_local
         r = FakeRunner()
         with mock.patch("convoy.local_install._console_script_ok", return_value=(False, None)):
-            card = install_local(self.root, token_file=self.tok, runner=r, verify_only=True, windows=True)
+            card = install_local(self.root, runner=r, verify_only=True, windows=True)
         self.assertFalse(card["ok"])
         v = {x["name"]: x for x in card["verify"]}
         self.assertFalse(v["origin"]["ok"]); self.assertIn("no task", v["origin"]["error"])
@@ -102,13 +96,8 @@ class LocalInstall(unittest.TestCase):
 
     def test_non_windows_is_refused_with_the_missing_adapter_named(self):
         from convoy.local_install import install_local
-        card = install_local(self.root, token_file=self.tok, runner=FakeRunner(), windows=False)
+        card = install_local(self.root, runner=FakeRunner(), windows=False)
         self.assertFalse(card["ok"]); self.assertIn("systemd", card["error"]); self.assertIn("launchd", card["error"])
-
-    def test_missing_token_file_is_a_plan_warning_not_a_secret_leak(self):
-        from convoy.local_install import install_local
-        card = install_local(self.root, token_file=self.home / "absent.token", runner=FakeRunner(), windows=True)
-        self.assertTrue(card["ok"]); self.assertTrue(any("token file" in w for w in card["warnings"]))
 
     def test_cli_install_local_prints_the_card(self):
         from convoy.cli import main
@@ -117,9 +106,9 @@ class LocalInstall(unittest.TestCase):
         buf = io.StringIO()
         with redirect_stdout(buf), mock.patch("convoy.local_install._powershell", FakeRunner()), \
              mock.patch("convoy.local_install.os.name", "nt"):
-            rc = main(["--root", str(self.root), "install", "--local", "--token-file", str(self.tok)])
+            rc = main(["--root", str(self.root), "install", "--local"])
         card = json.loads(buf.getvalue())
-        self.assertEqual(rc, 0); self.assertTrue(card["dry_run"]); self.assertEqual(len(card["plan"]), 3)
+        self.assertEqual(rc, 0); self.assertTrue(card["dry_run"]); self.assertEqual(len(card["plan"]), 2)
 
 
 class NeverPausedByBattery(unittest.TestCase):
@@ -130,17 +119,16 @@ class NeverPausedByBattery(unittest.TestCase):
     def setUp(self):
         self.root = Path(tempfile.mkdtemp()); ensure_id(self.root); bind(self.root, "nb")
         self.home = Path(tempfile.mkdtemp())
-        self.tok = self.home / "run.token"; self.tok.write_text("SECRET-TUNNEL-TOKEN\n", encoding="utf-8")
         self.env = mock.patch.dict(os.environ, {"CONVOY_HOME": str(self.home)}); self.env.start(); self.addCleanup(self.env.stop)
 
     def test_registration_script_turns_both_battery_settings_off_and_keeps_restart_policy(self):
         from convoy.local_install import install_local
         r = FakeRunner()
         with mock.patch("convoy.local_install._console_script_ok", return_value=(True, "C:/x/Scripts/convoy.exe")):
-            card = install_local(self.root, token_file=self.tok, runner=r, live=True, opt_in=True, port=8788, windows=True)
+            card = install_local(self.root, runner=r, live=True, opt_in=True, port=8788, windows=True)
         self.assertTrue(card["ok"], card)
         reg = [s for s in r.scripts if "Register-ScheduledTask" in s]
-        self.assertEqual(len(reg), 2, "both ConvoyBotMcp and ConvoyBotTunnel are registered")
+        self.assertEqual(len(reg), 1, "ConvoyBotMcp is the one supervisor")
         for s in reg:
             self.assertIn("-DisallowStartIfOnBatteries $false", s,
                           "a machine on battery must not leave the origin Queued")
@@ -170,31 +158,6 @@ class RootMustBeAThread(unittest.TestCase):
         ensure_id(self.home); bind(self.home, "oops")
         card = install_local(self.home, runner=FakeRunner(), windows=True, bound=True)
         self.assertFalse(card["ok"]); self.assertIn("CONVOY_HOME", card["error"])
-
-
-class NoWindowEverOpens(unittest.TestCase):
-    """2026-09-14: two blank Windows Terminal windows appeared at 22:59:30, one per
-    supervisor. A console program started by Task Scheduler with no parent console
-    gets a window from the default terminal. conhost --headless hides it but drops
-    the child's exit code (measured: exit 3 came back 0), which would blind the
-    restart supervision. So both tasks run on pythonw.exe, and the tunnel is a
-    Python runner that spawns cloudflared with CREATE_NO_WINDOW and exits with
-    its code."""
-    def test_tunnel_runner_reads_the_token_at_run_time_and_returns_the_child_exit_code(self):
-        from convoy import tunnel_run
-        home = Path(tempfile.mkdtemp()); tok = home / "run.token"; tok.write_text("\ufeffSECRET-TOKEN\n", encoding="utf-8")
-        seen = {}
-        def spawn(argv, **kw):
-            seen["argv"] = argv; seen["kw"] = kw
-            return 7
-        rc = tunnel_run.main(["--token-file", str(tok), "--log", str(home / "cf.log"), "--metrics", "127.0.0.1:20241", "--exe", "C:/cf/cloudflared.exe"], spawn=spawn)
-        self.assertEqual(rc, 7, "the supervisor sees the child's exit code")
-        argv = seen["argv"]
-        self.assertEqual(argv[0], "C:/cf/cloudflared.exe"); self.assertIn("--metrics", argv); self.assertIn("--logfile", argv)
-        self.assertEqual(argv[argv.index("--token") + 1], "SECRET-TOKEN", "BOM stripped, whitespace stripped, read at run time")
-        self.assertEqual(seen["kw"].get("creationflags"), tunnel_run.CREATE_NO_WINDOW)
-        rc2 = tunnel_run.main(["--token-file", str(home / "absent"), "--log", str(home / "x.log"), "--metrics", "m", "--exe", "e"], spawn=spawn)
-        self.assertEqual(rc2, 2, "a missing token file is a non-zero exit, so the task retries and the card says why")
 
 
 class Pairing(unittest.TestCase):

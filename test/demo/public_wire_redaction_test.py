@@ -1,7 +1,7 @@
 """Two secrets, every public tool, zero echoes. The gate is the arbiter.
 
 Adversarial review of f63f73c (2026-09-04) reproduced two PRE-EXISTING leaks
-on the ungated wire (CONVOY_MCP_WRITE_TOOLS unset), both siblings of the glance
+on the ungated wire (no bearer on the call), both siblings of the glance
 leak fixed in 2196fd7:
 
 1. The vendor resume id (seat.resume) rode verbatim in terminals.windows[].resume,
@@ -39,6 +39,10 @@ from convoy.bringup import bring_up, terminals
 from convoy.convoy import bind, ensure_id, seat
 from convoy.lifecycle import join
 from convoy.mcp_http import make_server
+try:
+    from test.demo.write_gate_fixture import open_write_gate, write_gate, write_gate_if  # noqa: F401
+except ModuleNotFoundError:  # discovered as a top-level module
+    from write_gate_fixture import open_write_gate, write_gate, write_gate_if  # noqa: F401
 
 RESUME_ID = "LEAK-RESUME-4f1c0e9a7b2d"
 
@@ -78,9 +82,6 @@ class PublicWireRedaction(unittest.TestCase):
         self.mcp = "http://127.0.0.1:%s/mcp" % self.httpd.server_address[1]
         threading.Thread(target=self.httpd.serve_forever, daemon=True).start()
         self.addCleanup(self.httpd.shutdown)
-        self._env = mock.patch.dict(os.environ, {"CONVOY_MCP_WRITE_TOOLS": ""})
-        self._env.start()
-        self.addCleanup(self._env.stop)
         # Keep the probe about redaction: no vendor CLI probes (they hang past
         # the RPC timeout on this machine), no first-run writes into the real
         # home, no process-table scans (terminals / panes / neurons).
@@ -167,7 +168,7 @@ class PublicWireRedaction(unittest.TestCase):
         self.assertFalse(any("token" in r for r in rows))  # its proof is not
 
     def test_gated_wire_keeps_the_conductor_contract(self):
-        os.environ["CONVOY_MCP_WRITE_TOOLS"] = "1"
+        open_write_gate(self)
         up = {w["to"]: w for w in self._call("bring_up", dry_run=True)["windows"]}
         self.assertEqual(up["claude"]["resume"], RESUME_ID)
         self.assertEqual(up["claude"]["argv"][-2:], ["--resume", RESUME_ID])

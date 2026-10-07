@@ -1,5 +1,7 @@
 # Live certification — 2026-09-06
 
+> **Superseded 2026-10: convoy.bot/mcp is retired.** Convoy's MCP runs on your machine at `http://127.0.0.1:8788/mcp` (`convoy mcp`); there is no hosted Convoy endpoint and no tunnel. This document is kept as dated history; its references to the hosted endpoint describe the past.
+
 Goal: prove Convoy live. Real neurons, launched by Convoy
 into their own worktrees with the seat's declared model and effort, each
 receiving its boot prompt, acking with its own join token, completing one

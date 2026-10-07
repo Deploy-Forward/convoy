@@ -123,7 +123,7 @@ class WidgetModel(unittest.TestCase):
         self.assertFalse(one["repo"]["local_storage"].endswith(".json"))
         self.assertEqual(two["repo"]["chip"], "CONNECTED")
         self.assertIn("threads.json", two["repo"]["index_path"].replace("\\", "/"))
-        self.assertEqual(one["header"]["wordmark"], "convoy.bot")
+        self.assertEqual(one["header"]["wordmark"], "Convoy")
         self.assertIn(" start", one["header"]["plus"])
 
     def test_usage_session_week_unknown_never_invents_percent(self):

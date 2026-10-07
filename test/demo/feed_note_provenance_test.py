@@ -15,6 +15,10 @@ from convoy.layer import SCHEMA_VERSION, conductor_stamp, feed_since, hook, neur
 from convoy.cli import main
 from convoy.mcp_http import TOOLS, call_tool, handle_rpc
 from convoy.synapse import fake_runner, native_runner, send_one
+try:
+    from test.demo.write_gate_fixture import open_write_gate, write_gate, write_gate_if  # noqa: F401
+except ModuleNotFoundError:  # discovered as a top-level module
+    from write_gate_fixture import open_write_gate, write_gate, write_gate_if  # noqa: F401
 
 
 def _run_cli(root, *argv):
@@ -274,8 +278,8 @@ class ChipSeatFields(unittest.TestCase):
 
 class PublicWriteToolGate(unittest.TestCase):
     """N-5: the public wire must not expose SoT write tools ungated. Default
-    OFF at the RPC layer only — CLI and in-process call_tool stay usable, so a
-    gated/loopback deploy opts in with CONVOY_MCP_WRITE_TOOLS=1."""
+    OFF at the RPC layer only: the CLI stays usable, and a caller opens the
+    gate with a conductor bearer."""
 
     def setUp(self):
         # anonymous wire: no bearer of THIS machine may leak into the listing
@@ -307,7 +311,7 @@ class PublicWriteToolGate(unittest.TestCase):
         import os
         from unittest import mock
 
-        with mock.patch.dict(os.environ, {"CONVOY_MCP_WRITE_TOOLS": "1"}):
+        with write_gate():
             names = [t["name"] for t in self._rpc("tools/list", {})["result"]["tools"]]
             self.assertIn("stamp", names)
             self.assertIn("note", names)
@@ -338,7 +342,7 @@ class PublicWriteToolGate(unittest.TestCase):
         import os
         from unittest import mock
 
-        with mock.patch.dict(os.environ, {"CONVOY_MCP_WRITE_TOOLS": "1"}):
+        with write_gate():
             tools = {t["name"]: t for t in self._rpc("tools/list", {})["result"]["tools"]}
         for name in ("send", "bring_up", "install", "resume", "inbox"):
             self.assertFalse(tools[name]["annotations"]["readOnlyHint"], name)

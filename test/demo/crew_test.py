@@ -56,6 +56,10 @@ from convoy.layer import feed_since  # noqa: E402
 from convoy.lifecycle import join, seated_ack  # noqa: E402
 from convoy.mcp_http import _WRITE_TOOLS, make_server  # noqa: E402
 from convoy.targeted_launch import launch_choices  # noqa: E402
+try:
+    from test.demo.write_gate_fixture import open_write_gate, write_gate, write_gate_if  # noqa: F401
+except ModuleNotFoundError:  # discovered as a top-level module
+    from write_gate_fixture import open_write_gate, write_gate, write_gate_if  # noqa: F401
 
 EPOCH = "1970-01-01T00:00:00.000000Z"
 FIRST_RUN = {"ok": True, "prepared": False, "wrote": False, "settings": None, "home_written": False, "settings_home": None}
@@ -415,9 +419,6 @@ class CrewWire(unittest.TestCase):
         self.mcp = "http://127.0.0.1:%s/mcp" % self.httpd.server_address[1]
         threading.Thread(target=self.httpd.serve_forever, daemon=True).start()
         self.addCleanup(self.httpd.shutdown)
-        self._env = mock.patch.dict(os.environ, {"CONVOY_MCP_WRITE_TOOLS": ""})
-        self._env.start()
-        self.addCleanup(self._env.stop)
         self.git = Recorder()
         # mcp_http imports live_runner by name, so that is the seam; the Popen
         # guard makes sure a missed seam can never reach wt.exe from here.
@@ -443,18 +444,18 @@ class CrewWire(unittest.TestCase):
             self.assertIn(hidden, _WRITE_TOOLS)
         card = self._call("crew", seats=[{"harness": "grok"}], launch=True)
         self.assertFalse(card["ok"])
-        self.assertIn("CONVOY_MCP_WRITE_TOOLS", card["error"])
+        self.assertIn("convoy conductor mint", card["error"])
         self.assertEqual(work_seats(self.root), [])
         self.assertEqual(self.git.calls, [], "a refused crew runs no git")
         refused = self._call("seated", seat="x", token="t")
         self.assertFalse(refused["ok"])
         self.assertEqual(feed_since(self.root, EPOCH), [])
-        os.environ["CONVOY_MCP_WRITE_TOOLS"] = "1"
+        open_write_gate(self)
         for name in ("crew", "seated", "consent", "await_seated", "nudge"):
             self.assertIn(name, self._names(), name)
 
     def test_gated_crew_then_seated_over_rpc_closes_the_loop_the_graph_shows(self):
-        os.environ["CONVOY_MCP_WRITE_TOOLS"] = "1"
+        open_write_gate(self)
         card = self._call("crew", seats=[{"harness": "grok", "effort": "low"},
                                           {"harness": "claude"},
                                           {"harness": "codex"}], launch=True, allow_unverified_launch=True)
@@ -488,7 +489,7 @@ class CrewWire(unittest.TestCase):
         # `isinstance(raw, (int, float))` to 120.0 real seconds - the documented
         # snapshot became a two-minute block. Numeric strings coerce, like
         # _opt_bool does; out-of-schema values are refused, never replaced.
-        os.environ["CONVOY_MCP_WRITE_TOOLS"] = "1"
+        open_write_gate(self)
         seen = mock.Mock(return_value={"ok": False, "chairs": [], "pending": [], "connected": [], "stale": []})
         with mock.patch("convoy.mcp_http.await_seated", seen):
             self._call("await_seated", seats=["g1"], timeout="0")
@@ -508,7 +509,7 @@ class CrewWire(unittest.TestCase):
             seen.assert_not_called()
 
     def test_gated_consent_grants_a_pending_request_over_rpc(self):
-        os.environ["CONVOY_MCP_WRITE_TOOLS"] = "1"
+        open_write_gate(self)
         wt = Path(tempfile.mkdtemp())
         req = request_consent(self.root, "trust-worktree", session_id="g", to="grok", worktree=str(wt))
         rid = req["consent_request"]["request_id"]

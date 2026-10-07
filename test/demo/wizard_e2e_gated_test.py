@@ -48,6 +48,10 @@ from convoy.pane_host import read_launch_argv
 from convoy.convoy import ensure_id, list_seats, read_github, read_thread
 from convoy.mcp_http import _WRITE_TOOLS, make_server
 from convoy.wizard_preflight import REQUIRED_WIZARD_VERBS
+try:
+    from test.demo.write_gate_fixture import open_write_gate, write_gate, write_gate_if  # noqa: F401
+except ModuleNotFoundError:  # discovered as a top-level module
+    from write_gate_fixture import open_write_gate, write_gate, write_gate_if  # noqa: F401
 
 NULL_PROBE = {"usage_remaining": None, "limited": False, "raw": None}
 FAKES = Path(__file__).resolve().parents[1] / "fakes"
@@ -166,9 +170,8 @@ class WizardE2EGated(unittest.TestCase):
             self.addCleanup(p.stop)
 
     def _serve(self, gated):
-        env = mock.patch.dict(os.environ, {"CONVOY_MCP_WRITE_TOOLS": "1" if gated else ""})
-        env.start()
-        self.addCleanup(env.stop)
+        if gated:
+            open_write_gate(self)
         httpd = make_server(self.root, "127.0.0.1", 0)
         threading.Thread(target=httpd.serve_forever, daemon=True).start()
         self.addCleanup(httpd.shutdown)

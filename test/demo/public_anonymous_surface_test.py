@@ -1,18 +1,19 @@
 """Anonymous callers on the public edge get the product surface, nothing of the record.
 
-Read back live 2026-09-17 through convoy.bot with no Authorization header:
+Read back live 2026-09-17 through a public edge with no Authorization header:
 `threads` returned 99 rows with every thread's filesystem root under the
 operator's home directory and thread names that are client and project names;
 `card` and `roster` returned checkout, worktree and contract paths. Nothing in
 those rows is a credential; all of it is a map of one person's machine, and
-with the legacy write flag set the same anonymous caller could write.
+with the process-wide write flag set (removed in 1.3.2) the same anonymous
+caller could write.
 
 Rule: identity is the arbiter on the public edge. A request that arrived
 through a proxy (Cf-Connecting-Ip / X-Forwarded-For / Forwarded / X-Real-Ip)
 or from a non-loopback peer, carrying no bearer, is anonymous-public. It may
 call only the product surface (`card`, `choices`, `install` dry, `threads` as a
 count), every card it receives has filesystem paths scrubbed, and `tools/list`
-shows it exactly that surface. The legacy flag never opens anything to it. A
+shows it exactly that surface. A
 loopback caller with no proxy header is local and unchanged: the record is
 already theirs on disk. A bearer holder through the edge is unchanged.
 """
@@ -32,6 +33,10 @@ from convoy import bearer as _bearer
 from convoy.convoy import bind, ensure_id, seat
 from convoy.layer import hook
 from convoy.mcp_http import TOOLS, make_server
+try:
+    from test.demo.write_gate_fixture import write_gate
+except ModuleNotFoundError:  # discovered as a top-level module
+    from write_gate_fixture import write_gate
 
 EDGE = {"X-Forwarded-For": "203.0.113.9"}          # TEST-NET-3: a proxied public caller
 PRODUCT_SURFACE = {"card", "choices", "install", "threads"}
@@ -73,7 +78,7 @@ def _strings(obj):
 class AnonymousPublicSurface(unittest.TestCase):
     def setUp(self):
         self.home = Path(tempfile.mkdtemp())
-        self._env = mock.patch.dict(os.environ, {"CONVOY_HOME": str(self.home), "CONVOY_MCP_WRITE_TOOLS": ""})
+        self._env = mock.patch.dict(os.environ, {"CONVOY_HOME": str(self.home)})
         self._env.start()
         self.addCleanup(self._env.stop)
         self._probe = mock.patch("convoy.mcp_http.probe", lambda _h: dict(NULL_PROBE))
@@ -143,8 +148,8 @@ class AnonymousPublicSurface(unittest.TestCase):
         self.assertIsNot(card.get("dry_run"), False)
         self.assertIsNot(card.get("ran"), True)
 
-    def test_legacy_flag_does_not_open_the_record_to_the_public(self):
-        with mock.patch.dict(os.environ, {"CONVOY_MCP_WRITE_TOOLS": "1"}):
+    def test_an_open_gate_does_not_open_the_record_to_the_public(self):
+        with write_gate():
             resp = _rpc(self.mcp, "tools/call", {"name": "feed", "arguments": {"thread": "leaky"}}, headers=EDGE)
             self.assertIs(_payload(resp).get("ok"), False)
             self.assertNotIn(SECRET_NOTE, " ".join(_strings(_payload(resp))))

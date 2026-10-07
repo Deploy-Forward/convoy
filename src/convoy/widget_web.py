@@ -4,7 +4,7 @@ The Tk strip did not look like a polished product with real connectivity,
 and the reference apps (Claude's
 quick-ask bar, the ChatGPT desktop app) are web UIs in native shells with the
 OS's own translucency and rounded corners. Tk cannot get there, so the strip
-is now HTML/CSS/JS (src/convoy/site/widget) served from a loopback HTTP server
+is now HTML/CSS/JS (src/convoy/widget_page) served from a loopback HTTP server
 inside the widget process, in a pywebview window when pywebview is importable
 (WebView2 on Windows, with DWM acrylic + rounded corners applied to the HWND),
 else Microsoft Edge in --app mode, else the default browser.
@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import os
+import socket
 import subprocess
 import sys
 import threading
@@ -28,16 +29,18 @@ from typing import Any, Callable
 
 from .cmd import quiet_spawn_kwargs
 from .index import recent
+from .loopback import ExclusiveBind, drain_refused, request_ok, require_loopback_bind
 from .usage import CachedProbe, probe
 
-SITE = Path(__file__).resolve().parent / "site"
-PAGE = SITE / "widget"
+# The page, its fonts (with their OFL texts) and the fallback logo. Named
+# widget_page so it never collides with widget.py.
+PAGE = Path(__file__).resolve().parent / "widget_page"
 ASSETS = {
     "/assets/logo.svg": (Path(__file__).resolve().parent / "assets" / "logo.svg", "image/svg+xml"),
-    "/assets/fonts/work-sans-latin.woff2": (SITE / "fonts" / "work-sans-latin.woff2", "font/woff2"),
-    "/assets/fonts/jetbrains-mono-latin.woff2": (SITE / "fonts" / "jetbrains-mono-latin.woff2", "font/woff2"),
+    "/assets/fonts/work-sans-latin.woff2": (PAGE / "fonts" / "work-sans-latin.woff2", "font/woff2"),
+    "/assets/fonts/jetbrains-mono-latin.woff2": (PAGE / "fonts" / "jetbrains-mono-latin.woff2", "font/woff2"),
 }
-_LOGO_FALLBACK = SITE / "favicon.svg"
+_LOGO_FALLBACK = PAGE / "favicon.svg"
 
 ENGINES = ("auto", "webview", "edge", "browser", "tk")
 
@@ -402,6 +405,10 @@ class WidgetApi:
         return {"ok": True, "text": "open the start panel", "recent": recent(10)}
 
 
+def _peer_of(handler: BaseHTTPRequestHandler) -> str:
+    return handler.client_address[0] if handler.client_address else ""
+
+
 def make_handler(api: WidgetApi):
     class H(BaseHTTPRequestHandler):
         server_version = "convoy-widget"
@@ -409,18 +416,45 @@ def make_handler(api: WidgetApi):
         def log_message(self, *_a: Any) -> None:  # quiet
             pass
 
+        def _refused(self) -> bool:
+            """403 unless the peer, Host and Origin are this machine's loopback on
+            this port. A text/plain POST needs no CORS preflight, so without this
+            any web page (or a DNS-rebinding name) could drive the widget's API.
+            The widget page itself is served from http://127.0.0.1:<port>."""
+            port = int(self.server.server_address[1])
+            if request_ok(_peer_of(self), self.headers, port, self.path):
+                return False
+            self._send(403, b"forbidden: the Convoy widget answers loopback requests only", "text/plain; charset=utf-8")
+            drain_refused(self)
+            return True
+
         def _send(self, code: int, body: bytes, ctype: str) -> None:
             self.send_response(code)
             self.send_header("Content-Type", ctype)
             self.send_header("Content-Length", str(len(body)))
             self.send_header("Cache-Control", "no-store")
+            self.send_header("X-Content-Type-Options", "nosniff")
             self.end_headers()
-            self.wfile.write(body)
+            if self.command != "HEAD":
+                self.wfile.write(body)
+
+        def __getattr__(self, name: str) -> Any:
+            # A method with no do_<METHOD> would be a 501 before the gate runs:
+            # send it through the gate instead (403 off loopback, 405 on it).
+            if name.startswith("do_"):
+                return self._unsupported_method
+            raise AttributeError(name)
+
+        def _unsupported_method(self) -> None:
+            if not self._refused():
+                self._not_allowed()
 
         def _json(self, obj: Any, code: int = 200) -> None:
             self._send(code, json.dumps(obj).encode("utf-8"), "application/json")
 
         def do_GET(self) -> None:  # noqa: N802
+            if self._refused():
+                return
             p = self.path.split("?", 1)[0]
             if p in ("/", "/index.html"):
                 html = (PAGE / "index.html").read_text(encoding="utf-8")
@@ -443,8 +477,29 @@ def make_handler(api: WidgetApi):
                     return self._send(200, path.read_bytes(), ctype)
             return self._json({"ok": False, "error": "not found"}, 404)
 
+        def _not_allowed(self) -> None:
+            """405 with no body: the widget serves GET and POST only."""
+            self.send_response(405)
+            self.send_header("Allow", "GET, POST")
+            self.send_header("Content-Length", "0")
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.end_headers()
+
+        def do_OPTIONS(self) -> None:  # noqa: N802
+            if not self._refused():
+                self._not_allowed()
+
+        def do_HEAD(self) -> None:  # noqa: N802
+            if not self._refused():
+                self._not_allowed()
+
         def do_POST(self) -> None:  # noqa: N802
-            n = int(self.headers.get("Content-Length") or 0)
+            if self._refused():
+                return
+            try:
+                n = max(int(self.headers.get("Content-Length") or "0"), 0)
+            except ValueError:
+                n = 0
             try:
                 body = json.loads(self.rfile.read(n) or b"{}")
             except json.JSONDecodeError:
@@ -491,8 +546,19 @@ def make_handler(api: WidgetApi):
     return H
 
 
+class _Server(ExclusiveBind, ThreadingHTTPServer):
+    pass
+
+
+class _Ipv6Server(_Server):
+    address_family = socket.AF_INET6
+
+
 def serve(api: WidgetApi, host: str = "127.0.0.1", port: int = 0) -> ThreadingHTTPServer:
-    httpd = ThreadingHTTPServer((host, port), make_handler(api))
+    """Serve the widget on a loopback address; any other host raises ValueError."""
+    host = require_loopback_bind(host)
+    server_cls = _Ipv6Server if ":" in host else _Server
+    httpd = server_cls((host, port), make_handler(api))
     threading.Thread(target=httpd.serve_forever, daemon=True).start()
     return httpd
 

@@ -35,6 +35,10 @@ from convoy.convoy import bind, ensure_id, list_seats, seat
 from convoy.inbox import enqueue, pending
 from convoy.mcp_http import TOOLS, _WRITE_TOOLS, make_server
 from convoy.wizard_preflight import REQUIRED_WIZARD_VERBS
+try:
+    from test.demo.write_gate_fixture import open_write_gate, write_gate, write_gate_if  # noqa: F401
+except ModuleNotFoundError:  # discovered as a top-level module
+    from write_gate_fixture import open_write_gate, write_gate, write_gate_if  # noqa: F401
 
 GATE0 = ("choices", "onboard", "join", "launch", "seat", "bring_up",
          "neurons", "graph", "send", "inbox")
@@ -58,7 +62,7 @@ def _gated(card):
     listed tool ("behind the write gate", e.g. inbox drain). Both name the
     env var that opens the gate. Neither pretends to have acted."""
     err = str(card.get("error") or "")
-    return ("write tool disabled" in err or "write gate" in err) and "CONVOY_MCP_WRITE_TOOLS" in err
+    return ("write tool disabled" in err or "write gate" in err) and "convoy conductor mint" in err
 
 
 def _payload(resp):
@@ -88,15 +92,12 @@ class McpWizardVerbs(unittest.TestCase):
         threading.Thread(target=self.httpd.serve_forever, daemon=True).start()
         self.addCleanup(self.httpd.shutdown)
         # Every test starts on a PUBLIC process: the gate is closed.
-        self._env = mock.patch.dict(os.environ, {"CONVOY_MCP_WRITE_TOOLS": ""})
-        self._env.start()
-        self.addCleanup(self._env.stop)
 
     def _call(self, name, **arguments):
         return _payload(_rpc(self.mcp, "tools/call", {"name": name, "arguments": arguments}))
 
     def _open_gate(self):
-        os.environ["CONVOY_MCP_WRITE_TOOLS"] = "1"
+        open_write_gate(self)
 
     # 1. the dependency set is registered, not merely documented - and the
     #    wire tells the truth about WHERE it is available.

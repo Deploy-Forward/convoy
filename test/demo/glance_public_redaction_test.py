@@ -28,6 +28,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 
 from convoy.convoy import bind, ensure_id, seat
 from convoy.mcp_http import make_server
+try:
+    from test.demo.write_gate_fixture import open_write_gate, write_gate, write_gate_if  # noqa: F401
+except ModuleNotFoundError:  # discovered as a top-level module
+    from write_gate_fixture import open_write_gate, write_gate, write_gate_if  # noqa: F401
 
 TOKEN = "VENDOR-SESSION-UUID-SECRET-01a0699f"
 
@@ -62,9 +66,6 @@ class GlancePublicRedaction(unittest.TestCase):
         self.mcp = "http://127.0.0.1:%s/mcp" % self.httpd.server_address[1]
         threading.Thread(target=self.httpd.serve_forever, daemon=True).start()
         self.addCleanup(self.httpd.shutdown)
-        self._env = mock.patch.dict(os.environ, {"CONVOY_MCP_WRITE_TOOLS": ""})
-        self._env.start()
-        self.addCleanup(self._env.stop)
         # glance runs a live usage probe per harness (claude -p /usage, codex
         # exec /status). On this machine the codex probe hangs to its 15s
         # timeout, which is longer than the RPC client waits, so the first
@@ -98,7 +99,7 @@ class GlancePublicRedaction(unittest.TestCase):
             self.assertEqual(rows["g-leak"]["resume"], {"available": False, "for": "grok"})
 
     def test_gated_glance_keeps_the_conductor_chip_contract(self):
-        os.environ["CONVOY_MCP_WRITE_TOOLS"] = "1"
+        open_write_gate(self)
         card = self._glance(thread="leak")
         rows = {r["session_id"]: r for r in self._rows(card)}
         self.assertEqual(rows["c-leak"]["resume"], TOKEN)          # SPEC.md:56, unchanged behind the gate

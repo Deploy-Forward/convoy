@@ -49,13 +49,13 @@ pulse until reattached.
 ## The MCP variant
 
 A neuron that attaches over the MCP endpoint does the same walk with `join`,
-`seated` and `await_seated` as tools, on a gated deploy
-(`CONVOY_MCP_WRITE_TOOLS=1`, loopback). A `where=cloud` chair is accepted only
+`seated` and `await_seated` as tools, on its own machine's loopback MCP with
+a conductor bearer (`convoy conductor mint`). A `where=cloud` chair is accepted only
 for a harness whose `harness_effort.json` cloud block evidences an
 interactive attach (claude today; codex is refused by name). It has no
 worktree, and `bring_up` refuses it a pane: the card lists it under `cloud`
 with `pane: false` and the reason. It proves connected the same way, by its
-own `seated` ack. The public, ungated endpoint answers `join` and `seated`
+own `seated` ack. A call with no bearer gets `join` and `seated` refused
 with the gate named; it writes nothing.
 
 ## Landscape

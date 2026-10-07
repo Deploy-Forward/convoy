@@ -56,7 +56,7 @@ Unknown is JSON null. `transcript` is a pointer, never bubble bytes. `truncated:
 Chair identity is `session_id`. Occupant harness is `to`. Plus `worktree`,
 `model`, `effort`, `effort_applied`, `where` (`local` | `cloud`), `title`,
 `agent`, `resume` / `resume_for` / `resume_key` (vendor resume id, null when
-none), `convoy_id`. Tokens never leave `seats.jsonl` on the public wire.
+none), `convoy_id`. Tokens never leave `seats.jsonl` to a caller without a bearer.
 
 ## Where it lives
 
@@ -64,7 +64,7 @@ none), `convoy_id`. Tokens never leave `seats.jsonl` on the public wire.
 |---|---|---|
 | canonical SoT | `<root>/.convoy/feed.jsonl` + `seats.jsonl` | already the temporal bus; any agent on that root (CLI or MCP) can `feed --since` / `rail` and resume |
 | find the root | `~/.convoy/threads.json` | an agent with no cwd runs `convoy threads`, picks a root, reads the feed |
-| "cloud" | the same `.convoy/` on the MCP host's disk (one public `--root` today) | neurons attach over MCP; they never get a second store. Multi-tenant roots are future work, never per-thread MCP URLs |
+| "cloud" | none today. There is no hosted Convoy endpoint; the MCP is loopback-only on the user's own machine and reads the same `.convoy/` | neurons attach over that local MCP; they never get a second store. Multi-tenant roots are a requirement for any future hosted product, never per-thread MCP URLs |
 | GitHub | the checkout only (code, optional `thread.md`) | never commit live `feed.jsonl` / `seats.jsonl` (noise, tokens, PII). At most a pointer that cites `convoy_id` + last stamp summary |
 
 ## Last note, any agent launches

@@ -9,10 +9,11 @@ chat transcript.
 
 A Convoy thread is a root-bound `.convoy` layer containing a `convoy_id`, feed,
 seats, inboxes, and compact stamps. It is local when the MCP server runs on the
-developer's machine. It is "in the cloud" only when a trusted hosted Convoy MCP
-server stores that root.
+developer's machine. There is no hosted Convoy endpoint; it would be "in the
+cloud" only if a trusted hosted Convoy MCP server stored that root.
 
-A public hosted product must give each user or team an isolated root. One
+Requirement for any future hosted product (not a feature today): it must give
+each user or team an isolated root. One
 global public endpoint bound to one operator root is not a multi-tenant cloud
 thread. A local terminal workflow also needs a local/root-bound server because
 a remote MCP process cannot safely discover or split the user's terminal.
@@ -70,10 +71,8 @@ The plugin uses MCP tools rather than translating the shell commands above:
 5. Observe `await_seated`, `neurons`, and `graph` before routing work.
 6. Call `send`, then require the target-authored inbox acknowledgement.
 
-The default public package advertises `Interactive` and `Read`. Full crew
-creation requires an isolated, trusted endpoint that intentionally exposes the
-write-gated lifecycle tools. Installing the public plugin alone does not turn a
-shared public process into a local terminal controller.
+Full crew creation needs a conductor bearer (`convoy conductor mint`) sent to
+your local `convoy mcp`. Without one the write-gated lifecycle tools refuse.
 
 ## System map
 
@@ -140,5 +139,5 @@ sequenceDiagram
   vendor tokens, or full transcripts.
 - A new identified neuron can read the thread layer and resume from those
   pointers.
-- A hosted version isolates roots per user/team and exposes writes only through
-  authenticated, scoped policy.
+- Any future hosted version (none exists) must isolate roots per user/team and
+  expose writes only through authenticated, scoped policy.

@@ -1,5 +1,7 @@
 # E2E definition of done — plugin-finalize
 
+> **Superseded 2026-10: convoy.bot/mcp is retired.** Convoy's MCP runs on your machine at `http://127.0.0.1:8788/mcp` (`convoy mcp`); there is no hosted Convoy endpoint and no tunnel. This document is kept as dated history; its references to the hosted endpoint describe the past.
+
 Dated snapshot: **2026-09-04T16:09Z**. Evidence baseline:
 `7df60ac8db7865726d29319ef7f0f7e5114f04e0`
 (`origin/feat/convoy-wizard-vision`, PR
@@ -96,14 +98,13 @@ Attempted in this worktree. None of these were present:
    Deploying the Worker does not update the Python process.
 3. **No path to the Windows origin host.** No SSH config, no RDP, no
    checkout path, no Win32 service name, no supervisor command.
-4. **Sandbox `cloudflare.json` is not convoy.bot.**
-   `/home/<user>/sand-data/connector-secrets/.../cloudflare.json` is this VM's
-   tunnel connector token (key `token` only). It was not used as a Wrangler
+4. **The sandbox's tunnel connector file is not convoy.bot.**
+   The sandbox held a tunnel connector credential (one key only). It was not used as a Wrangler
    API token and cannot restart the Python origin.
 
 Operator unblock: supply (a) origin checkout path + supervisor restart on
 the Windows connector, and/or (b) `CLOUDFLARE_API_TOKEN` + account for a
-Worker-only change. Then follow `docs/deploy-convoy-bot-mcp.md`. Keep
+Worker-only change. Then follow `docs/deploy-convoy-bot-mcp.md` (removed in 1.3.2). Keep
 `CONVOY_MCP_WRITE_TOOLS` unset on the internet-facing process.
 
 ## Tests (evidence baseline `7df60ac`)

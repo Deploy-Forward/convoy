@@ -1,8 +1,10 @@
 # Landscape: runtime vs SoT (Herdr comparison)
 
+> **Superseded 2026-10: convoy.bot/mcp is retired.** Convoy's MCP runs on your machine at `http://127.0.0.1:8788/mcp` (`convoy mcp`); there is no hosted Convoy endpoint and no tunnel. This document is kept as dated history; its references to the hosted endpoint describe the past.
+
 **Repo:** `Deploy-Forward/convoy`  
 **Status:** positioning / honesty lock — **2026-09-04**; implementation map + pseudo-code — **2026-09-05**  
-**Authority:** this file is authoritative for **where Convoy sits in the agent-terminal landscape**. It does **not** override product locks in `SPEC.md` / `CANON.md`. If this file and `SPEC.md` disagree on verbs, seats, or feed contract, **`SPEC.md` wins**.  
+**Authority:** none now; superseded (see the banner above). It was the positioning record for **where Convoy sits in the agent-terminal landscape** and never overrode product locks in `SPEC.md` / `CANON.md`. If this file and `SPEC.md` disagree on verbs, seats, or feed contract, **`SPEC.md` wins**.  
 **Audience:** engineers deciding whether Convoy is a Herdr-class runtime, a mux, a manager app, or something else.
 
 ---
@@ -397,7 +399,7 @@ Loop Unit / Integration / Acceptance / System Testing against this SPEC. Each do
 | **Unit** | Do pseudo-code blocks match functions? Are DoDs falsifiable by `test/demo/*` without network? | `test/demo/*_test.py`, pure `src/convoy/*.py` |
 | **Integration** | Do MCP + CLI + seat/feed/bring_up paths compose as claimed? Write gate + no-steal hold across boundaries? | `phase_mcp_http_test.py`, `mcp_wizard_verbs_test.py`, `phase7_*`, `inbox_notify_test.py` |
 | **Acceptance** | Does public pitch (§10) match what a stranger gets from attach → skills → live card? Pack ≠ SoT clear? | the convoy plugin, `docs/e2e-dod.md`, `README.md`, Gate 0 |
-| **System** | Persistence topology: Worker `/mcp` vs Python origin vs WT/tmux; quit-conductor vs quit-mux behavior | `docs/deploy-convoy-bot-mcp.md`, `workers-site.mjs`, `bringup.py`, live convoy.bot probe |
+| **System** | Persistence topology: Worker `/mcp` vs Python origin vs WT/tmux; quit-conductor vs quit-mux behavior | `docs/deploy-convoy-bot-mcp.md` and `workers-site.mjs` (both removed in 1.3.2), `bringup.py`, live convoy.bot probe |
 
 Reviewers record findings under `docs/audits/` or as PR review comments on the landscape PR — cite file:line.
 
@@ -441,7 +443,7 @@ See `CANON.md` and the terminology lock in `SPEC.md`.
 - `SPEC.md` — product / feed / seat / MCP locks  
 - `CANON.md` — names  
 - the convoy plugin (Deploy-Forward/plugins) — marketplace pack (skills + MCP), not the SoT  
-- `docs/deploy-convoy-bot-mcp.md` — public MCP origin topology  
+- `docs/deploy-convoy-bot-mcp.md` (removed in 1.3.2) — public MCP origin topology  
 - `src/convoy/{convoy,layer,bringup,synapse,mcp_http,glance,usage,graph}.py` — implementation cited above  
 - `test/demo/` — falsifiable unit/integration evidence  
 

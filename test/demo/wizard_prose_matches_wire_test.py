@@ -112,7 +112,7 @@ class WizardProseMatchesWire(unittest.TestCase):
         gated = sorted(v for v in _registered_wizard_verbs() if v in _WRITE_TOOLS)
         self.assertEqual(gated, ["await_seated", "clone", "consent", "crew", "onboard", "repos", "send"])
         readme = DOCS["README.md"].read_text(encoding="utf-8-sig")
-        self.assertIn("CONVOY_MCP_WRITE_TOOLS", readme, "README must name the gate that hides seat/join/launch")
+        self.assertIn("convoy conductor mint", readme, "README must name the gate that hides seat/join/launch")
         for verb in gated:
             self.assertIn("`" + verb + "`", readme, "README must name " + verb + " among the write-gated verbs")
 

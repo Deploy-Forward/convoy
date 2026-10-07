@@ -82,7 +82,7 @@ class Server(unittest.TestCase):
 
     def test_page_assets_and_model(self):
         st, ct, body = self.get("/")
-        self.assertEqual(st, 200); self.assertIn("text/html", ct); self.assertIn(b'data-refresh="2500"', body); self.assertIn(b"convoy.bot", body)
+        self.assertEqual(st, 200); self.assertIn("text/html", ct); self.assertIn(b'data-refresh="2500"', body); self.assertIn(b'<span class="word">Convoy</span>', body)
         st, ct, _ = self.get("/widget.js"); self.assertEqual(st, 200); self.assertIn("javascript", ct)
         st, ct, svg = self.get("/assets/logo.svg"); self.assertEqual(st, 200); self.assertIn(b"<svg", svg)
         st, ct, _ = self.get("/assets/fonts/jetbrains-mono-latin.woff2"); self.assertEqual(st, 200); self.assertIn("woff2", ct)
@@ -308,6 +308,174 @@ class Server(unittest.TestCase):
         self.assertEqual(len(chairs), 2, m["threads"][0]["chairs"])
         for ch in chairs:
             self.assertEqual(ch["state"], "pending")   # launched is not connected
+
+
+class WidgetLoopbackOnly(unittest.TestCase):
+    """The widget's own server is loopback only, like the MCP: a text/plain POST
+    needs no preflight, so without these checks any web page could drive it."""
+
+    setUp = Server.setUp
+
+    def raw(self, method, path, host="127.0.0.1:{port}", headers=None, body=None, ctype="text/plain"):
+        import http.client
+        port = self.httpd.server_address[1]
+        conn = http.client.HTTPConnection("127.0.0.1", port, timeout=30)
+        try:
+            conn.putrequest(method, path, skip_host=True, skip_accept_encoding=True)
+            if host is not None:
+                conn.putheader("Host", host.format(port=port))
+            data = None
+            if body is not None:
+                data = json.dumps(body).encode("utf-8")
+                conn.putheader("Content-Type", ctype)
+                conn.putheader("Content-Length", str(len(data)))
+            for k, v in (headers or {}).items():
+                conn.putheader(k, v.format(port=port))
+            conn.endheaders(data)
+            r = conn.getresponse()
+            return r.status, r.read()
+        finally:
+            conn.close()
+
+    REFUSED = (
+        ("foreign host", "attacker.example:{port}", {}),
+        ("origin evil.com", "127.0.0.1:{port}", {"Origin": "http://evil.com"}),
+        ("origin null", "127.0.0.1:{port}", {"Origin": "null"}),
+        ("other port", "127.0.0.1:{port}", {"Origin": "http://127.0.0.1:1"}),
+        ("no host", None, {}),
+        ("two hosts", "127.0.0.1:{port}", {"Host": "127.0.0.1:{port}"}),
+    )
+
+    def test_get_api_model_is_refused_off_loopback(self):
+        for name, host, headers in self.REFUSED:
+            st, body = self.raw("GET", "/api/model", host=host, headers=headers)
+            self.assertEqual(st, 403, name)
+            self.assertNotIn(b"threads", body, name)
+
+    def test_post_api_start_is_refused_off_loopback_and_never_reaches_start(self):
+        with mock.patch.object(WidgetApi, "start", return_value={"ok": True}) as start:
+            for name, host, headers in self.REFUSED:
+                st, _ = self.raw("POST", "/api/start", host=host, headers=headers,
+                                 body={"repo": "https://example.invalid/x.git", "launch": True})
+                self.assertEqual(st, 403, name)
+            self.assertFalse(start.called)
+
+    def test_post_api_plus_is_refused_cross_site(self):
+        st, body = self.raw("POST", "/api/plus", host="attacker.example:{port}", headers={"Origin": "http://evil.com"}, body={})
+        self.assertEqual(st, 403)
+        self.assertNotIn(b"recent", body)
+
+    def test_a_non_loopback_peer_is_refused(self):
+        from convoy import widget_web
+        with mock.patch.object(widget_web, "_peer_of", return_value="192.0.2.10"):
+            st, _ = self.raw("GET", "/api/model")
+        self.assertEqual(st, 403)
+
+    def test_its_own_page_still_works(self):
+        st, _ = self.raw("GET", "/api/model", headers={"Origin": "http://127.0.0.1:{port}"})
+        self.assertEqual(st, 200)
+        with mock.patch.object(WidgetApi, "start", return_value={"ok": True}) as start:
+            st, body = self.raw("POST", "/api/start", headers={"Origin": "http://127.0.0.1:{port}"},
+                                body={"repo": None, "launch": False}, ctype="application/json")
+        self.assertEqual(st, 200)
+        self.assertTrue(start.called)
+        self.assertEqual(json.loads(body), {"ok": True})
+
+    def test_an_absolute_form_request_target_is_refused(self):
+        with mock.patch.object(WidgetApi, "plus", return_value={"ok": True}) as plus:
+            st, _ = self.raw("POST", "http://evil.example/api/plus", body={})
+            self.assertEqual(st, 403)
+            st, _ = self.raw("GET", "http://evil.example/api/model")
+            self.assertEqual(st, 403)
+            self.assertFalse(plus.called)
+
+    def test_options_and_head_are_refused_off_loopback_and_never_501(self):
+        for method in ("OPTIONS", "HEAD"):
+            st, _ = self.raw(method, "/api/model", host="attacker.example:{port}")
+            self.assertEqual(st, 403, method)
+            st, _ = self.raw(method, "/api/model")
+            self.assertNotEqual(st, 501, method)
+
+    def test_a_negative_content_length_does_not_hang_the_handler(self):
+        import socket
+        port = self.httpd.server_address[1]
+        s = socket.create_connection(("127.0.0.1", port), timeout=5)
+        try:
+            s.sendall(("POST /api/nope HTTP/1.1\r\nHost: 127.0.0.1:%d\r\nContent-Type: text/plain\r\n"
+                       "Content-Length: -1\r\n\r\n" % port).encode("ascii"))
+            got = s.recv(64)
+        finally:
+            s.close()
+        self.assertRegex(got, rb"^HTTP/1\.[01] 4\d\d")
+
+    def test_serve_binds_ipv6_loopback(self):
+        import socket
+        try:
+            t = socket.socket(socket.AF_INET6); t.bind(("::1", 0)); t.close()
+        except OSError:
+            self.skipTest("no IPv6 loopback on this machine")
+        httpd = serve(self.api, host="::1")
+        try:
+            self.assertEqual(httpd.address_family, socket.AF_INET6)
+        finally:
+            httpd.shutdown(); httpd.server_close()
+
+    def test_serve_refuses_a_non_loopback_bind(self):
+        for host in ("0.0.0.0", "::", "10.0.0.7", "127.0.0.2"):
+            with self.assertRaises(ValueError, msg=host):
+                serve(self.api, host=host).shutdown()
+
+    def test_every_response_says_nosniff(self):
+        import http.client
+        port = self.httpd.server_address[1]
+        for method, path, host in (("GET", "/api/model", "127.0.0.1:%d" % port), ("GET", "/nope", "127.0.0.1:%d" % port),
+                                   ("GET", "/api/model", "attacker.example:%d" % port), ("HEAD", "/", "127.0.0.1:%d" % port)):
+            conn = http.client.HTTPConnection("127.0.0.1", port, timeout=30)
+            try:
+                conn.putrequest(method, path, skip_host=True, skip_accept_encoding=True)
+                conn.putheader("Host", host)
+                conn.endheaders()
+                r = conn.getresponse(); r.read()
+                self.assertEqual(r.getheader("X-Content-Type-Options"), "nosniff", "%s %s %s" % (method, path, host))
+            finally:
+                conn.close()
+
+    def test_a_refused_head_carries_no_body(self):
+        import socket
+        port = self.httpd.server_address[1]
+        s = socket.create_connection(("127.0.0.1", port), timeout=5)
+        got = b""
+        try:
+            s.sendall(("HEAD /api/model HTTP/1.1\r\nHost: attacker.example:%d\r\n\r\n" % port).encode("ascii"))
+            while True:
+                chunk = s.recv(4096)
+                if not chunk:
+                    break
+                got += chunk
+        finally:
+            s.close()
+        head, _, rest = got.partition(b"\r\n\r\n")
+        self.assertRegex(head, rb"^HTTP/1\.[01] 403")
+        self.assertEqual(rest, b"")
+
+    def test_a_method_with_no_handler_is_403_off_loopback_and_405_on_it(self):
+        for method in ("PUT", "DELETE", "PATCH", "FOO"):
+            st, _ = self.raw(method, "/api/model", host="attacker.example:{port}")
+            self.assertEqual(st, 403, method)
+            st, _ = self.raw(method, "/api/model")
+            self.assertEqual(st, 405, method)
+
+    @unittest.skipUnless(os.name == "nt", "SO_EXCLUSIVEADDRUSE is Windows only")
+    def test_no_other_local_socket_can_bind_the_listening_port(self):
+        import socket
+        port = self.httpd.server_address[1]
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        try:
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            with self.assertRaises(OSError):
+                s.bind(("127.0.0.1", port))
+        finally:
+            s.close()
 
 
 if __name__ == "__main__":

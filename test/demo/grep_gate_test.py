@@ -24,6 +24,10 @@ from convoy.cmd import command_bakes_interpreter, inbox_hook_command
 from convoy.convoy import bind, ensure_id, seat
 from convoy.mcp_http import TOOLS, _WRITE_TOOLS, _listed_tools
 from convoy.synapse import native_runner, send_one
+try:
+    from test.demo.write_gate_fixture import open_write_gate, write_gate, write_gate_if  # noqa: F401
+except ModuleNotFoundError:  # discovered as a top-level module
+    from write_gate_fixture import open_write_gate, write_gate, write_gate_if  # noqa: F401
 
 ROOT = Path(__file__).resolve().parents[2]
 SRC = ROOT / "src" / "convoy"
@@ -129,8 +133,7 @@ class PublicCardGate(unittest.TestCase):
     def test_public_tools_list_is_derived_not_a_frozen_tuple(self):
         self.assertIsInstance(_WRITE_TOOLS, frozenset)
         self.assertGreater(len(_WRITE_TOOLS), 3)
-        with mock.patch.dict(os.environ, {"CONVOY_MCP_WRITE_TOOLS": ""}):
-            names = {t["name"] for t in _listed_tools()}
+        names = {t["name"] for t in _listed_tools()}
         expected = {t["name"] for t in TOOLS if t["name"] not in _WRITE_TOOLS}
         self.assertEqual(names, expected)
         # the old leak was a frozen ("seat","join","launch") menu

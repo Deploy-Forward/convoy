@@ -30,6 +30,10 @@ from convoy.activity import neuron_activity, neuron_id
 from convoy.convoy import bind, ensure_id, seat, set_lead
 from convoy.inbox import enqueue
 from convoy.start_card import LINE_BUDGET, build_start_card
+try:
+    from test.demo.write_gate_fixture import open_write_gate, write_gate, write_gate_if  # noqa: F401
+except ModuleNotFoundError:  # discovered as a top-level module
+    from write_gate_fixture import open_write_gate, write_gate, write_gate_if  # noqa: F401
 
 NOW = datetime.now(timezone.utc)
 CHAIR_A = "chair-a"
@@ -213,7 +217,7 @@ class TheSurfaces(Fixture):
         import os
         from unittest import mock
         from convoy.mcp_http import call_tool
-        with mock.patch.dict(os.environ, {"CONVOY_MCP_WRITE_TOOLS": "1"}):
+        with write_gate():
             card = call_tool(self.root, "start_card", {})
         self.assertEqual([s["token"] for s in card["commitments"]["open_sends"]], [OPEN])
 

@@ -14,6 +14,10 @@ from unittest import mock
 
 from convoy.convoy import bind, ensure_id, read_id, seat
 from convoy.index import record, set_hidden
+try:
+    from test.demo.write_gate_fixture import open_write_gate, write_gate, write_gate_if  # noqa: F401
+except ModuleNotFoundError:  # discovered as a top-level module
+    from write_gate_fixture import open_write_gate, write_gate, write_gate_if  # noqa: F401
 
 
 def _rpc(url, method, params=None, headers=None):
@@ -48,7 +52,8 @@ def _durable_test_root(test):
 class _Threads(unittest.TestCase):
     def setUp(self):
         self.home = Path(tempfile.mkdtemp())
-        p = mock.patch.dict(os.environ, {"CONVOY_HOME": str(self.home), "CONVOY_MCP_WRITE_TOOLS": "1"}); p.start(); self.addCleanup(p.stop)
+        p = mock.patch.dict(os.environ, {"CONVOY_HOME": str(self.home)}); p.start(); self.addCleanup(p.stop)
+        open_write_gate(self)
         self.alpha = _durable_test_root(self); ensure_id(self.alpha); bind(self.alpha, "alpha")
         seat(self.alpha, "claude", "c-alpha", worktree=str(self.alpha)); record(self.alpha, read_id(self.alpha), "alpha")
         self.beta = _durable_test_root(self); ensure_id(self.beta); bind(self.beta, "beta")

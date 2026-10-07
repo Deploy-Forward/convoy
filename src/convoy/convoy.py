@@ -100,8 +100,8 @@ def set_lead(root: Path, to: str) -> dict[str, Any]:
 
 
 def lead_conductor(root: Path) -> str | None:
-    """A card's `conductor`: the thread's lead chair, or null. The hosted conductor
-    (CONDUCTOR) is named only where that hosted identity is meant."""
+    """A card's `conductor`: the thread's lead chair, or null. The default
+    conductor name (CONDUCTOR) is used only where that identity is meant."""
     from .lifecycle import lead_state
     return lead_state(root)["chair"]
 

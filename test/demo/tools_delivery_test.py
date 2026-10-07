@@ -21,6 +21,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 from convoy.convoy import bind, ensure_id, seat
 from convoy.mcp_http import TOOLS, _WRITE_TOOLS, call_tool
 from convoy.synapse import fake_runner, send_one
+try:
+    from test.demo.write_gate_fixture import open_write_gate, write_gate, write_gate_if  # noqa: F401
+except ModuleNotFoundError:  # discovered as a top-level module
+    from write_gate_fixture import open_write_gate, write_gate, write_gate_if  # noqa: F401
 
 
 class DeliveryLabel(unittest.TestCase):
@@ -98,7 +102,6 @@ class ToolEligibility(unittest.TestCase):
         ensure_id(self.root)
         bind(self.root, "t1")
         seat(self.root, "codex", "c-t1", worktree=str(self.root), resume="codex-uuid")
-        os.environ.pop("CONVOY_MCP_WRITE_TOOLS", None)
 
     def test_graph_threads_resume_are_listed_tools(self):
         names = {t["name"] for t in TOOLS}
@@ -125,7 +128,7 @@ class ToolEligibility(unittest.TestCase):
         self.assertIn("gate", refused["error"])
         self.assertEqual(refused["dropped"], [])
         self.assertIsNone(refused["n_dropped"])
-        with mock.patch.dict(os.environ, {"CONVOY_MCP_WRITE_TOOLS": "1"}):
+        with write_gate():
             card = call_tool(self.root, "threads", {"prune": True})
         self.assertTrue(card["ok"])
         self.assertIn("dropped", card)
@@ -133,7 +136,7 @@ class ToolEligibility(unittest.TestCase):
     def test_resume_tool_is_dry_and_go_is_gated(self):
         # The vendor id in argv reads behind the gate (public_wire_redaction_test
         # owns the ungated shape); the go refusal below stays ungated.
-        with mock.patch.dict(os.environ, {"CONVOY_MCP_WRITE_TOOLS": "1"}):
+        with write_gate():
             dry = call_tool(self.root, "resume", {"neuron": "c-t1"})
         self.assertTrue(dry["ok"])
         self.assertFalse(dry["spawned"])

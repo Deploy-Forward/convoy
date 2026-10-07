@@ -21,7 +21,7 @@
 #   4. types ONE self-identifying prompt (whoami -> inbox --drain -> seated --token ->
 #      inbox --wait as a background command) and Enter. Same text for every pane, so the
 #      order cannot misfire. Never -p, never --resume, never a second session.
-# Only on the machine that owns the panes, only for panes Convoy launched. Not for public MCP.
+# Only on the machine that owns the panes, only for panes Convoy launched. Needs a consent card naming the pane and keys.
 param(
   [switch]$List,
   [switch]$DryRun,

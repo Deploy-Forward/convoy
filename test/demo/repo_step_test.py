@@ -40,6 +40,10 @@ from convoy.convoy import bind, read_github, read_id, read_thread
 from convoy.mcp_http import _WRITE_TOOLS, TOOLS, make_server
 from convoy.onboard import onboard
 from convoy.repo import checkout_path_for, clone, is_repo_url, list_repos, mint_worktrees
+try:
+    from test.demo.write_gate_fixture import open_write_gate, write_gate, write_gate_if  # noqa: F401
+except ModuleNotFoundError:  # discovered as a top-level module
+    from write_gate_fixture import open_write_gate, write_gate, write_gate_if  # noqa: F401
 
 ROOT = Path(__file__).resolve().parents[2]
 FAKES = (ROOT / "test" / "fakes").resolve()
@@ -412,7 +416,7 @@ class RepoWire(unittest.TestCase):
         self.mcp = "http://127.0.0.1:%s/mcp" % self.httpd.server_address[1]
         threading.Thread(target=self.httpd.serve_forever, daemon=True).start()
         self.addCleanup(self.httpd.shutdown)
-        self._env = mock.patch.dict(os.environ, {"CONVOY_MCP_WRITE_TOOLS": "", "CONVOY_HOME": str(self.home)})
+        self._env = mock.patch.dict(os.environ, {"CONVOY_HOME": str(self.home)})
         self._env.start()
         self.addCleanup(self._env.stop)
         # the wire has no runner argument; the module's real runner is the seam
@@ -432,14 +436,14 @@ class RepoWire(unittest.TestCase):
         for hidden in ("repos", "clone", "mint", "onboard"):
             self.assertNotIn(hidden, names, hidden + " runs gh/git as the host or binds the thread: hidden, not listed-and-refusing")
             self.assertIn(hidden, _WRITE_TOOLS)
-        os.environ["CONVOY_MCP_WRITE_TOOLS"] = "1"
+        open_write_gate(self)
         gated = self._names()
         for name in ("repos", "clone", "mint", "onboard"):
             self.assertIn(name, gated)
         self.assertEqual({t["name"] for t in TOOLS}, gated)
 
     def test_repos_answers_gated_with_names_and_no_token_and_says_whose_account(self):
-        os.environ["CONVOY_MCP_WRITE_TOOLS"] = "1"
+        open_write_gate(self)
         card = self._call("repos")
         self.assertTrue(card["ok"], card)
         self.assertEqual([r["name"] for r in card["repos"]], ["acme/api", "acme/site"])
@@ -456,7 +460,7 @@ class RepoWire(unittest.TestCase):
                                ("mint", {"checkout": str(self.root), "n": 2})):
                 card = self._call(name, **args)
                 self.assertFalse(card["ok"], (name, card))
-                self.assertIn("CONVOY_MCP_WRITE_TOOLS", card["error"], name)
+                self.assertIn("convoy conductor mint", card["error"], name)
                 self.assertNotIn("acme", json.dumps(card), name)
             refused = self._call("repos")
             self.assertIsNone(refused.get("repos"), "a refused repos never carries rows, not even []")
@@ -464,7 +468,7 @@ class RepoWire(unittest.TestCase):
         self.assertEqual(runner.calls, [], "a refusal never spawns")
 
     def test_gated_clone_refuses_an_option_shaped_url_without_spawning(self):
-        os.environ["CONVOY_MCP_WRITE_TOOLS"] = "1"
+        open_write_gate(self)
         runner = Recorder()
         with mock.patch("convoy.repo.run_argv", runner):
             card = self._call("clone", url="--upload-pack=calc x://h/o/r")
@@ -473,7 +477,7 @@ class RepoWire(unittest.TestCase):
         self.assertEqual(runner.calls, [])
 
     def test_gated_clone_lands_under_the_convoy_home_and_mint_derives_worktrees(self):
-        os.environ["CONVOY_MCP_WRITE_TOOLS"] = "1"
+        open_write_gate(self)
         expected = self.home / "checkouts" / "acme" / "api"
         runner = Recorder(side_effect=lambda argv: (Path(argv[-1]) / ".git" / "info").mkdir(parents=True))
         with mock.patch("convoy.repo.run_argv", runner):

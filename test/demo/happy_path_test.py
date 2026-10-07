@@ -41,6 +41,10 @@ from launcher_fixture import seated_launcher, widget_lead, with_seated_launcher 
 
 from convoy import cli
 from convoy.layer import parse_since
+try:
+    from test.demo.write_gate_fixture import open_write_gate, write_gate, write_gate_if  # noqa: F401
+except ModuleNotFoundError:  # discovered as a top-level module
+    from write_gate_fixture import open_write_gate, write_gate, write_gate_if  # noqa: F401
 
 NULL_PROBE = {"usage_remaining": None, "limited": False, "raw": None}
 FAKES = Path(__file__).resolve().parents[1] / "fakes"
@@ -375,8 +379,6 @@ class RailOnTheWire(unittest.TestCase):
         join(self.root, "codex", session_id="codex-1", title="builder")
         conductor_stamp(self.root, "tests drafted")
         self.token = joined["token"]
-        env = mock.patch.dict(os.environ, {"CONVOY_MCP_WRITE_TOOLS": ""})
-        env.start(); self.addCleanup(env.stop)
         p = mock.patch("convoy.mcp_http.probe", return_value=NULL_PROBE)
         p.start(); self.addCleanup(p.stop)
         httpd = make_server(self.root, "127.0.0.1", 0)

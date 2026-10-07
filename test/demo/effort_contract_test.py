@@ -35,6 +35,10 @@ from convoy.layer import feed_since
 from convoy.lifecycle import join, swap
 from convoy.mcp_http import make_server
 from convoy.targeted_launch import launch_choices
+try:
+    from test.demo.write_gate_fixture import open_write_gate, write_gate, write_gate_if  # noqa: F401
+except ModuleNotFoundError:  # discovered as a top-level module
+    from write_gate_fixture import open_write_gate, write_gate, write_gate_if  # noqa: F401
 
 
 def _contract(hid):
@@ -281,9 +285,7 @@ class EffortOverTheMcpWire(unittest.TestCase):
         self.mcp = "http://127.0.0.1:%s/mcp" % self.httpd.server_address[1]
         threading.Thread(target=self.httpd.serve_forever, daemon=True).start()
         self.addCleanup(self.httpd.shutdown)
-        self._env = mock.patch.dict(os.environ, {"CONVOY_MCP_WRITE_TOOLS": "1"})
-        self._env.start()
-        self.addCleanup(self._env.stop)
+        open_write_gate(self)
 
     def _call(self, name, **arguments):
         return _rpc(self.mcp, "tools/call", {"name": name, "arguments": arguments})["result"]["structuredContent"]

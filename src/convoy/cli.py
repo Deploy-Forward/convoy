@@ -516,13 +516,15 @@ def build_parser() -> argparse.ArgumentParser:
     ins.add_argument("--opt-in", action="store_true")
     ins.add_argument("--dry-run", action="store_true", default=True)
     ins.add_argument("--live", action="store_true", help="run installer; still requires --opt-in")
-    ins.add_argument("--local", action="store_true", help="this machine's Convoy supervisors: origin task, tunnel task, console script; dry by default, --live --opt-in registers, --verify reads back")
-    ins.add_argument("--verify", action="store_true", help="with --local: read back the supervisors and the console script, register nothing")
-    ins.add_argument("--token-file", default=None, help="with --local: the cloudflared tunnel token FILE the wrapper reads at run time (default CONVOY_HOME/tunnel/run.token)")
+    ins.add_argument("--local", action="store_true", help="this machine's Convoy supervisor: origin task and console script; dry by default, --live --opt-in registers, --verify reads back (and reports what an older install left behind)")
+    ins.add_argument("--verify", action="store_true", help="with --local: read back the supervisor and the console script, register nothing")
+    # Removed in 1.3.2 with the tunnel. Still parsed, so an old command line gets
+    # a refusal that names the replacement instead of a bare usage error.
+    ins.add_argument("--token-file", default=None, help=argparse.SUPPRESS)
     ins.add_argument("--port", type=int, default=8788, help="with --local: the origin's loopback port")
 
     ins.add_argument("--bound", action="store_true", help="with --local: pin the origin to --root (must be a bound thread); default serves every thread and each call names its thread")
-    ins.add_argument("--migrate-token", action="store_true", help="with --local: copy the token FILE named by --token-file into CONVOY_HOME/tunnel/run.token (bytes only, never printed) so the plan and the live task share one home")
+    ins.add_argument("--migrate-token", action="store_true", help=argparse.SUPPRESS)
     ins.add_argument("--pair", action="store_true", help="with --local: pair this machine to a Worklanes org; writes CONVOY_HOME/origin.json (a pointer to the credential FILE, never its bytes) and proves it with one beat")
     ins.add_argument("--unpair", action="store_true", help="with --local: delete CONVOY_HOME/origin.json; the credential file is left alone")
     ins.add_argument("--org", default=None, help="with --pair: the Worklanes org id")
@@ -580,7 +582,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     mcp = sub.add_parser("mcp")
     mcp.add_argument("--root", default=argparse.SUPPRESS, help="layer root (also accepted after subcommand)")
-    mcp.add_argument("--host", default="127.0.0.1")
+    mcp.add_argument("--host", default="127.0.0.1", help="loopback address to bind: 127.0.0.1 (default), localhost or ::1; anything else is refused")
     mcp.add_argument("--port", type=int, default=8788)
 
     return p
@@ -1213,6 +1215,14 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(card))
         return 0 if card.get("ok") else 1
     if args.cmd == "install":
+        removed = [flag for flag, used in (("--token-file", args.token_file is not None),
+                                           ("--migrate-token", bool(args.migrate_token))) if used]
+        if removed:
+            print(json.dumps({"ok": False, "error": " and ".join(removed) + (" were" if len(removed) > 1 else " was") + " removed in Convoy 1.3.2 with the "
+                              "tunnel: Convoy has no hosted endpoint. Run `convoy mcp` and attach "
+                              "http://127.0.0.1:8788/mcp; `convoy install --local --verify` reports any tunnel "
+                              "task or token file an older install left behind, with the command that removes it"}))
+            return 2
         if getattr(args, "local", False) and getattr(args, "unpair", False):
             from .local_install import unpair
             card = unpair()
@@ -1233,9 +1243,9 @@ def main(argv: list[str] | None = None) -> int:
             return 0 if card.get("ok") else 1
         if getattr(args, "local", False):
             from .local_install import install_local
-            card = install_local(root, token_file=args.token_file, port=int(args.port), live=bool(args.live),
+            card = install_local(root, port=int(args.port), live=bool(args.live),
                                  opt_in=bool(args.opt_in), verify_only=bool(args.verify),
-                                 migrate_token=bool(getattr(args, "migrate_token", False)), bound=bool(getattr(args, "bound", False)))
+                                 bound=bool(getattr(args, "bound", False)))
             print(json.dumps(card))
             return 0 if card.get("ok") else 1
         if not args.to:
@@ -1293,7 +1303,13 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(card))
         return 0 if card.get("ok") else 1
     if args.cmd == "mcp":
+        from .loopback import require_loopback_bind
         from .mcp_http import serve
+        try:
+            require_loopback_bind(args.host)
+        except ValueError as exc:
+            print("convoy mcp: " + str(exc), file=sys.stderr)
+            return 2
         # No explicit --root: the origin serves every thread the machine index
         # knows and each call names its thread. --root pins it.
         return serve(root if root_explicit else None, host=args.host, port=args.port)

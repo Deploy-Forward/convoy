@@ -1,7 +1,16 @@
-"""Streamable-style JSON-RPC HTTP MCP for convoy. Attach from Grok Bot is still RED.
+"""Streamable-style JSON-RPC HTTP MCP for Convoy, on this machine's loopback.
 
-Default address: http://127.0.0.1:8788/mcp (`convoy mcp`)
-One MCP process is bound to one convoy root (and its bound thread).
+Default address: http://127.0.0.1:8788/mcp (`convoy mcp`). There is no hosted
+Convoy endpoint. One local server serves every thread in the machine index and
+each call names its thread; `--root` pins one.
+
+The server binds only a loopback address (127.0.0.1, localhost or ::1; any
+other --host is refused) and answers only loopback requests: the peer must be
+this machine's loopback, the Host must be 127.0.0.1, localhost or [::1] on the
+port it listens on, and an Origin, when present, must be an http:// loopback
+origin on that same port. Anything else is a 403 (DNS rebinding defense, as the
+MCP Streamable HTTP transport requires). Writes need a conductor bearer from
+`convoy conductor mint`.
 """
 from __future__ import annotations
 
@@ -12,17 +21,18 @@ import json
 import re
 import os
 import shutil
+import socket
 import subprocess
 import sys
 from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from importlib.resources import files as resource_files
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
 from .bringup import bring_up, dry_opt_in_refusal, ensure_interactive_path, hide_windows, live_applier, live_runner, terminals
 from .rail import build_rail
+from .loopback import ExclusiveBind, drain_refused, loopback_request_ok, request_ok, require_loopback_bind  # noqa: F401 - loopback_request_ok is re-exported
 from .provenance import build_provenance
 from .card import CARD_OUTPUT_SCHEMA, build_card
 from .harness_contract import (
@@ -104,31 +114,31 @@ def _server_version(repo_dir: Path | None = None) -> str:
 
 
 SERVER_VERSION = _server_version()
-HOME_LINE = "convoy.bot · a grok-bot native mcp · one process ↔ one bound thread"
+HOME_LINE = "Convoy MCP v{version} on this machine. POST JSON-RPC to /mcp. Threads: {threads}."
 
 HARNESSES = tuple((row["id"], str(row.get("name") or row["id"])) for row in harness_entries(mcp_supported_only=True))
 
-# N-5 gate: SoT write tools are never exposed on an ungated public process.
-# RPC-layer only — CLI and in-process call_tool stay usable; a gated/loopback
-# deploy opts in via CONVOY_MCP_WRITE_TOOLS=1.
+# N-5 gate: SoT write tools are never exposed to a caller without identity.
+# RPC-layer only: the CLI stays usable. Over the wire a write needs a checked
+# conductor bearer (`convoy conductor mint`); there is no process-wide switch.
 # send is also hidden: even its non-live form appends a synapse/feed row, so it
 # is not read-only. seat/join/launch are in this set with the wizard verbs.
-# They are HIDDEN from a public tools/list, not listed-and-refusing, on purpose:
+# They are HIDDEN from tools/list while no bearer is minted, not listed-and-refusing, on purpose:
 # the @convoy wizard's Gate 0 reads tools/list to decide whether it can seat
-# and launch, and a public endpoint that cannot do those must not say it can.
+# and launch, and a server that will not do those for this caller must not say it can.
 # Gate 0 goes RED there and stops with an install card - fail-closed, which is
 # the behaviour the wizard promises. inbox stays listed: its read is public;
 # only drain is gated, inside the handler, like resume go=true.
 # onboard joined the gate: it binds the thread (writes .convoy/)
 # and, given a URL, SPAWNS git clone. clone and mint spawn git outright.
 # repos joined after review the same day: `gh repo list` runs as whoever is
-# logged in on the MCP HOST, so on a public deploy it could only hand the
-# operator's inventory (private names included) to strangers and spend
-# their API quota. It is the conductor's account; the gate says so.
+# logged in on the MCP HOST, so for a caller without a bearer it could only
+# hand the operator's inventory (private names included) to that caller and
+# spend the operator's API quota. It is the conductor's account; the gate says so.
 # crew / seated / consent joined too: crew mints worktrees,
 # joins N chairs and may spawn the window; seated stamps a chair's proof of
 # life; consent mints a one-time grant. await_seated only reads, but it holds
-# the request thread up to its timeout, which a public endpoint must not offer.
+# the request thread up to its timeout, which a caller without a bearer must not get.
 _THREAD_PROPS = {
     "thread": {"type": "string", "description": "which thread this call touches: the thread key from the `threads` tool. Required when the origin is not pinned to one root; overrides the pin when it is."},
     "convoy_id": {"type": "string", "description": "which thread this call touches, by cvy_ id (alternative to `thread`)"},
@@ -138,8 +148,8 @@ _THREAD_IS_A_NAME_NOT_A_ROUTE = frozenset({"onboard"})
 _WRITE_TOOLS = frozenset({"send", "stamp", "note", "seat", "join", "launch", "onboard", "clone", "mint", "repos",
                           "crew", "seated", "consent", "await_seated", "focus", "nudge"})
 # MCP safety annotations describe what a tool can do on THIS process. Some
-# tools have a read-only form on the public process and a state-changing form
-# only after the operator enables the write gate. Keep this vocabulary
+# tools have a read-only form for a caller without a bearer and a state-changing
+# form only behind the write gate. Keep this vocabulary
 # separate from _WRITE_TOOLS: repos and await_seated are gated for privacy and
 # resource control, but they do not mutate state.
 _STATE_CHANGING_TOOLS = frozenset({
@@ -164,7 +174,7 @@ _PRINCIPAL: contextvars.ContextVar[dict[str, Any] | None] = contextvars.ContextV
 
 def _launch_launcher() -> dict[str, Any] | None:
     """The launcher an MCP launch records: the conductor this request's bearer proves.
-    None without one (a legacy-flag call): the launch then refuses."""
+    None without one: the launch then refuses."""
     from .launcher import conductor_launcher
     sender = _conductor_sender()
     return conductor_launcher(sender["chair"]) if sender else None
@@ -224,12 +234,13 @@ def _conductor_sender() -> dict[str, Any] | None:
 # Did this request arrive from outside the machine? Set per request by handle_rpc.
 _PUBLIC: contextvars.ContextVar[bool] = contextvars.ContextVar("convoy_public", default=False)
 
-# Every edge adds one of these (cloudflared: Cf-Connecting-Ip; any reverse
-# proxy: X-Forwarded-For). A local client sends none and speaks from loopback.
+# Every edge adds one of these (a CDN: Cf-Connecting-Ip; any reverse proxy:
+# X-Forwarded-For). A local client sends none and speaks from loopback.
 _PROXY_HEADERS = ("Cf-Connecting-Ip", "X-Forwarded-For", "Forwarded", "X-Real-Ip")
 
-# What an anonymous caller on the public edge may touch: the product, never a
-# record. `install` is forced dry; `threads` answers a count.
+# What an anonymous caller through a proxy may touch: the product, never a
+# record. `install` is forced dry; `threads` answers a count. Convoy ships no
+# proxy and no tunnel; this stays as defense in depth for anyone who builds one.
 _PRODUCT_SURFACE = frozenset({"card", "choices", "install", "threads"})
 
 # A filesystem path anywhere in a card, whole or embedded in prose (a boot
@@ -243,7 +254,7 @@ _PATH_RX = re.compile(
 def _is_public_request(peer: str, headers: Any) -> bool:
     """True when the request came through an edge or from a non-loopback peer.
 
-    Without it, an anonymous POST to a public URL returns every thread's root
+    Without it, an anonymous POST that reached the server from off the machine would return every thread's root
     under the operator's home and the names those roots carry. Nothing a local client sends can be told from a remote one
     except these two facts, and a local client already owns the disk."""
     for name in _PROXY_HEADERS:
@@ -262,23 +273,13 @@ def _anonymous_public() -> bool:
     return bool(_PUBLIC.get()) and _PRINCIPAL.get() is None
 
 
-def _legacy_flag() -> bool:
-    """The pre-bearer gate: one process-wide flag. Still honored for loopback
-    deploys and tests; roster names it `legacy-flag` so nobody mistakes it for
-    identity. Retired on the public origin by unsetting it."""
-    return os.environ.get("CONVOY_MCP_WRITE_TOOLS", "").strip() == "1"
-
-
 def _write_tools_enabled() -> bool:
-    if _anonymous_public():
-        return False          # the legacy flag is a loopback switch, never an edge one
-    return _PRINCIPAL.get() is not None or _legacy_flag()
+    """A write needs a checked bearer on this request, full stop."""
+    return _PRINCIPAL.get() is not None
 
 
 def _write_gate() -> str:
-    """How this process admits writes: legacy-flag | bearer | closed."""
-    if _legacy_flag():
-        return "legacy-flag"
+    """How this process admits writes: bearer | closed."""
     if _bearer.live_count() > 0:
         return "bearer"
     return "closed"
@@ -334,21 +335,6 @@ _WHERE_ARG = {
     "type": "string",
     "enum": ["local", "cloud"],
     "description": "local (default) or cloud. cloud is accepted only where choices.harnesses[].where.cloud.offered is true, refused otherwise naming that harness's cloud mode and evidence. A cloud chair has no worktree, and no launcher exists for it yet.",
-}
-
-_SITE_ASSETS: dict[str, tuple[str, str]] = {
-    "/": ("index.html", "text/html; charset=utf-8"),
-    "/styles.css": ("styles.css", "text/css; charset=utf-8"),
-    "/app.js": ("app.js", "text/javascript; charset=utf-8"),
-    "/favicon.svg": ("favicon.svg", "image/svg+xml; charset=utf-8"),
-    "/favicon.ico": ("favicon.ico", "image/x-icon"),
-    "/favicon-96.png": ("favicon-96.png", "image/png"),
-    "/apple-touch-icon.png": ("apple-touch-icon.png", "image/png"),
-    "/og.png": ("og.png", "image/png"),
-    "/fonts/work-sans-latin.woff2": ("fonts/work-sans-latin.woff2", "font/woff2"),
-    "/fonts/jetbrains-mono-latin.woff2": ("fonts/jetbrains-mono-latin.woff2", "font/woff2"),
-    "/fonts/OFL-work-sans.txt": ("fonts/OFL-work-sans.txt", "text/plain; charset=utf-8"),
-    "/fonts/OFL-jetbrains-mono.txt": ("fonts/OFL-jetbrains-mono.txt", "text/plain; charset=utf-8"),
 }
 
 
@@ -501,7 +487,7 @@ TOOLS: list[dict[str, Any]] = [
     },
     {
         "name": "note",
-        "description": "Neuron note: ONE compact line into the thread feed (kind=note) with a claimed from — the writing seat's instance_id (the bus does not authenticate authorship), never grok-bot or an alias of it (conductor lines are stamp). The row says author_claimed=true and leaves device and verified_by null. Optional to addresses one seat or grok-bot. Same one-line clamp as stamp; this is the hosted-neuron write path. A claimed note is never a delivery receipt; the chair's own CLI reply (convoy reply TOKEN) is.",
+        "description": "Neuron note: ONE compact line into the thread feed (kind=note) with a claimed from — the writing seat's instance_id (the bus does not authenticate authorship), never grok-bot or an alias of it (conductor lines are stamp). The row says author_claimed=true and leaves device and verified_by null. Optional to addresses one seat or grok-bot. Same one-line clamp as stamp; this is the neuron-side write path. A claimed note is never a delivery receipt; the chair's own CLI reply (convoy reply TOKEN) is.",
         "inputSchema": _schema(
             {
                 "summary": {"type": "string", "description": "Compact one-line note"},
@@ -513,7 +499,7 @@ TOOLS: list[dict[str, Any]] = [
     },
     {
         "name": "bring_up",
-        "description": "Resume seated neurons visibly. dry_run defaults true so a public URL cannot pop windows. Pass dry_run false to spawn.",
+        "description": "Resume seated neurons visibly. dry_run defaults true. Pass dry_run false to spawn; that needs a conductor bearer.",
         "inputSchema": _schema({
             "convoy_id": {"type": "string"},
             "thread": {"type": "string"},
@@ -531,7 +517,7 @@ TOOLS: list[dict[str, Any]] = [
     },
     {
         "name": "hide",
-        "description": "Minimize or hide neuron TUI windows. Sessions keep running. Does not kill grok.exe/claude.exe/Grok Bot.exe. dry_run defaults true so a public URL cannot change windows. Pass dry_run false to apply. mode=minimize (default, SW_MINIMIZE) or hide (SW_HIDE). restore is bring_up.",
+        "description": "Minimize or hide neuron TUI windows. Sessions keep running. Does not kill grok.exe/claude.exe/Grok Bot.exe. dry_run defaults true. Pass dry_run false to apply; that needs a conductor bearer. mode=minimize (default, SW_MINIMIZE) or hide (SW_HIDE). restore is bring_up.",
         "inputSchema": _schema({
             "convoy_id": {"type": "string"},
             "thread": {"type": "string"},
@@ -576,7 +562,7 @@ TOOLS: list[dict[str, Any]] = [
     },
     {
         "name": "resume",
-        "description": "Resume one neuron at its most recent place: native argv + cwd + place card. Dry by default (no spawn). go=true spawns once and is refused on an ungated public process; it also refuses when a live body holds the chair or the chair has no token for its current harness (then launch --seat).",
+        "description": "Resume one neuron at its most recent place: native argv + cwd + place card. Dry by default (no spawn). go=true spawns once and is refused for a caller without a conductor bearer; it also refuses when a live body holds the chair or the chair has no token for its current harness (then launch --seat).",
         "inputSchema": _schema({"neuron": {"type": "string"}, "go": {"type": "boolean", "default": False}}, required=["neuron"]),
     },
     {
@@ -596,8 +582,8 @@ TOOLS: list[dict[str, Any]] = [
     # LIVE tools/list and goes RED otherwise, so redeploying the old server
     # could never make the wizard green. Read-only verbs answer anywhere.
     # Anything that mutates the thread or SPAWNS sits behind the same write
-    # gate as `resume go=true`: a public endpoint never mints a chair or starts
-    # a process on a stranger's behalf.
+    # gate as `resume go=true`: a caller without a bearer never mints a chair or
+    # starts a process.
     {
         "name": "choices",
         "description": "Read-only: installed harnesses, known git worktrees, current seats, and whether this host can split an active pane. The wizard renders ONLY what this returns; never a remembered menu. Never a token.",
@@ -661,7 +647,7 @@ TOOLS: list[dict[str, Any]] = [
     },
     {
         "name": "launch",
-        "description": "Launch one already-joined fresh chair: inside tmux a split of the caller's pane; on Windows the thread's own Windows Terminal window (wt -w convoy-<8 hex>; never window 0); on POSIX outside tmux with tmux installed, the thread's detached tmux session the person opens with the card's attach command; the card's placement says which. This SPAWNS a process, so it is behind the write gate and refused on a public deploy without spawning anything. consent carries the user's explicit yes when the host asks for it. Never a token.",
+        "description": "Launch one already-joined fresh chair: inside tmux a split of the caller's pane; on Windows the thread's own Windows Terminal window (wt -w convoy-<8 hex>; never window 0); on POSIX outside tmux with tmux installed, the thread's detached tmux session the person opens with the card's attach command; the card's placement says which. This SPAWNS a process, so it is behind the write gate and refused for a caller without a conductor bearer, without spawning anything. consent carries the user's explicit yes when the host asks for it. Never a token.",
         "inputSchema": _schema(
             {"seat": {"type": "string", "description": "chair session_id from join"},
              "consent": {"type": "string"}},
@@ -708,7 +694,7 @@ TOOLS: list[dict[str, Any]] = [
     },
     {
         "name": "nudge",
-        "description": "Wake one idle chair on the user's own machine (write gate: host SendInput/send-keys/queue). Requires a proven pane (panes body + unique WT title or tmux target) and a consent card that names that pane and the exact keys. delivery=nudged, never delivered. Refuses when the pane cannot be identified. Never on a public MCP.",
+        "description": "Wake one idle chair on the user's own machine (write gate: host SendInput/send-keys/queue). Requires a proven pane (panes body + unique WT title or tmux target) and a consent card that names that pane and the exact keys. delivery=nudged, never delivered. Refuses when the pane cannot be identified. Needs a conductor bearer.",
         "inputSchema": _schema(
             {"seat": {"type": "string"}, "keys": {"type": "string", "description": "exact keystroke the consent card names"},
              "target": {"type": "string", "description": "tmux pane id"},
@@ -1473,9 +1459,9 @@ def _redact_public(name: str, card: Any) -> None:
     makes seat.resume (the vendor session id) chip front matter for the
     conductor; graph.py:16 says tokens never leave seats.jsonl. The write gate
     is the arbiter: behind it (conductor-local loopback) the cards are whole;
-    on the ungated public wire a row carries only the shape graph already
+    for a caller without a bearer a row carries only the shape graph already
     uses, {available, for}, so a chip can still say "resumable" and nobody
-    can lift a session id off a public endpoint. The same leak applies to
+    without the bearer can lift a session id off it. The same leak applies to
     glance, terminals / bring_up / open / hide windows and the resume dry
     read, and a second one: the inbox token join/swap mint (the receiver's proof of
     receipt) rides the kind=join feed row and the boot prompt, which is the
@@ -1517,8 +1503,7 @@ def _shape(raw: Any, harness: Any) -> dict[str, Any]:
 
 def _gate_text(verb: str) -> str:
     return (verb + " is behind the write gate: send `Authorization: Bearer <bearer>` from "
-            "`convoy conductor mint` on the origin's machine (or CONVOY_MCP_WRITE_TOOLS=1 on a "
-            "loopback-only deploy); nothing was written or spawned")
+            "`convoy conductor mint` on this machine; nothing was written or spawned")
 
 
 def _dumps(obj: Any) -> str:
@@ -1534,11 +1519,10 @@ def handle_rpc(root: Path | None, msg: dict[str, Any], principal: dict[str, Any]
 
     principal: the checked bearer record for this request ({id, conductor, label})
     or None for an anonymous caller. It is the only thing that opens the write
-    tools besides the legacy loopback flag, and `from` on conductor rows is read
-    from it, never from an argument.
-    public: the request came through an edge or from a non-loopback peer
+    tools, and `from` on conductor rows is read from it, never from an argument.
+    public: the request came through a proxy or from a non-loopback peer
     (_is_public_request). Anonymous and public together means the product
-    surface only; the legacy flag does not apply."""
+    surface only."""
     token = _PRINCIPAL.set(principal)
     pub = _PUBLIC.set(bool(public))
     try:
@@ -1651,28 +1635,13 @@ def _log_line(text: str) -> None:
         pass
 
 
-def _cors(handler: BaseHTTPRequestHandler) -> None:
-    handler.send_header("Access-Control-Allow-Origin", "*")
-    handler.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-    handler.send_header(
-        "Access-Control-Allow-Headers",
-        "Content-Type, Accept, Authorization, MCP-Protocol-Version, Mcp-Session-Id",
-    )
-    handler.send_header("Access-Control-Max-Age", "86400")
-
-
-def _site_asset_response(path: str) -> tuple[int, bytes, str] | None:
-    spec = _SITE_ASSETS.get(path)
-    if spec is None:
-        return None
-    asset_path, content_type = spec
-    try:
-        body = resource_files("convoy.site").joinpath(asset_path).read_bytes()
-    except (FileNotFoundError, ModuleNotFoundError, OSError):
-        if path == "/":
-            return (200, HOME_LINE.encode("utf-8"), "text/html; charset=utf-8")
-        return (404, b"not found", "text/plain; charset=utf-8")
-    return (200, body, content_type)
+# Loopback only. A page on any site can make a browser POST to this port, and
+# a DNS name that resolves to 127.0.0.1 (DNS rebinding) makes that page
+# same-origin with it, so Host and Origin must name this machine's loopback on
+# the listening port. A non-browser client can forge Host, so the peer must be
+# loopback too, and make_server refuses to bind anything else. The checks live
+# in convoy.loopback, shared with the widget's server. No response carries CORS
+# headers.
 
 
 class McpHandler(BaseHTTPRequestHandler):
@@ -1690,7 +1659,7 @@ class McpHandler(BaseHTTPRequestHandler):
         self.send_response(code)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(body)))
-        _cors(self)
+        self.send_header("X-Content-Type-Options", "nosniff")
         if extra:
             for k, v in extra:
                 self.send_header(k, v)
@@ -1698,22 +1667,68 @@ class McpHandler(BaseHTTPRequestHandler):
         if self.command != "HEAD":
             self.wfile.write(body)
 
+    def __getattr__(self, name: str) -> Any:
+        # BaseHTTPRequestHandler answers 501 for a method with no do_<METHOD>,
+        # before any gate runs. Route every such method through the gate: 403
+        # off loopback, 405 on it.
+        if name.startswith("do_"):
+            return self._unsupported_method
+        raise AttributeError(name)
+
+    def _unsupported_method(self) -> None:
+        if self._refused():
+            return
+        self._send(405, b"", "text/plain; charset=utf-8", extra=[("Allow", "POST, OPTIONS")])
+
+    def _body_length(self) -> int:
+        try:
+            length = int(self.headers.get("Content-Length") or "0")
+        except ValueError:
+            length = 0
+        return max(length, 0)
+
+    def _refused(self) -> bool:
+        """Send 403 and return True unless the peer, Host and Origin are all this
+        machine's loopback. Checked before identity and before the body is parsed."""
+        port = int(self.server.server_address[1])
+        if request_ok(self._peer(), self.headers, port, self.path):
+            return False
+        self._send(403, ("forbidden: this Convoy MCP answers loopback requests only (a loopback peer, "
+                         "Host 127.0.0.1, localhost or [::1] on port %d, and no foreign Origin)" % port).encode("utf-8"),
+                   "text/plain; charset=utf-8")
+        drain_refused(self)
+        return True
+
+    def _peer(self) -> str:
+        return self.client_address[0] if self.client_address else ""
+
     def do_OPTIONS(self) -> None:  # noqa: N802
+        if self._refused():
+            return
         self.send_response(204)
-        _cors(self)
+        self.send_header("Allow", "POST, OPTIONS")
+        self.send_header("Content-Length", "0")
+        self.send_header("X-Content-Type-Options", "nosniff")
         self.end_headers()
 
     def do_GET(self) -> None:  # noqa: N802
+        if self._refused():
+            return
+        if _is_public_request(self._peer(), self.headers):
+            # Through a proxy or from another machine: nothing to read here.
+            self._send(404, b"not found", "text/plain; charset=utf-8")
+            return
         path = urlparse(self.path).path
         if path == "/mcp":
             self._send(405, b"POST JSON-RPC to /mcp", "text/plain; charset=utf-8", extra=[("Allow", "POST, OPTIONS")])
             return
-        if path == "":
-            path = "/"
-        site = _site_asset_response(path)
-        if site is not None:
-            code, body, ctype = site
-            self._send(code, body, ctype)
+        if path in ("", "/"):
+            try:
+                count: Any = len(list_threads())
+            except (OSError, ValueError):
+                count = "unknown"
+            line = HOME_LINE.format(version=_BASE_VERSION, threads=count)
+            self._send(200, (line + "\n").encode("utf-8"), "text/plain; charset=utf-8")
             return
         self._send(404, b"not found", "text/plain; charset=utf-8")
 
@@ -1721,17 +1736,13 @@ class McpHandler(BaseHTTPRequestHandler):
         self.do_GET()
 
     def do_POST(self) -> None:  # noqa: N802
+        if self._refused():
+            return
         path = urlparse(self.path).path
         if path != "/mcp":
             self._send(404, b"not found", "text/plain; charset=utf-8")
             return
-        length = 0
-        try:
-            length = int(self.headers.get("Content-Length") or "0")
-        except ValueError:
-            length = 0
-        if length < 0:
-            length = 0
+        length = self._body_length()
         raw = self.rfile.read(length) if length else b""
         # Identity first: a presented bearer that does not check is a 401 before
         # any body is parsed. No header is an anonymous read-only caller. The
@@ -1741,7 +1752,7 @@ class McpHandler(BaseHTTPRequestHandler):
         if presented is not None:
             principal = _bearer.check(presented)
             if principal is None:
-                body = _dumps({"ok": False, "error": "bearer not recognized or revoked; mint one with `convoy conductor mint` on the origin's machine"}).encode("utf-8")
+                body = _dumps({"ok": False, "error": "bearer not recognized or revoked; mint one with `convoy conductor mint` on this machine"}).encode("utf-8")
                 self._send(401, body, "application/json; charset=utf-8", extra=[("WWW-Authenticate", "Bearer realm=\"convoy\"")])
                 return
         try:
@@ -1750,7 +1761,7 @@ class McpHandler(BaseHTTPRequestHandler):
             body = _dumps({"jsonrpc": "2.0", "id": None, "error": {"code": -32700, "message": "Parse error"}}).encode("utf-8")
             self._send(400, body, "application/json; charset=utf-8")
             return
-        public = _is_public_request(self.client_address[0] if self.client_address else "", self.headers)
+        public = _is_public_request(self._peer(), self.headers)
         if isinstance(msg, list):
             replies = []
             for item in msg:
@@ -1759,17 +1770,13 @@ class McpHandler(BaseHTTPRequestHandler):
                     if r is not None:
                         replies.append(r)
             if not replies:
-                self.send_response(202)
-                _cors(self)
-                self.end_headers()
+                self._send(202, b"", "text/plain; charset=utf-8")
                 return
-            payload = replies
+            payload: Any = replies
         elif isinstance(msg, dict):
             reply = handle_rpc(self._root(), msg, principal=principal, public=public)
             if reply is None:
-                self.send_response(202)
-                _cors(self)
-                self.end_headers()
+                self._send(202, b"", "text/plain; charset=utf-8")
                 return
             payload = reply
         else:
@@ -1779,19 +1786,22 @@ class McpHandler(BaseHTTPRequestHandler):
         self._send(200, body, "application/json; charset=utf-8", extra=extra)
 
 
-class McpHTTPServer(ThreadingHTTPServer):
+class McpHTTPServer(ExclusiveBind, ThreadingHTTPServer):
     daemon_threads = True
-    allow_reuse_address = True
 
     def __init__(self, addr: tuple[str, int], root: Path | None):
         # None: this origin serves every thread the machine index knows and each
         # call names its thread. A path: pinned to that root
         # by default, a named thread still wins.
         self.convoy_root = Path(root).resolve() if root is not None else None
+        if ":" in str(addr[0]):
+            self.address_family = socket.AF_INET6
         super().__init__(addr, McpHandler)
 
 
 def make_server(root: Path | str | None, host: str = "127.0.0.1", port: int = 8788) -> McpHTTPServer:
+    """Bind the MCP on a loopback address; any other host raises ValueError."""
+    host = require_loopback_bind(host)
     return McpHTTPServer((host, port), Path(root) if root is not None else None)
 
 
@@ -1834,9 +1844,14 @@ def serve(root: Path | str | None, host: str = "127.0.0.1", port: int = 8788) ->
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="python -m convoy.mcp_http")
     p.add_argument("--root", default=None, help="pin the origin to one thread root (default: serve every thread in the machine index; each call names its thread)")
-    p.add_argument("--host", default="127.0.0.1")
+    p.add_argument("--host", default="127.0.0.1", help="loopback address to bind: 127.0.0.1 (default), localhost or ::1; anything else is refused")
     p.add_argument("--port", type=int, default=8788)
     args = p.parse_args(argv)
+    try:
+        require_loopback_bind(args.host)
+    except ValueError as exc:
+        print("convoy mcp: " + str(exc), file=sys.stderr)
+        return 2
     # No --root serves every thread in the machine index; each call names its thread.
     return serve(Path(args.root).resolve() if args.root else None, host=args.host, port=args.port)
 

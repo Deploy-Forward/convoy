@@ -25,6 +25,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 
 from convoy.convoy import bind, ensure_id, seat
 from convoy.mcp_http import make_server
+try:
+    from test.demo.write_gate_fixture import open_write_gate, write_gate, write_gate_if  # noqa: F401
+except ModuleNotFoundError:  # discovered as a top-level module
+    from write_gate_fixture import open_write_gate, write_gate, write_gate_if  # noqa: F401
 
 
 def _rpc(url, method, params=None):
@@ -62,9 +66,6 @@ class PublicSpawnGate(unittest.TestCase):
         self.mcp = "http://127.0.0.1:%s/mcp" % self.httpd.server_address[1]
         threading.Thread(target=self.httpd.serve_forever, daemon=True).start()
         self.addCleanup(self.httpd.shutdown)
-        self._env = mock.patch.dict(os.environ, {"CONVOY_MCP_WRITE_TOOLS": ""})
-        self._env.start()
-        self.addCleanup(self._env.stop)
         # First-run home writes are not what is measured here. bring_up reads
         # the returned card, so the stand-in must be a dict, not None.
         p = mock.patch("convoy.bringup.ensure_first_run",
@@ -81,7 +82,7 @@ class PublicSpawnGate(unittest.TestCase):
                 card = self._call(name, thread="gate", dry_run=False)
                 self.assertFalse(card.get("ok"), (name, card))
                 self.assertFalse(card.get("spawned"), (name, card))
-                self.assertIn("CONVOY_MCP_WRITE_TOOLS", card.get("error", ""), name)
+                self.assertIn("convoy conductor mint", card.get("error", ""), name)
             live.assert_not_called()
             # The dry read is the card's data and stays public.
             dry = self._call("bring_up", thread="gate")
@@ -94,7 +95,7 @@ class PublicSpawnGate(unittest.TestCase):
                 card = self._call(name, thread="gate", dry_run=False)
                 self.assertFalse(card.get("ok"), (name, card))
                 self.assertFalse(card.get("applied"), (name, card))
-                self.assertIn("CONVOY_MCP_WRITE_TOOLS", card.get("error", ""), name)
+                self.assertIn("convoy conductor mint", card.get("error", ""), name)
             applier.assert_not_called()
 
     def test_public_install_never_runs_an_installer(self):
@@ -102,7 +103,7 @@ class PublicSpawnGate(unittest.TestCase):
             card = self._call("install", to="grok", dry_run=False, opt_in=True)
             self.assertFalse(card.get("ok"))
             self.assertFalse(card.get("ran"))
-            self.assertIn("CONVOY_MCP_WRITE_TOOLS", card.get("error", ""))
+            self.assertIn("convoy conductor mint", card.get("error", ""))
             run.assert_not_called()
             # The catalog read stays public.
             self._call("install", to="grok")
@@ -118,7 +119,7 @@ class PublicSpawnGate(unittest.TestCase):
         self.assertTrue(card.get("error", "").startswith("opt_in required: pass --opt-in"), card)
 
     def test_behind_the_gate_the_live_modes_run(self):
-        os.environ["CONVOY_MCP_WRITE_TOOLS"] = "1"
+        open_write_gate(self)
         with mock.patch("convoy.mcp_http.live_runner") as live, \
              mock.patch("convoy.mcp_http.bring_up", return_value={"ok": True, "windows": []}) as bu:
             self._call("bring_up", thread="gate", dry_run=False)

@@ -1,18 +1,22 @@
 """`convoy install --local`: this machine's Convoy supervisors as one verb with a
 verify card.
 
-An origin and a tunnel connector started by hand are processes owned by nobody:
-when one dies nothing restarts it, and each repair is a PowerShell window. This
-verb plans and, with --live --opt-in,
-registers what those windows did, then proves it by reading it back:
+An origin started by hand is a process owned by nobody: when it dies nothing
+restarts it, and each repair is a PowerShell window. This verb plans and, with
+--live --opt-in, registers what that window did, then proves it by reading it
+back:
 
   origin   ConvoyBotMcp     at-logon task, restart 99x/1 min, no time limit:
                             <this interpreter's pythonw> -m convoy.cli mcp --port <port>
-                            (serves every thread in the machine index; --bound pins --root)
-  tunnel   ConvoyBotTunnel  same shape: pythonw -m convoy.tunnel_run, which reads the
-                            token FILE at run time and spawns cloudflared with no window
-                            (the token is never in a task definition, a card, or a log line)
+                            (serves every thread in the machine index on loopback;
+                            --bound pins --root)
   console  `convoy` on PATH must be Convoy (cmd._is_convoy_itself), not a stranger
+
+Convoy 1.3.2 removed the tunnel supervisor. Remote access to your loopback MCP
+is not a Convoy feature; if you build it, put it behind your own access
+control. --verify reports what an older install left behind (the removed
+tunnel's scheduled task and its files) with the command that removes each one,
+and deletes nothing.
 
 Windows only today (schtasks via PowerShell). Other OSes are refused naming the
 missing adapter (systemd user unit, launchd agent); nothing is faked.
@@ -30,6 +34,8 @@ from typing import Any, Callable
 
 Runner = Callable[[str], dict[str, Any]]
 
+# The name predates 1.3.2 and is kept so existing installs are found and
+# updated in place; it names the local loopback MCP task, not a hosted one.
 ORIGIN_TASK = "ConvoyBotMcp"
 # Every supervised process runs on the WINDOWLESS interpreter. A console program
 # started by Task Scheduler has no parent console, and when Windows Terminal is
@@ -37,9 +43,11 @@ ORIGIN_TASK = "ConvoyBotMcp"
 # cmd windows, one per task). conhost --headless hides the
 # window but returns 0 whatever the child did (measured), which would blind the
 # restart-on-failure supervision; pythonw.exe keeps the exit code.
-TUNNEL_TASK = "ConvoyBotTunnel"
 DEFAULT_PORT = 8788
-DEFAULT_METRICS = "127.0.0.1:20241"
+# What an install before 1.3.2 left behind: the tunnel supervisor and its files
+# under CONVOY_HOME/tunnel. Reported by name and path, never read, never deleted.
+LEGACY_TUNNEL_TASK = "ConvoyBotTunnel"
+LEGACY_TUNNEL_FILES = ("run.token", "Run-ConvoyBotTunnel.ps1", "cloudflared.log")
 
 
 def _home() -> Path:
@@ -110,25 +118,39 @@ def _verify_task(task: str, runner: Runner) -> dict[str, Any]:
             "execute": info.get("Execute"), "arguments": info.get("Arguments"), "mirrored": mirrored}
 
 
-def install_local(root: Path | str, *, token_file: Path | str | None = None, port: int = DEFAULT_PORT,
-                  metrics: str = DEFAULT_METRICS, live: bool = False, opt_in: bool = False,
-                  verify_only: bool = False, runner: Runner | None = None, windows: bool | None = None,
-                  cloudflared: str | None = None, migrate_token: bool = False, bound: bool = False) -> dict[str, Any]:
-    """Plan (default), register (--live --opt-in), or verify (--verify) this machine's
-    Convoy supervisors. Every claim in the card comes from a read-back.
+def _legacy_leftovers(home: Path, run: Runner) -> list[dict[str, Any]]:
+    """What a pre-1.3.2 install left behind, each with the command that removes it.
+    The task is read back by name; the files are checked for existence only (a
+    token file is never opened). Nothing is removed here."""
+    out: list[dict[str, Any]] = []
+    probe = run("Get-ScheduledTask -TaskName " + _ps_quote(LEGACY_TUNNEL_TASK) + " -ErrorAction Stop | "
+                "Select-Object TaskName, @{n='State';e={[string]$_.State}} | ConvertTo-Json -Compress")
+    if probe.get("ok"):
+        try:
+            info = json.loads(probe.get("stdout") or "{}")
+        except json.JSONDecodeError:
+            info = {}
+        if str(info.get("TaskName") or "") == LEGACY_TUNNEL_TASK:
+            out.append({"name": LEGACY_TUNNEL_TASK, "kind": "scheduled-task", "state": str(info.get("State") or "") or None,
+                        "remove": "Unregister-ScheduledTask -TaskName " + LEGACY_TUNNEL_TASK + " -Confirm:$false"})
+    folder = home / "tunnel"
+    for name in LEGACY_TUNNEL_FILES:
+        path = folder / name
+        if path.is_file():
+            out.append({"name": name, "kind": "file", "path": str(path),
+                        "remove": "Remove-Item -LiteralPath " + _ps_quote(str(path))})
+    return out
 
-    migrate_token: copy the bytes of `token_file` into CONVOY_HOME/tunnel/run.token
-    and plan from there, so the live task and the verify card agree on one home
-    (a tunnel still read its token from a folder outside Convoy while the verb
-    planned CONVOY_HOME). Bytes only; the token is never read into the card."""
+
+def install_local(root: Path | str, *, port: int = DEFAULT_PORT, live: bool = False, opt_in: bool = False,
+                  verify_only: bool = False, runner: Runner | None = None, windows: bool | None = None,
+                  bound: bool = False) -> dict[str, Any]:
+    """Plan (default), register (--live --opt-in), or verify (--verify) this machine's
+    Convoy supervisor. Every claim in the card comes from a read-back."""
     r = Path(root).resolve()
     run = runner or _powershell
     is_win = (os.name == "nt") if windows is None else bool(windows)
     home = _home()
-    log_dir = home / "tunnel"
-    default_tok = log_dir / "run.token"
-    tok = Path(token_file) if token_file else default_tok
-    cf_exe = cloudflared or r"C:\Program Files (x86)\cloudflared\cloudflared.exe"
     card: dict[str, Any] = {"ok": True, "root": str(r), "dry_run": not live and not verify_only, "live": bool(live),
                             "verify_only": bool(verify_only), "warnings": [], "plan": [], "verify": [],
                             "next": "convoy install --local --verify to re-check any time"}
@@ -155,56 +177,20 @@ def install_local(root: Path | str, *, token_file: Path | str | None = None, por
             card.update({"ok": False, "error": "root " + str(r) + " is not a Convoy thread (no .convoy/id); pass --root <a bound thread> or drop --bound"})
             card["known_roots"] = _known_roots()
             return card
-    if migrate_token:
-        mig: dict[str, Any] = {"from": str(tok), "to": str(default_tok), "copied": False}
-        if tok.resolve() == default_tok.resolve():
-            mig["note"] = "already in CONVOY_HOME"
-        elif not tok.is_file():
-            card.update({"ok": False, "error": "migrate-token: no token file at " + str(tok)})
-            card["migrated"] = mig
-            return card
-        else:
-            try:
-                data = tok.read_bytes()
-                if default_tok.is_file() and default_tok.read_bytes() == data:
-                    mig["note"] = "identical file already there"
-                else:
-                    log_dir.mkdir(parents=True, exist_ok=True)
-                    default_tok.write_bytes(data)
-                    mig["copied"] = True
-                del data
-            except OSError as e:
-                card.update({"ok": False, "error": "migrate-token: " + type(e).__name__ + ": " + str(e)})
-                card["migrated"] = mig
-                return card
-        card["migrated"] = mig
-        tok = default_tok
     plan = [
         {"name": "origin", "task": ORIGIN_TASK, "execute": _windowless_interpreter(),
          "arguments": ("-m convoy.cli --root " + _ps_dq(str(r)) + " mcp" if bound else "-m convoy.cli mcp") + " --host 127.0.0.1 --port " + str(int(port)),
          "serves": _thread_key(r) if bound else "all threads",
          "workdir": str(r), "trigger": "at-logon", "restart": "99x / 1 min", "time_limit": "none"},
-        {"name": "tunnel", "task": TUNNEL_TASK, "execute": _windowless_interpreter(),
-         "arguments": "-m convoy.tunnel_run --token-file " + _ps_dq(str(tok)) + " --log " + _ps_dq(str(log_dir / "cloudflared.log"))
-                      + " --metrics " + metrics + " --exe " + _ps_dq(cf_exe),
-         "workdir": str(log_dir), "token_file": str(tok), "metrics": metrics,
-         "log": str(log_dir / "cloudflared.log"), "trigger": "at-logon", "restart": "99x / 1 min", "time_limit": "none"},
         {"name": "console-script", "check": "`convoy` on PATH answers `convoy inbox --help` as this package",
          "fix": "pip install <this checkout> into the interpreter whose Scripts dir is first on PATH, and rename any other program called convoy"},
     ]
     card["plan"] = plan
-    if not tok.is_file():
-        card["warnings"].append("tunnel token file not found at " + str(tok) + "; the tunnel task will fail until it exists (write the token there by hand, never paste it)")
     if live and not opt_in:
-        card.update({"ok": False, "error": "install --local --live requires --opt-in: it registers two scheduled tasks under your user"})
+        card.update({"ok": False, "error": "install --local --live requires --opt-in: it registers a scheduled task under your user"})
         return card
     if live:
-        try:
-            log_dir.mkdir(parents=True, exist_ok=True)
-        except OSError as e:
-            card.update({"ok": False, "error": "could not create the tunnel home: " + str(e)})
-            return card
-        for item in plan[:2]:
+        for item in plan[:1]:
             res = run(_register_script(item["task"], item["execute"], item["arguments"], item["workdir"]))
             item["registered"] = bool(res.get("ok"))
             if not res.get("ok"):
@@ -213,7 +199,7 @@ def install_local(root: Path | str, *, token_file: Path | str | None = None, por
             else:
                 run("Start-ScheduledTask -TaskName " + _ps_quote(item["task"]))
     if live or verify_only:
-        for item in plan[:2]:
+        for item in plan[:1]:
             v = _verify_task(item["task"], run)
             v["name"] = item["name"]
             card["verify"].append(v)
@@ -226,6 +212,11 @@ def install_local(root: Path | str, *, token_file: Path | str | None = None, por
             cs["hint"] = ("no `convoy` on PATH" if not exe else "the `convoy` on PATH (" + str(exe) + ") is not Convoy") + \
                          "; pip install this checkout so convoy.exe lands in a Scripts dir on PATH"
         card["verify"].append(cs)
+        # Reported, never removed: the person runs each `remove` command.
+        card["leftovers"] = _legacy_leftovers(home, run)
+        if card["leftovers"]:
+            card["warnings"].append("an older install left the tunnel behind; Convoy 1.3.2 no longer uses it. "
+                                    "Run each leftover's `remove` command in PowerShell to clear it")
     return card
 
 

@@ -1,5 +1,7 @@
 # Adversarial stress review: SPEC.md DoD truth vs this tree
 
+> **Superseded 2026-10: convoy.bot/mcp is retired.** Convoy's MCP runs on your machine at `http://127.0.0.1:8788/mcp` (`convoy mcp`); there is no hosted Convoy endpoint and no tunnel. This document is kept as dated history; its references to the hosted endpoint describe the past.
+
 **Auditor:** a reviewing neuron (reviewer 1) on a review thread
 **Worktree:** `<audit-worktree>` · **branch:** `<review branch>` · **HEAD:** `f40b01a`
 **Run date:** 2026-09-01 (UTC stamps below are verbatim from artifacts)

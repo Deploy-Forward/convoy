@@ -32,6 +32,10 @@ from convoy.convoy import bind, ensure_id, seat
 from convoy.lifecycle import join
 from convoy.repo import mint_worktrees
 from convoy.targeted_launch import launch_seat
+try:
+    from test.demo.write_gate_fixture import open_write_gate, write_gate, write_gate_if  # noqa: F401
+except ModuleNotFoundError:  # discovered as a top-level module
+    from write_gate_fixture import open_write_gate, write_gate, write_gate_if  # noqa: F401
 
 # The retired opt-in note; no card carries it now.
 CODEX_NOTE = "inbox hook not written"
@@ -456,7 +460,7 @@ class EveryLaunchVerbOnARealRepo(Sandbox):
 
     def mcp(self, name, args, gated):
         from convoy.mcp_http import call_tool
-        with mock.patch.dict(os.environ, {"CONVOY_MCP_WRITE_TOOLS": "1" if gated else ""}):
+        with write_gate_if(gated):
             return call_tool(self.repo, name, args)
 
     def test_mcp_bring_up_names_what_it_would_write_on_either_surface(self):

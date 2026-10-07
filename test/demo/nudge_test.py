@@ -14,6 +14,10 @@ from convoy.convoy import bind, ensure_id, seat
 from convoy.mcp_http import TOOLS, _WRITE_TOOLS, call_tool
 from convoy.nudge import WAKE_EVIDENCE, identify_target, nudge_seat
 from convoy.pane_host import host_state_path, nudge_request_path
+try:
+    from test.demo.write_gate_fixture import open_write_gate, write_gate, write_gate_if  # noqa: F401
+except ModuleNotFoundError:  # discovered as a top-level module
+    from write_gate_fixture import open_write_gate, write_gate, write_gate_if  # noqa: F401
 
 
 def _panes(sid, bodies, *, duplicate=False, live=True, live_reason="matched 1 body/bodies"):
@@ -269,12 +273,11 @@ class NudgeSeat(unittest.TestCase):
     def test_nudge_is_write_gated_and_public_call_sends_nothing(self):
         self.assertIn("nudge", _WRITE_TOOLS)
         self.assertTrue(any(t["name"] == "nudge" for t in TOOLS))
-        os.environ.pop("CONVOY_MCP_WRITE_TOOLS", None)
         card = call_tool(self.root, "nudge", {"seat": "g2", "keys": "Enter"})
         # tools/call short-circuits write tools before call_tool; call_tool itself
         # still refuses when the gate is closed.
         self.assertFalse(card["ok"])
-        self.assertIn("CONVOY_MCP_WRITE_TOOLS", card["error"])
+        self.assertIn("convoy conductor mint", card["error"])
         self.assertFalse(card["delivered"])
         self.assertIsNone(card["delivery"])
 

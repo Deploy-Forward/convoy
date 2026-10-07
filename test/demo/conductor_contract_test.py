@@ -18,6 +18,10 @@ from unittest import mock
 
 from convoy.convoy import bind, ensure_id, seat
 from convoy.layer import conductor_stamp, feed_since, hook, neuron_note
+try:
+    from test.demo.write_gate_fixture import open_write_gate, write_gate, write_gate_if  # noqa: F401
+except ModuleNotFoundError:  # discovered as a top-level module
+    from write_gate_fixture import open_write_gate, write_gate, write_gate_if  # noqa: F401
 
 NULL_PROBE = {"usage_remaining": None, "limited": False, "raw": None}
 
@@ -123,21 +127,20 @@ class Replies(unittest.TestCase):
 
     def test_replies_tool_is_public_read_and_wait_is_gated(self):
         from convoy import mcp_http
-        with mock.patch.dict(os.environ, {"CONVOY_MCP_WRITE_TOOLS": ""}):
-            listed = mcp_http.handle_rpc(self.root, {"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}})
-            names = {t["name"]: t for t in listed["result"]["tools"]}
-            self.assertIn("replies", names)
-            self.assertTrue(names["replies"]["annotations"]["readOnlyHint"])
-            neuron_note(self.root, "hi", instance_id="chair-1", to="grok-bot")
-            ok = mcp_http.handle_rpc(self.root, {"jsonrpc": "2.0", "id": 2, "method": "tools/call",
-                                                  "params": {"name": "replies", "arguments": {"since": "1970-01-01T00:00:00.000000Z"}}})
-            body = json.loads(ok["result"]["content"][0]["text"])
-            self.assertEqual([x["summary"] for x in body["rows"]], ["hi"])
-            self.assertNotIn("token", json.dumps(body["rows"]), "public reads never carry a seat token field")
-            gated = mcp_http.handle_rpc(self.root, {"jsonrpc": "2.0", "id": 3, "method": "tools/call",
-                                                     "params": {"name": "replies", "arguments": {"since": "1970-01-01T00:00:00.000000Z", "wait": 5}}})
-            gb = json.loads(gated["result"]["content"][0]["text"])
-            self.assertFalse(gb["ok"]); self.assertIn("write gate", gb["error"])
+        listed = mcp_http.handle_rpc(self.root, {"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}})
+        names = {t["name"]: t for t in listed["result"]["tools"]}
+        self.assertIn("replies", names)
+        self.assertTrue(names["replies"]["annotations"]["readOnlyHint"])
+        neuron_note(self.root, "hi", instance_id="chair-1", to="grok-bot")
+        ok = mcp_http.handle_rpc(self.root, {"jsonrpc": "2.0", "id": 2, "method": "tools/call",
+                                              "params": {"name": "replies", "arguments": {"since": "1970-01-01T00:00:00.000000Z"}}})
+        body = json.loads(ok["result"]["content"][0]["text"])
+        self.assertEqual([x["summary"] for x in body["rows"]], ["hi"])
+        self.assertNotIn("token", json.dumps(body["rows"]), "public reads never carry a seat token field")
+        gated = mcp_http.handle_rpc(self.root, {"jsonrpc": "2.0", "id": 3, "method": "tools/call",
+                                                 "params": {"name": "replies", "arguments": {"since": "1970-01-01T00:00:00.000000Z", "wait": 5}}})
+        gb = json.loads(gated["result"]["content"][0]["text"])
+        self.assertFalse(gb["ok"]); self.assertIn("write gate", gb["error"])
 
     def test_agents_block_points_at_the_plugin_for_the_token_ack(self):
         from convoy.identity import install_neuron_identity

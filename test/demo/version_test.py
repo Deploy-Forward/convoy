@@ -83,18 +83,16 @@ class Editable(unittest.TestCase):
 
 
 class OneVersion(unittest.TestCase):
-    def test_the_release_is_1_3_1(self):
-        self.assertEqual(PYPROJECT["project"]["version"], "1.3.1")
+    def test_the_release_is_1_3_2(self):
+        self.assertEqual(PYPROJECT["project"]["version"], "1.3.2")
 
-    def test_the_spec_and_the_deploy_doc_name_the_package_version(self):
+    def test_the_spec_and_the_lock_name_the_package_version(self):
         v = PYPROJECT["project"]["version"]
         spec = (REPO / "SPEC.md").read_text(encoding="utf-8")
         self.assertIn("(base " + v + ")", spec)
         self.assertIn("| `convoy` " + v + ",", spec)
-        deploy = (REPO / "docs" / "deploy-convoy-bot-mcp.md").read_text(encoding="utf-8")
-        self.assertIn("serverInfo.version = " + v + "+<merged sha>", deploy)
-        self.assertIn("report `" + v + "+<git", deploy)
-        self.assertIn("a bare `" + v + "` from an installed package", deploy)
+        lock = (REPO / "uv.lock").read_text(encoding="utf-8")
+        self.assertIn('name = "convoy"\nversion = "' + v + '"', lock)
 
     def test_the_mcp_base_version_is_the_package_version(self):
         from convoy import mcp_http, version

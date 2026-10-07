@@ -17,15 +17,20 @@ from convoy.convoy import bind, list_seats, read_id, seat
 from convoy.inbox import pending
 from convoy.layer import feed_since
 from convoy.mcp_http import TOOLS, call_tool
+try:
+    from test.demo.write_gate_fixture import open_write_gate, write_gate, write_gate_if  # noqa: F401
+except ModuleNotFoundError:  # discovered as a top-level module
+    from write_gate_fixture import open_write_gate, write_gate, write_gate_if  # noqa: F401
 
 
 class McpNeuronSend(unittest.TestCase):
     def setUp(self):
         home = tempfile.TemporaryDirectory(prefix="convoy-mcp-id-home-")
         self.addCleanup(home.cleanup)
-        env = mock.patch.dict(os.environ, {"CONVOY_HOME": home.name, "CONVOY_MCP_WRITE_TOOLS": "1"})
+        env = mock.patch.dict(os.environ, {"CONVOY_HOME": home.name})
         env.start()
         self.addCleanup(env.stop)
+        open_write_gate(self)
         alpha = tempfile.TemporaryDirectory(prefix="convoy-mcp-id-alpha-")
         beta = tempfile.TemporaryDirectory(prefix="convoy-mcp-id-beta-")
         self.addCleanup(alpha.cleanup)
