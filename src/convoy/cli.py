@@ -45,6 +45,8 @@ from .usage import probe
 _SEAT_KEYS = ("model", "effort", "where", "title")
 _WRITE_REPO_FILES_HELP = ("also write the repo files a person could own (AGENTS.md) "
                           "outside a worktree Convoy minted")
+_HERE_HELP = ("split the window you are working in (Windows: wt -w 0 split-pane; inside tmux: "
+              "a split of your pane). Default is the thread's own window.")
 
 
 def _opt_in(args: argparse.Namespace) -> bool | None:
@@ -373,6 +375,7 @@ def build_parser() -> argparse.ArgumentParser:
     ad.add_argument("--thread", help="must match the bound thread")
     ad.add_argument("--allow-unverified-launch", action="store_true", help="explicitly accept unverified harness launch eligibility for this launch")
     ad.add_argument("--dry-run", action="store_true", help="write nothing; report where the neuron would go")
+    ad.add_argument("--here", action="store_true", help=_HERE_HELP)
     ad.add_argument("--write-repo-files", action="store_true", help=_WRITE_REPO_FILES_HELP)
 
     aw = sub.add_parser("await-seated", help="observe the chairs' seated acks (connected | pending | stale) with the seconds waited")
@@ -381,11 +384,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     ch = sub.add_parser("choices", help="list installed harnesses, known worktrees, seats, and active-pane support")
 
-    ln = sub.add_parser("launch", description="Launch one already-joined fresh chair. The card's placement says where: split (inside tmux, a split of your pane), thread-window (Windows: the thread's own Windows Terminal window (wt -w convoy-<8 hex>: the first neuron opens it, later ones split inside it); the card names the window), or detached (on POSIX outside tmux with tmux installed, the thread's detached tmux session; the card's attach command opens it).",
+    ln = sub.add_parser("launch", description="Launch one already-joined fresh chair. The card's placement says where: split (inside tmux, a split of your pane), thread-window (Windows: the thread's own Windows Terminal window (wt -w convoy-<8 hex>: the first neuron opens it, later ones split inside it); the card names the window), detached (on POSIX outside tmux with tmux installed, the thread's detached tmux session; the card's attach command opens it), or here (--here: a split of the window you are working in).",
                         help="launch one already-joined fresh chair: a split of your tmux pane, the thread's own Windows Terminal window, or the thread's detached tmux session")
     ln.add_argument("--allow-unverified-launch", action="store_true", help="explicitly accept unverified harness launch eligibility for this launch")
     ln.add_argument("--seat", required=True, help="fresh join/swap chair session_id")
     ln.add_argument("--dry-run", action="store_true")
+    ln.add_argument("--here", action="store_true", help=_HERE_HELP)
     ln.add_argument("--consent", help="one-time scoped consent returned by `convoy consent --grant`")
     ln.add_argument("--write-repo-files", action="store_true", help=_WRITE_REPO_FILES_HELP)
 
@@ -932,7 +936,7 @@ def main(argv: list[str] | None = None) -> int:
                           checkout=args.checkout, runner=None if args.dry_run else active_pane_runner,
                           window_runner=None if args.dry_run else live_runner,
                           allow_unverified_launch=args.allow_unverified_launch, write_repo_files=_opt_in(args),
-                          launcher=resolve_launcher(root, explicit_root=root_explicit))
+                          launcher=resolve_launcher(root, explicit_root=root_explicit), here=bool(args.here))
         print(json.dumps(card))
         return 0 if card.get("ok") else 1
     if args.cmd == "await-seated":
@@ -960,6 +964,7 @@ def main(argv: list[str] | None = None) -> int:
             allow_unverified_launch=args.allow_unverified_launch,
             write_repo_files=_opt_in(args),
             claimed=claimed,
+            here=bool(args.here),
         ), dry=bool(args.dry_run))
         _with_launcher(card, recorded)
         if args.dry_run:

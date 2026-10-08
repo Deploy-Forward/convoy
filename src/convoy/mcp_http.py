@@ -647,10 +647,12 @@ TOOLS: list[dict[str, Any]] = [
     },
     {
         "name": "launch",
-        "description": "Launch one already-joined fresh chair: inside tmux a split of the caller's pane; on Windows the thread's own Windows Terminal window (wt -w convoy-<8 hex>; never window 0); on POSIX outside tmux with tmux installed, the thread's detached tmux session the person opens with the card's attach command; the card's placement says which. This SPAWNS a process, so it is behind the write gate and refused for a caller without a conductor bearer, without spawning anything. consent carries the user's explicit yes when the host asks for it. Never a token.",
+        "description": "Launch one already-joined fresh chair: inside tmux a split of the caller's pane; on Windows the thread's own Windows Terminal window (wt -w convoy-<8 hex>; never window 0 unless here=true); on POSIX outside tmux with tmux installed, the thread's detached tmux session the person opens with the card's attach command; the card's placement says which. This SPAWNS a process, so it is behind the write gate and refused for a caller without a conductor bearer, without spawning anything. consent carries the user's explicit yes when the host asks for it. Never a token.",
         "inputSchema": _schema(
             {"seat": {"type": "string", "description": "chair session_id from join"},
-             "consent": {"type": "string"}},
+             "consent": {"type": "string"},
+             "here": {"type": "boolean", "default": False,
+                      "description": "split the window you are working in (Windows: wt -w 0 split-pane; inside tmux: a split of your pane). Default is the thread's own window."}},
             required=["seat"],
         ),
     },
@@ -1355,7 +1357,8 @@ def _call_tool_at(root: Path, name: str, args: dict[str, Any]) -> dict[str, Any]
         spawned: list[str] = []
         try:
             card = launch_seat(root, sid, runner=active_pane_runner, consent=_opt_str(args, "consent"),
-                               allow_unverified_launch=args.get("allow_unverified_launch", False), **repo_files)
+                               allow_unverified_launch=args.get("allow_unverified_launch", False),
+                               here=bool(args.get("here", False)), **repo_files)
             spawned = [sid] if card.get("ok") else []
             return card
         except ValueError as e:

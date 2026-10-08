@@ -255,10 +255,17 @@ def _auto(value: Any) -> str | None:
 
 
 def _placement(env: Mapping[str, str] | None, which: Which, platform_name: str | None,
-               window: str | None = None) -> tuple[str, str]:
+               window: str | None = None, here: bool = False) -> tuple[str, str]:
     """Where one new neuron goes, decided before anything is written:
-    split | thread-window | detached | none, with the reason the card shows."""
-    cap = terminal_capability(env=env, which=which, platform_name=platform_name)
+    here | split | thread-window | detached | none, with the reason the card shows.
+    `here` is the person's opt-in to split the window they are working in."""
+    cap = terminal_capability(env=env, which=which, platform_name=platform_name, here=here)
+    if here:
+        if cap.get("can_split"):
+            return "here", "inside tmux: a split of the caller's exact pane (--here)"
+        if cap.get("here"):
+            return "here", "Windows Terminal: a split of the window you are working in (wt -w 0 split-pane, --here)"
+        return "none", str(cap.get("reason"))
     if cap.get("can_split"):
         return "split", "inside tmux: a split of the caller's exact pane"
     if cap.get("thread_window"):
@@ -278,7 +285,7 @@ def _placement(env: Mapping[str, str] | None, which: Which, platform_name: str |
 
 
 def _dry(card: dict[str, Any], root: Path, p: dict[str, Any], bound: str | None, *, checkout: Path | str | None,
-         env: Mapping[str, str] | None, which: Which, platform_name: str | None) -> dict[str, Any]:
+         env: Mapping[str, str] | None, which: Which, platform_name: str | None, here: bool = False) -> dict[str, Any]:
     """What a live add would run, built from the chair it would write, writing nothing."""
     seat = {"to": p["harness"], "session_id": p["session_id"], "title": p["title"], "model": p["model"],
             "effort": p["effort"], "worktree": str(minted_worktree_path(Path(checkout) if checkout else root, p["title"]))}
@@ -286,11 +293,11 @@ def _dry(card: dict[str, Any], root: Path, p: dict[str, Any], bound: str | None,
     card["session_id"] = p["session_id"]
     card["worktree"] = seat["worktree"]
     try:
-        capability = placement_capability(root, seat, env=env, which=which, platform_name=platform_name) or {}
+        capability = placement_capability(root, seat, env=env, which=which, platform_name=platform_name, here=here) or {}
         card["argv"] = active_pane_argv(seat, capability, root=root)
         if capability.get("thread_window"):
             card["window"] = capability.get("target")
-        elif not capability.get("can_split"):
+        elif not capability.get("can_split") and not capability.get("here"):
             card["session_name"] = capability.get("target")
             card["attach"] = tmux_attach_command(str(capability.get("target")))
     except ValueError as e:
@@ -328,10 +335,14 @@ def add(
     platform_name: str | None = None,
     trust_probe: Callable[[dict[str, Any]], bool] = grok_project_trusted,
     launcher: dict[str, Any] | None = None,
+    here: bool = False,
 ) -> dict[str, Any]:
     """One neuron: validate -> place -> mint -> join -> launch.
 
     runner=None is a dry run: it writes nothing and reports the placement.
+    here=True is the person's opt-in to split the window they are working in
+    (Windows: wt -w 0 split-pane; inside tmux: a split of their pane); the card
+    says `placement: here`, and anywhere else it refuses before any write.
     Live, `runner` splits the caller's pane or starts a detached tmux session
     (launch_seat). `window_runner` is kept for callers and unused: Windows
     launches into the thread's own named window through `runner` too. It was bring_up's new window, used only
@@ -369,7 +380,7 @@ def add(
     _warn_codex_hooks(card, plan)
     from .targeted_launch import thread_window_name
     window = thread_window_name(card["convoy_id"])
-    card["placement"], card["placement_reason"] = _placement(env, which, platform_name, window)
+    card["placement"], card["placement_reason"] = _placement(env, which, platform_name, window, here=here)
     if card["placement"] == "thread-window":
         card["window"] = window
     if card["placement"] == "none":
@@ -388,7 +399,8 @@ def add(
             # A dry run attaches nobody; it says what a live add would do with the launcher.
             card["launcher"] = {"kind": launcher.get("kind"), "chair": launcher.get("chair"),
                                 "would_attach": launcher.get("kind") == "unseated", "why": launcher.get("why")}
-        return _dry(card, root, plan[0], bound, checkout=checkout, env=env, which=which, platform_name=platform_name)
+        return _dry(card, root, plan[0], bound, checkout=checkout, env=env, which=which, platform_name=platform_name,
+                    here=here)
     # The retry each path prints is the command that works on that path, with
     # the person's own opt-ins, so it is never refused for a flag left off.
     flags = ((" --allow-unverified-launch" if allow_unverified_launch else "") +
@@ -400,7 +412,7 @@ def add(
         return card
     launched = launch_seat(root, sids[0], runner=runner, env=env, which=which, platform_name=platform_name,
                            trust_probe=trust_probe, allow_unverified_launch=allow_unverified_launch,
-                           write_repo_files=write_repo_files)
+                           write_repo_files=write_repo_files, here=here)
     card["launch"] = launched
     if launched.get("state") == "awaiting-user-consent":
         # The chair waits on the person, not on a retry: grant, then launch it.

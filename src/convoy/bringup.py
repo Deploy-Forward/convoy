@@ -417,12 +417,21 @@ def _window_holds_another(root: Path, launching: set[str]) -> bool:
                if s.get("session_id") and str(s["session_id"]) not in launching)
 
 
-def _check_thread_window(argv: list[str]) -> None:
+def _check_thread_window(argv: list[str], *, here: bool = False) -> None:
     """A wt command targets the thread's own window and nothing else: `-w convoy-<8 hex>`
     as its first argument, never `-w 0` (the most recently used window, i.e. wherever the
-    person last clicked) and never a second -w; then new-tab or split-pane."""
+    person last clicked) and never a second -w; then new-tab or split-pane.
+
+    `here` is the one exception: the person's explicit opt-in to split the window they
+    are working in, which is what `-w 0` names; then the command must be `-w 0
+    split-pane`, never new-tab."""
     parts = [str(a) for a in argv]
-    if len(parts) < 4 or parts[1] != "-w" or not _THREAD_WINDOW.match(parts[2]):
+    if here:
+        if len(parts) < 4 or parts[1] != "-w" or parts[2] != "0":
+            raise ValueError("refuse a here launch outside window 0 (-w 0 split-pane)")
+        if parts[3] not in ("split-pane", "sp"):
+            raise ValueError("a here launch is a split-pane, never new-tab")
+    elif len(parts) < 4 or parts[1] != "-w" or not _THREAD_WINDOW.match(parts[2]):
         raise ValueError("refuse wt outside the thread's own window (-w convoy-<8 hex>)")
     if parts.count("-w") != 1 or "--window" in parts:
         raise ValueError("refuse a second window target")
@@ -1376,7 +1385,7 @@ def _with_claude_live_flags(argv: list[str], to: Any) -> list[str]:
 
 def isolated_wt_argv(thread: str | int, seats: list[dict[str, Any]], *, wt: str | None = None,
                      root: Path | str | None = None, raw: bool = False, window: str | None = None,
-                     first: bool = True) -> list[str]:
+                     first: bool = True, here: bool = False) -> list[str]:
     """Pure Windows Terminal argv for n seated neurons. Does not spawn.
 
     Every launch is an owned body: with `root` each pane runs
@@ -1394,7 +1403,10 @@ def isolated_wt_argv(thread: str | int, seats: list[dict[str, Any]], *, wt: str 
     is new-tab when the window does not hold a live neuron yet (`first`), else
     split-pane; then split-pane -V / -H. wt splits the target window's focused pane,
     which inside the thread's own window is one of this thread's neurons.
-    Never -w 0 (the most recently used window: wherever the person clicked last).
+    Never -w 0 (the most recently used window: wherever the person clicked last),
+    except `here=True`: the person's explicit opt-in (`add --here`, `launch --here`)
+    to a split of the window they are working in, which is exactly what -w 0 names.
+    A here build is always split-pane, never new-tab.
     Live-verified 2026-10-04 on WT 1.24.11911.0: `-w convoy-<name> new-tab ...`
     then `-w convoy-<name> split-pane -V ...` gave one separate window with both
     panes, the working window untouched, no Help. The older `-w <thread-name>` Help
@@ -1404,7 +1416,13 @@ def isolated_wt_argv(thread: str | int, seats: list[dict[str, Any]], *, wt: str 
     No --append-system-prompt. Claude live flags on the inner argv.
     """
     name = str(thread if thread is not None else "").strip()
-    if name == "0" or str(window or "").strip() == "0":
+    # -w 0 is the most recently used window, i.e. where the person is. Only the
+    # here placement may name it, because that is what --here means; every other
+    # placement keeps the refusal.
+    if here:
+        window = "0"
+        first = False
+    elif name == "0" or str(window or "").strip() == "0":
         raise ValueError("refuse -w 0")
     panes = _pane_seats(list(seats or []))
     if not panes:
@@ -1468,7 +1486,7 @@ def isolated_wt_argv(thread: str | int, seats: list[dict[str, Any]], *, wt: str 
         if cwd:
             argv.extend(["-d", str(cwd)])
         argv.extend([str(a) for a in inner])
-    _check_thread_window(argv)
+    _check_thread_window(argv, here=here)
     if "--append-system-prompt" in argv:
         raise ValueError("refuse --append-system-prompt")
     if "--" in argv:

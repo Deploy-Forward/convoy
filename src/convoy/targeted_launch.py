@@ -45,11 +45,17 @@ GitWorktrees = Callable[[Iterable[Path]], list[str]]
 CHOICES = next_step("choices")
 
 
+HERE_REFUSAL = ("--here needs a pane of your own to split: inside tmux (a split of your pane) or "
+                "Windows Terminal (wt -w 0 split-pane). Drop --here for the thread's own window "
+                "(thread-window) or, on POSIX with tmux installed, the thread's detached session (detached)")
+
+
 def terminal_capability(
     *,
     env: Mapping[str, str] | None = None,
     which: Which = shutil.which,
     platform_name: str | None = None,
+    here: bool = False,
 ) -> dict[str, Any]:
     """Return the terminal adapter a launch goes through, or an explicit refusal.
 
@@ -57,9 +63,15 @@ def terminal_capability(
     terminal and TMUX_PANE names the caller's exact pane. On Windows, Windows
     Terminal's CLI cannot split a specific pane: `-w 0 split-pane` splits whatever
     pane has focus in the most recently used window, wherever the person last
-    clicked. So Windows never splits the caller's window: every launch targets the
-    thread's own named window (placement_capability names it), whether or not the
-    caller runs inside Windows Terminal.
+    clicked. So by default Windows never splits the caller's window: every launch
+    targets the thread's own named window (placement_capability names it), whether
+    or not the caller runs inside Windows Terminal.
+
+    `here` is the person's explicit opt-in to that split of their own window
+    (`-w 0 split-pane`): inside tmux it is the same split of the caller's pane;
+    on Windows with wt it is the `windows-terminal-here` adapter; anywhere else
+    it is a refusal that names thread-window and detached, never a detached
+    fallback (the person asked for a pane next to them, not a session elsewhere).
     """
     values = os.environ if env is None else env
     platform = os.name if platform_name is None else platform_name
@@ -79,6 +91,28 @@ def terminal_capability(
         }
 
     wt = which("wt") if platform == "nt" else None
+    if wt and here:
+        return {
+            "can_split": False,
+            "here": True,
+            "adapter": "windows-terminal-here",
+            "executable": str(wt),
+            # wt's window 0 is the most recently used window: where the person is.
+            "target": "0",
+            "target_semantics": "most-recently-used-window",
+            "can_close_exact": False,
+            "close_reason": "windows-terminal-cli-has-no-close-pane-command",
+        }
+    if here:
+        return {
+            "can_split": False,
+            "adapter": None,
+            "target": None,
+            "reason": HERE_REFUSAL,
+            "supported_adapters": ["tmux", "windows-terminal"],
+            "can_close_exact": False,
+            "close_reason": "no-supported-active-terminal",
+        }
     if wt:
         return {
             "can_split": False,
@@ -181,14 +215,19 @@ def placement_capability(
     env: Mapping[str, str] | None = None,
     which: Which = shutil.which,
     platform_name: str | None = None,
+    here: bool = False,
 ) -> dict[str, Any] | None:
     """The adapter this chair launches through: inside tmux a split of the caller's exact
-    pane; on Windows the thread's own named window; outside tmux the thread's own detached
-    tmux session; else None. `first` says whether this neuron opens the window (or
-    session) or splits inside it."""
-    capability = terminal_capability(env=env, which=which, platform_name=platform_name)
+    pane; on Windows the thread's own named window (or, with `here`, a split of the
+    person's own window); outside tmux the thread's own detached tmux session; else None.
+    `first` says whether this neuron opens the window (or session) or splits inside it."""
+    capability = terminal_capability(env=env, which=which, platform_name=platform_name, here=here)
     if capability.get("can_split"):
         return capability
+    if here:
+        # A here launch never opens anything: it is always a split, and it never
+        # falls back to the thread's window or a detached session.
+        return {**capability, "label": root_thread_label(root)} if capability.get("here") else None
     first = not thread_window_live(root, except_sid=row.get("session_id"))
     label = root_thread_label(root)
     if capability.get("thread_window"):
@@ -296,7 +335,8 @@ def active_pane_argv(
     root: Path | None = None,
 ) -> list[str]:
     """Build one terminal split (or detached tmux session) command containing one harness invocation."""
-    if not (capability.get("can_split") or capability.get("can_detach") or capability.get("thread_window")):
+    if not (capability.get("can_split") or capability.get("can_detach") or capability.get("thread_window")
+            or capability.get("here")):
         raise ValueError(str(capability.get("reason") or "terminal cannot split"))
     worktree = str(seat.get("worktree") or "").strip()
     if not worktree:
@@ -310,14 +350,21 @@ def active_pane_argv(
     if not terminal:
         raise ValueError("terminal adapter has no executable")
     adapter = capability.get("adapter")
-    if adapter == "windows-terminal-thread":
+    if adapter in ("windows-terminal-thread", "windows-terminal-here"):
         window = str(capability.get("target") or "").strip()
-        if not window or window == "0" or window.isdigit():
+        here = adapter == "windows-terminal-here"
+        # -w 0 is the most recently used window, i.e. wherever the person is. That is
+        # exactly what --here means, and the only placement allowed to name it: every
+        # other launch targets the thread's own named window, never a numeric one.
+        if here and window != "0":
+            raise ValueError("refuse a here launch outside window 0: " + repr(window))
+        if not here and (not window or window == "0" or window.isdigit()):
             raise ValueError("refuse a Windows Terminal window that is not the thread's own: " + repr(window))
         # The first neuron opens the thread's window as a tab; later ones split inside it.
         # wt splits that window's focused pane: inside the thread's window that is fine,
-        # since it only holds this thread's neurons.
-        verb = ["new-tab"] if capability.get("first", True) else ["split-pane", "-V"]
+        # since it only holds this thread's neurons. A here launch is always a split
+        # (never new-tab) of the person's focused pane: the same command, window 0.
+        verb = ["new-tab"] if capability.get("first", True) and not here else ["split-pane", "-V"]
         title = thread_pane_title(str(capability.get("label") or window.removeprefix("convoy-")), seat)
         return [terminal, "-w", window, *verb, "--title", title, "-d", worktree,
                 *[a.replace(";", "\\;") for a in inner]]
@@ -580,8 +627,13 @@ def launch_seat(
     allow_unverified_launch: bool = False,
     write_repo_files: bool | None = None,
     claimed: bool = False,
+    here: bool = False,
 ) -> dict[str, Any]:
     """Plan or launch one fresh join/swap chair.
+
+    here=True is the person's opt-in to split the window they are working in (Windows:
+    `wt -w 0 split-pane`; inside tmux: a split of their pane); the card says
+    `placement: here`. Outside both it refuses before anything is written.
 
     claimed=True: the caller already holds this chair's launch reservation (the CLI takes it
     before recording launched_by); it is used, not taken again, and the caller releases it
@@ -646,8 +698,10 @@ def launch_seat(
             # The prompt's lead and launcher line is the thread as it is now, not at join.
             from .lifecycle import refresh_identity
             row = refresh_identity(root, row)
-        capability = placement_capability(root, row, env=env, which=which, platform_name=platform_name)
+        capability = placement_capability(root, row, env=env, which=which, platform_name=platform_name, here=here)
         if capability is None:
+            if here:
+                raise ValueError(HERE_REFUSAL)
             raise ValueError(
                 "no supported active pane; use `" + CHOICES + "` and open a pane manually"
             )
@@ -670,7 +724,8 @@ def launch_seat(
             "target_semantics": capability.get("target_semantics"),
             "can_close_exact": bool(capability.get("can_close_exact")),
             "close_reason": capability.get("close_reason"),
-            "placement": ("split" if capability.get("can_split") else
+            "placement": ("here" if here else
+                          "split" if capability.get("can_split") else
                           "thread-window" if capability.get("thread_window") else "detached"),
             "argv": argv,
             "harness_argv": harness_argv,
@@ -678,7 +733,7 @@ def launch_seat(
         }
         if capability.get("thread_window"):
             card["window"] = capability.get("target")
-        elif not capability.get("can_split"):
+        elif not capability.get("can_split") and not capability.get("here"):
             card["attach"] = tmux_attach_command(str(capability.get("target")))
         if first_run is not None:
             card["first_run"] = {"would_write": list(first_run.get("would_write") or []),

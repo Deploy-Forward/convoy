@@ -30,6 +30,11 @@ pane only.
 | Windows Terminal | Windows + `wt` | `wt -w convoy-<8 hex> new-tab \| split-pane -V`; the thread's own window (WT_SESSION decides nothing) | No; WT CLI has no `closePane` command |
 | tmux | `TMUX` + `TMUX_PANE` + `tmux` | `split-window -t <caller-pane>` | No; prototype does not yet capture the returned new pane id |
 | tmux, detached | POSIX + `tmux` on PATH, caller not in tmux | the thread's one session: `new-session -d -s convoy-<8 hex> -c <worktree>` for the first neuron, run synchronously (a non-zero exit is not a launch); `split-window -t =convoy-<8 hex>:` after that | No |
+| Windows Terminal, here | Windows + `wt`, and the person's `--here` (MCP `here: true`) | `wt -w 0 split-pane -V -d <worktree> ...`: a split of the window the person is working in; never the default, never `new-tab` | No; WT CLI has no `closePane` command |
+
+The card's `placement` is `split`, `thread-window`, `detached` or `here`. `--here`
+inside tmux is the `split` adapter; outside tmux (or without `wt`) it refuses,
+naming `thread-window` and `detached`, before anything is written.
 | Other hosts | none | Refuse | Refuse |
 
 macOS and Linux are supported when the caller is inside tmux, and outside it

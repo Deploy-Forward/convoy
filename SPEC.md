@@ -342,6 +342,28 @@ the thread's own named window:
   argv shape (the thread's own name as the window, in the old `--window new`
   era), not from `-w convoy-<name> new-tab|split-pane -d DIR <absolute exe>`.
 
+#### Placement `here`: an opt-in split of the person's own window
+
+`add --here`, `launch --here` and the MCP `launch` tool's `here: true` are the
+person's explicit opt-in to the one thing the default never does: a split of the
+window they are working in. It is never the default.
+
+- Windows: `wt -w 0 split-pane -V --title <label> - <chair> -d <worktree> <host argv>`,
+  built by the same pane-command builder the thread window uses
+  (`targeted_launch.active_pane_argv`), with `-w 0` allowed only for this placement
+  (`-w 0` is the most recently used window, i.e. where the person is, which is
+  what `--here` means). Always `split-pane`, never `new-tab`, never `--`. The
+  `-w 0` refusals in `isolated_wt_argv`, `_check_thread_window` and
+  `active_pane_argv` stay for every other placement;
+- inside tmux: the existing `split` of the caller's exact pane;
+- POSIX outside tmux (and Windows without `wt`): refused before anything is
+  written, naming `thread-window` and `detached` as the alternatives. It never
+  falls back to a detached session;
+- the card says `placement: here`; no `window`, no `attach`;
+- `--dry-run` prints the exact wt argv.
+
+Unit: `test/demo/launch_here_test.py`.
+
 tmux keeps splitting the caller's exact pane when the launch runs inside tmux
 (`TMUX_PANE` names it). Outside tmux, with tmux installed, one detached session
 per thread mirrors the window: the same `convoy-<8 hex>` name, `new-session -d -s`
@@ -1363,7 +1385,7 @@ The demo thread key is `demo`. Tests live in `test/demo/`. These tests must fail
 
 Claims in this file must be true of **this tree** or of a named demo run with a timestamp. If a function is not in `src/convoy/`, it is not GREEN for this tree.
 
-The rows below describe this tree (`convoy` 1.3.2); the table began as the inventory of `f40b01a` (merge of PR #24) and has grown with the tree, so it carries no module or test count.
+The rows below describe this tree (`convoy` 1.3.3); the table began as the inventory of `f40b01a` (merge of PR #24) and has grown with the tree, so it carries no module or test count.
 
 | Path | What it actually does |
 |---|---|
@@ -1388,7 +1410,7 @@ The rows below describe this tree (`convoy` 1.3.2); the table began as the inven
 | `src/convoy/synapse.py` | `fake_runner` (default), `native_runner` (`--live`: vendor binary on PATH, wrapper names refused, `cwd=worktree`), `send_one` / `send_many`. Live mode is native on both CLI and MCP. Wrapper names (`ola-brain`, side-chat, UltraCode-Shim) are refused as a harness. |
 | `src/convoy/usage.py` | `probe()`, `normalize_usage_remaining()`, `surface()`. Unknown remaining is JSON `null`; never invent `0`; grok remaining is always `null`. |
 | `test/run.py` + `test/demo/` | The suite: `python -m unittest test.demo.<module>` runs one module. |
-| `pyproject.toml` | `convoy` 1.3.2, packages under `src`, requires-python >= 3.11. |
+| `pyproject.toml` | `convoy` 1.3.3, packages under `src`, requires-python >= 3.11. |
 
 We do not:
 
