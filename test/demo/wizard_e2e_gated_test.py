@@ -250,7 +250,8 @@ class WizardE2EGated(unittest.TestCase):
         self.assertEqual(w.call("card")["summary"]["github"], "yes")
 
         # N neurons, one call, one window.
-        crew = w.call("crew", seats=CREW, thread="e2e", checkout=str(self.checkout), launch=True, allow_unverified_launch=True)
+        crew = w.call("crew", seats=CREW, thread="e2e", checkout=str(self.checkout), launch=True, allow_unverified_launch=True,
+                      canary=False)
         self.assertTrue(crew["ok"], crew)
         self.assertTrue(crew["launched"], crew)
         self.assertEqual(len(crew["seats"]), 3)

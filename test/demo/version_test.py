@@ -83,8 +83,8 @@ class Editable(unittest.TestCase):
 
 
 class OneVersion(unittest.TestCase):
-    def test_the_release_is_1_3_2(self):
-        self.assertEqual(PYPROJECT["project"]["version"], "1.3.2")
+    def test_the_release_is_1_4_0(self):
+        self.assertEqual(PYPROJECT["project"]["version"], "1.4.0")
 
     def test_the_spec_and_the_lock_name_the_package_version(self):
         v = PYPROJECT["project"]["version"]

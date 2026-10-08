@@ -8,14 +8,14 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from .bringup import TRACKED_SETTINGS_NOTE, _convoy_named, dry_opt_in_refusal, bring_up, hide_windows, live_applier, live_runner, repo_files_for, terminals
+from .bringup import TRACKED_SETTINGS_NOTE, _convoy_named, dry_opt_in_refusal, bring_up, hide_windows, live_applier, live_here_runner, live_runner, repo_files_for, terminals
 from .consent import grant_consent
 from .install import install as install_harness
 from .onboard import onboard as run_onboard
 from .start import start as run_start
 from .context import pack
 from .convoy import attach, bind, ensure_id, list_seats, read_id, remint_id, seat, CONDUCTOR
-from .crew import add as add_neuron, await_seated, crew
+from .crew import BRIEF_TIMEOUT_S, CANARY_TIMEOUT_S, add as add_neuron, await_seated, crew, expand_count
 from .glance import build_glance, run_tray
 from .graph import build_graph, neighborhood
 from .graph_html import render_html, resume_neuron
@@ -65,6 +65,15 @@ def _seat_spec(text: str) -> dict:
             raise ValueError("crew --seat takes <harness>[,model=M][,effort=E][,where=W][,title=T]; got " + repr(kv))
         spec[key] = val
     return spec
+
+
+def _brief_text(value: str | None) -> str | None:
+    """crew --brief TEXT, or @path for a file's text (BOM-tolerant)."""
+    if value is None:
+        return None
+    if value.startswith("@"):
+        return Path(value[1:]).read_text(encoding="utf-8-sig")
+    return value
 
 
 # The sender probe sits on a send's path: one attempt at the process table, this many seconds.
@@ -365,6 +374,20 @@ def build_parser() -> argparse.ArgumentParser:
     cw.add_argument("--launch", action="store_true", help="spawn the window once; default writes chairs and shows the argv")
     cw.add_argument("--no-widget", action="store_true", help="do not start the widget service after --launch")
     cw.add_argument("--write-repo-files", action="store_true", help=_WRITE_REPO_FILES_HELP)
+    cw.add_argument("--count", type=int, metavar="N",
+                    help="repeat the one --seat SPEC N times (1..16): titles <harness>-<i>, or <title>-<i> with title=")
+    cw.add_argument("--brief", metavar="TEXT|@path",
+                    help="with --launch: once every chair is seated, send each neuron this task (prefixed with its "
+                         "neuron number) through `send`; without --launch the card shows the planned briefs")
+    cw.add_argument("--brief-timeout", type=float, default=BRIEF_TIMEOUT_S, metavar="SECONDS",
+                    help="seconds to wait for the chairs to seat before the brief (default 300)")
+    cw.add_argument("--here", action="store_true",
+                    help="split the window you are working in (wt -w 0 split-pane); at most 4 neurons")
+    cw.add_argument("--no-canary", action="store_true",
+                    help="launch every neuron at once; by default a crew of several launches the first alone "
+                         "and launches the rest only after it is seated")
+    cw.add_argument("--canary-timeout", type=float, default=CANARY_TIMEOUT_S, metavar="SECONDS",
+                    help="seconds to wait for the first neuron to seat before launching the rest (default 120)")
 
     ad = sub.add_parser("add", help="one neuron: mint its worktree, join its chair, and launch it: inside tmux a split of your pane; on Windows the thread's own Windows Terminal window (wt -w convoy-<8 hex>: the first neuron opens it, later ones split inside it); elsewhere the thread's detached tmux session")
     ad.add_argument("harness", help="harness id (convoy choices lists them)")
@@ -920,10 +943,21 @@ def main(argv: list[str] | None = None) -> int:
         except ValueError as e:
             print(json.dumps({"ok": False, "error": str(e)}))
             return 1
+        try:
+            # Usage errors, before anything is written: a count beside two seats, or above the cap.
+            seats = expand_count(seats, args.count)
+            brief = _brief_text(args.brief)
+        except (OSError, ValueError) as e:
+            print(json.dumps({"ok": False, "error": str(e)}))
+            return 2
+        runner = (live_here_runner if args.here else live_runner) if args.launch else None
         card = crew(root, seats, thread=args.thread, checkout=args.checkout,
-                    runner=live_runner if args.launch else None, allow_unverified_launch=args.allow_unverified_launch,
+                    runner=runner, allow_unverified_launch=args.allow_unverified_launch,
                     write_repo_files=_opt_in(args),
-                    launcher=resolve_launcher(root, explicit_root=root_explicit))
+                    launcher=resolve_launcher(root, explicit_root=root_explicit),
+                    brief=brief, brief_timeout=args.brief_timeout, here=bool(args.here),
+                    canary=not args.no_canary, canary_timeout=args.canary_timeout,
+                    brief_sender=_proven_sender(root, False, explicit_root=root_explicit) if brief and args.launch else None)
         if card.get("ok") and args.launch:
             card["widget_service"] = auto_widget_service(disabled=bool(args.no_widget))
         print(json.dumps(card))

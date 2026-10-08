@@ -328,6 +328,13 @@ def managed_host_argv(root: Path, seat: dict[str, Any]) -> list[str]:
     return [*head, "--root", str(Path(root).resolve()), "--seat", sid]
 
 
+def tiled_layout(target: str) -> list[str]:
+    """Chained after every tmux split: `; select-layout -t <target> tiled`, so a window
+    of many neurons stays a grid of usable panes instead of ever-thinner rows. The
+    bare ";" argument is tmux's own command separator (no shell is involved)."""
+    return [";", "select-layout", "-t", target, "tiled"]
+
+
 def active_pane_argv(
     seat: dict[str, Any],
     capability: dict[str, Any],
@@ -381,6 +388,7 @@ def active_pane_argv(
             "-c",
             worktree,
             shlex.join(inner),
+            *tiled_layout(pane),
         ]
     if adapter == "tmux-detached":
         name = str(capability.get("target") or "").strip()
@@ -390,7 +398,8 @@ def active_pane_argv(
         # worktree or boot prompt with spaces stays one argument. One session per
         # thread: the first neuron makes it, later ones split its current window.
         if not capability.get("first", True):
-            return [terminal, "split-window", "-t", "=" + name + ":", "-c", worktree, shlex.join(inner)]
+            return [terminal, "split-window", "-t", "=" + name + ":", "-c", worktree, shlex.join(inner),
+                    *tiled_layout("=" + name + ":")]
         title = thread_pane_title(str(capability.get("label") or name.removeprefix("convoy-")), seat)
         return [terminal, "new-session", "-d", "-s", name, "-n", title, "-c", worktree, shlex.join(inner)]
     raise ValueError("unsupported terminal adapter: " + str(adapter))

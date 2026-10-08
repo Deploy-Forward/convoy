@@ -18,6 +18,7 @@ import argparse
 import contextvars
 import ipaddress
 import json
+import math
 import re
 import os
 import shutil
@@ -680,7 +681,15 @@ TOOLS: list[dict[str, Any]] = [
                                         required=["harness"])},
              "checkout": {"type": "string", "description": "git checkout to mint worktrees from; default the bound root"},
              "thread": {"type": "string", "description": "must match the bound thread when given"},
-             "launch": {"type": "boolean", "default": False, "description": "false writes chairs + worktrees and shows the argv; true spawns the window once"}},
+             "launch": {"type": "boolean", "default": False, "description": "false writes chairs + worktrees and shows the argv; true spawns the window once"},
+             "count": {"type": "integer", "minimum": 1, "maximum": 16,
+                       "description": "repeat the one seat N times (1..16; needs exactly one seat): titles <harness>-<i>, or <title>-<i>"},
+             "brief": {"type": "string",
+                       "description": "with launch=true: once every chair is seated, send each neuron this task, prefixed with its neuron number, through send (one token per neuron); without launch the card shows the planned briefs"},
+             "brief_timeout": {"type": "number", "default": 300,
+                               "description": "seconds to wait for the chairs to seat before the brief (max 600)"},
+             "canary": {"type": "boolean", "default": True,
+                        "description": "with launch=true and more than one neuron: launch the first alone and the rest only once it is seated (120 s); false launches all at once"}},
             required=["seats"],
         ),
     },
@@ -1383,9 +1392,22 @@ def _call_tool_at(root: Path, name: str, args: dict[str, Any]) -> dict[str, Any]
         launcher = _launch_launcher()
         if launcher is None:
             return _no_launcher({"seats": [], "launched": False})
+        brief = args.get("brief")
+        if brief is not None and not isinstance(brief, str):
+            return {"ok": False, "seats": [], "launched": False, "error": "crew brief must be text"}
+        raw_timeout = args.get("brief_timeout", 300)
+        if isinstance(raw_timeout, bool) or not isinstance(raw_timeout, (int, float)) or not math.isfinite(raw_timeout):
+            return {"ok": False, "seats": [], "launched": False,
+                    "error": "crew brief_timeout must be a number of seconds, got " + repr(raw_timeout)}
+        canary = args.get("canary", True)
+        if not isinstance(canary, bool):
+            return {"ok": False, "seats": [], "launched": False, "error": "crew canary must be a boolean"}
         return crew_chairs(root, seats, thread=_opt_str(args, "thread"), checkout=_opt_str(args, "checkout"),
                            runner=live_runner if launch else None, allow_unverified_launch=args.get("allow_unverified_launch", False),
-                           launcher=launcher, **repo_files)
+                           launcher=launcher, count=args.get("count"), brief=brief, canary=canary,
+                           brief_timeout=min(max(float(raw_timeout), 0.0), AWAIT_SEATED_MAX_S),
+                           brief_sender=_conductor_sender() if brief and launch else None, brief_local_writer=False,
+                           **repo_files)
     if name == "seated":
         sid = (_opt_str(args, "seat") or "").strip()
         token = _opt_str(args, "token") or ""

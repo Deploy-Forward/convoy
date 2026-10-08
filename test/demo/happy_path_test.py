@@ -168,7 +168,7 @@ class HappyPath(unittest.TestCase):
         self.assertIsNone(self.run_cli("lead")["lead"])
 
         # 4 SUMMON: one worktree per seat, two chairs, one window
-        cw = self.run_cli("crew", "--seat", "codex", "--seat", "grok,effort=high", "--thread", "demo", "--launch", "--allow-unverified-launch")
+        cw = self.run_cli("crew", "--seat", "codex", "--seat", "grok,effort=high", "--thread", "demo", "--launch", "--allow-unverified-launch", "--no-canary")
         self.assertTrue(cw["ok"], cw)
         chairs = cw["seats"] if "seats" in cw else cw["chairs"]
         sids = [c["session_id"] for c in chairs]
@@ -243,7 +243,7 @@ class HappyPath(unittest.TestCase):
     def test_relaunch_after_the_panes_die_carries_the_timeline(self):
         self.run_cli("onboard", "--to", "claude", "--to", "codex", "--to", "grok", "--thread", "demo",
                      "--checkout-root", str(self.root), "--github", "no")
-        cw = self.run_cli("crew", "--seat", "codex", "--seat", "grok", "--thread", "demo", "--launch", "--allow-unverified-launch")
+        cw = self.run_cli("crew", "--seat", "codex", "--seat", "grok", "--thread", "demo", "--launch", "--allow-unverified-launch", "--no-canary")
         sids = [c["session_id"] for c in cw["seats"]]
         tokens = self._join_tokens()
         for sid in sids:

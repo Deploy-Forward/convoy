@@ -458,7 +458,8 @@ class CrewWire(unittest.TestCase):
         open_write_gate(self)
         card = self._call("crew", seats=[{"harness": "grok", "effort": "low"},
                                           {"harness": "claude"},
-                                          {"harness": "codex"}], launch=True, allow_unverified_launch=True)
+                                          {"harness": "codex"}], launch=True, allow_unverified_launch=True,
+                           canary=False)
         self.assertTrue(card["ok"], card)
         self.assertTrue(card["launched"])
         self.assertEqual(len(card["seats"]), 3)
@@ -553,7 +554,7 @@ class CrewCli(unittest.TestCase):
         return rc, json.loads(buf.getvalue())
 
     def test_crew_spec_and_await_seated_verbs(self):
-        rc, card = self._run("crew", "--seat", "grok,model=grok-4,effort=high", "--seat", "claude,title=opus", "--launch", "--allow-unverified-launch")
+        rc, card = self._run("crew", "--seat", "grok,model=grok-4,effort=high", "--seat", "claude,title=opus", "--launch", "--allow-unverified-launch", "--no-canary")
         self.assertEqual(rc, 0, card)
         self.assertTrue(card["launched"])
         self.assertEqual(self.runner.call_count, 1)

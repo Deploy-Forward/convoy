@@ -35,6 +35,10 @@ pane only.
 The card's `placement` is `split`, `thread-window`, `detached` or `here`. `--here`
 inside tmux is the `split` adapter; outside tmux (or without `wt`) it refuses,
 naming `thread-window` and `detached`, before anything is written.
+Every tmux split is chained with `; select-layout -t <target> tiled`.
+`crew` launches many neurons in one wt argv: more than four tile in tabs of four,
+each a 2x2 grid (`new-tab`, `split-pane -V`, `move-focus left ; split-pane -H`,
+`move-focus right ; split-pane -H`); `crew --here` takes at most four.
 | Other hosts | none | Refuse | Refuse |
 
 macOS and Linux are supported when the caller is inside tmux, and outside it

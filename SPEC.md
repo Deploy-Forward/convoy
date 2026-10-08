@@ -52,7 +52,7 @@ Locked from the stress findings (audit trail: docs/audits/; further artifacts li
 - **`to` disambiguation (pre-existing key, two meanings).** On `note`/`conductor` rows `to` is the addressee. On `synapse`/`refuse` rows `to` remains what it always was: the send-target harness name. Readers filtering "rows addressed to me" must filter on kind `note`/`conductor` first; a bare `row["to"]=="claude"` filter also matches every send to the claude harness.
 - **`note` — the neuron-side write, symmetric to `stamp`.** `layer.neuron_note` / MCP tool `note` (args `summary`, `instance_id` required, `to` optional): kind `note`, same one-line ≤500 clamp as stamp (`truncated: true` on clamp), refuses anonymous or conductor-alias authors. This is the neuron-side write path over MCP; local neurons may keep using CLI `hook note`.
 - **Runner provenance on synapse rows.** Every synapse row stamps `runner` (`"native"`/`"fake"`/`"ola"` by function identity via `synapse.runner_kind`, else the runner's name) and `argv0` (from the card's argv, JSON `null` when absent) — so the SoT can distinguish a native vendor send from a fake ACK. Rows without these fields predate v2.1 and are not evidence of a native send.
-- **Build id on the wire.** `initialize` `serverInfo.version` is `<base>+<git describe --always --dirty>` (base 1.3.2) when the package sits in a git checkout (`-dirty` marks a patched-in-place deploy), the bare base version when unknown (never an invented sha). A hung/missing git degrades to the bare version — it must never stop the server (`OSError` and `SubprocessError` both caught). Scope honesty: one-call drift detection holds only for git-checkout deploys; the bare-version fallback is indistinguishable from a pre-v2.1 deploy.
+- **Build id on the wire.** `initialize` `serverInfo.version` is `<base>+<git describe --always --dirty>` (base 1.4.0) when the package sits in a git checkout (`-dirty` marks a patched-in-place deploy), the bare base version when unknown (never an invented sha). A hung/missing git degrades to the bare version — it must never stop the server (`OSError` and `SubprocessError` both caught). Scope honesty: one-call drift detection holds only for git-checkout deploys; the bare-version fallback is indistinguishable from a pre-v2.1 deploy.
 - **One local server, many threads.** `convoy mcp` serves every thread in the machine index and each call names its thread (`thread` or `convoy_id`); `--root` pins one, and a named thread still wins. A read routes by a thread from the index, never by an arbitrary path (arbitrary-path read hole); only the write-gated `onboard` takes a checkout path. Rebinding a thread to flip a test GREEN is refused.
 - **Write-tool gate.** The RPC layer never exposes SoT write tools (`stamp`, `note`) to a caller without identity: with no bearer minted they are absent from `tools/list`, and `tools/call` refuses them unless the request carries a checked conductor bearer (`convoy conductor mint`, sent as `Authorization: Bearer`). There is no process-wide switch; `CONVOY_MCP_WRITE_TOOLS` was removed in 1.3.2. The CLI is not gated.
 - **Loopback only (1.3.2).** The MCP HTTP server binds only a loopback address (`--host` other than `127.0.0.1`, `localhost` or `::1` is refused) and serves a request only when the peer is this machine's loopback, its `Host` is `127.0.0.1`, `localhost` or `[::1]` on the port it listens on, and any `Origin` is an `http://` loopback origin on that same port; a non-loopback peer is a 403 on every method whatever `Host` it sends, and anything else is a 403 before identity or body (DNS-rebinding defense, required by the MCP Streamable HTTP transport). No response carries CORS headers. The desktop widget's local server applies the same checks. A GET through a proxy header is a 404; a loopback `GET /` is one line of text naming the version and the thread count; `GET /mcp` is a 405. Remote access to your loopback MCP is not a Convoy feature; if you build it, put it behind your own access control.
@@ -368,9 +368,67 @@ tmux keeps splitting the caller's exact pane when the launch runs inside tmux
 (`TMUX_PANE` names it). Outside tmux, with tmux installed, one detached session
 per thread mirrors the window: the same `convoy-<8 hex>` name, `new-session -d -s`
 for the first neuron and `split-window -t =<name>:` for later ones; the card's
-`attach` opens it.
+`attach` opens it. Every tmux split (of the caller's pane or of the detached
+session) is chained with `; select-layout -t <target> tiled`, so a window of many
+neurons stays a grid of usable panes; `new-session` is not.
 
 Unit: `test/demo/thread_window_test.py`, `test/demo/convoy_add_test.py`.
+
+#### crew: N neurons with one task (1.4.0)
+
+`crew --seat SPEC [--seat SPEC ...] [--launch]` mints one worktree per local seat,
+joins every chair with a boot prompt and brings them up in the thread's one window
+with a single wt argv. Three options build on it:
+
+- `--count N` repeats the one `--seat` SPEC N times. Titles are `<harness>-<i>`, or
+  `<title>-<i>` when the SPEC has `title=`. `--count` beside a second `--seat` is a
+  usage error, and N is 1..16: above 16 crew refuses before anything is written
+  ("crew --count is capped at 16 per call; run crew again on the same thread for
+  more"). The MCP `crew` tool takes the same optional integer `count`, through the
+  same code (`crew.expand_count`).
+- `--brief TEXT|@path` (MCP `brief`): after `--launch`, crew waits for every chair
+  to seat (`await_seated`, `--brief-timeout`, default 300 s; MCP `brief_timeout`,
+  at most 600) and then sends each seated neuron its copy through the path `convoy
+  send` takes (`send_one` to the chair's id: one inbox row and one token per
+  neuron, a `synapse` feed row, `delivered: false`). Nothing is typed into a pane.
+  Each copy starts with one line: "You are neuron <i> of <N> on thread <thread>
+  (crew <first seat id>). Coordinate through Convoy notes; claim your share before
+  starting." The card's `briefs` lists per neuron `{neuron_id, session_id,
+  worktree, send_token, seated}`. A chair that does not seat in time gets
+  `seated: false`, no send and a line in `warnings`, and the card's `ok` is false;
+  a crew that did not launch sends no brief. Without `--launch` the card carries
+  the planned copies (`briefs[].brief`, `brief_sent: false`) and sends nothing.
+- `--here` splits the person's own window (`wt -w 0 split-pane`) and takes at most
+  four neurons; for more it refuses before anything is written ("--here takes at
+  most 4 neurons; drop --here to open them in the thread's window in tabs").
+- Canary first (default on; `--no-canary`, MCP `canary: false`, opts out). Model
+  ids pass through unverified, so a `crew --launch` of more than one local neuron
+  launches the first seat alone, waits for it to seat (`--canary-timeout`, default
+  120 s; the same seated-ack reading as `await_seated`, also stopping at the pane
+  host's harness-exit row), and only then launches the rest in one more wt argv
+  that continues the layout from pane 2 of tab 1 (the canary is pane 1). A canary
+  that does not seat in time, or whose harness exits, stops the rest: their chairs
+  stay joined, each marked `launched: false, reason: "canary_failed"` in `seats`
+  and `not_launched`, with a `launch --seat` per chair in `recovery`; the canary's
+  own error (the exit code and stderr tail, or the await reason) is in `warnings`,
+  `canary` holds the verdict, and `ok` is false. A failed canary sends no brief.
+  A crew of one has no canary step. A dry pass waits for nobody and names the
+  canary in `canary_plan`.
+
+Layout: up to four panes keep the chain above (`new-tab`, then `split-pane -V`,
+then `split-pane -H`). More than four tile in tabs of four, each a 2x2 grid, in
+the same `-w convoy-<8 hex>` window: pane 1 of a tab is `new-tab` (the launch's
+first pane keeps the `first` rule: `split-pane -V` when the window already holds
+neurons), pane 2 `split-pane -V`, pane 3 `move-focus left ; split-pane -H`, pane 4
+`move-focus right ; split-pane -H`; pane 5 opens the next tab. One `-w` per argv,
+literal `;` separators, never `--` before the harness exe. The `move-focus` shape
+is live-verified on Windows Terminal 1.24.11911.0 (ten panes: three tabs of 4, 4, 2, each four
+equal quadrants). Without `--launch` the card's
+`planned_argv` is the wt argv a launch would spawn, built raw (no session minted,
+no launch record written), so each pane shows the harness argv where a launch
+runs the Convoy pane host that starts it.
+
+Unit: `test/demo/crew_count_brief_test.py`.
 
 ### Bodies: panes + whoami (detect → identify → send)
 
@@ -1385,7 +1443,7 @@ The demo thread key is `demo`. Tests live in `test/demo/`. These tests must fail
 
 Claims in this file must be true of **this tree** or of a named demo run with a timestamp. If a function is not in `src/convoy/`, it is not GREEN for this tree.
 
-The rows below describe this tree (`convoy` 1.3.3); the table began as the inventory of `f40b01a` (merge of PR #24) and has grown with the tree, so it carries no module or test count.
+The rows below describe this tree (`convoy` 1.4.0); the table began as the inventory of `f40b01a` (merge of PR #24) and has grown with the tree, so it carries no module or test count.
 
 | Path | What it actually does |
 |---|---|
@@ -1410,7 +1468,7 @@ The rows below describe this tree (`convoy` 1.3.3); the table began as the inven
 | `src/convoy/synapse.py` | `fake_runner` (default), `native_runner` (`--live`: vendor binary on PATH, wrapper names refused, `cwd=worktree`), `send_one` / `send_many`. Live mode is native on both CLI and MCP. Wrapper names (`ola-brain`, side-chat, UltraCode-Shim) are refused as a harness. |
 | `src/convoy/usage.py` | `probe()`, `normalize_usage_remaining()`, `surface()`. Unknown remaining is JSON `null`; never invent `0`; grok remaining is always `null`. |
 | `test/run.py` + `test/demo/` | The suite: `python -m unittest test.demo.<module>` runs one module. |
-| `pyproject.toml` | `convoy` 1.3.3, packages under `src`, requires-python >= 3.11. |
+| `pyproject.toml` | `convoy` 1.4.0, packages under `src`, requires-python >= 3.11. |
 
 We do not:
 

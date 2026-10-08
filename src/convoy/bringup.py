@@ -153,6 +153,9 @@ def _exe_positions(parts: list[str]) -> list[int]:
             if a in _WT_VALUE_OPTIONS:
                 i += 2
                 continue
+            if a in ("move-focus", "mf"):
+                i += 2   # its direction (left/right/up/down) is not a program
+                continue
             if a in _WT_SUBCOMMANDS or a.startswith("-"):
                 i += 1
                 continue
@@ -370,7 +373,7 @@ def _prepare_wt_seat(seat: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
-def _live_argv(argv: list[str]) -> list[str]:
+def _live_argv(argv: list[str], *, here: bool = False) -> list[str]:
     """Popen argv for ONE isolated wt.exe spawn. FileName is wt. ArgumentList is the rest.
 
     Never per-seat CREATE_NEW_CONSOLE. Never `--` before the harness exe (pops Help).
@@ -393,7 +396,7 @@ def _live_argv(argv: list[str]) -> list[str]:
     base0 = _basename_lower(parts[0])
     if base0 not in ("wt", "wt.exe"):
         raise ValueError("refuse per-seat spawn; use isolated_wt_argv")
-    _check_thread_window(parts)
+    _check_thread_window(parts, here=here)
     wt = _resolve_wt_bin(parts[0])
     # wt.exe splits ITS OWN command line on ';' (that is how nt ; split-pane
     # chains). A boot prompt or title carrying a literal ';' therefore became
@@ -1383,9 +1386,37 @@ def _with_claude_live_flags(argv: list[str], to: Any) -> list[str]:
     return parts
 
 
+# A window takes panes in tabs of at most this many, each tiled 2x2.
+TAB_PANES = 4
+HERE_MAX_PANES = 4
+
+
+def _tile_step(i: int, first: bool) -> list[str]:
+    """The wt commands that open pane i (0-based) of a tiled launch: tabs of four,
+    each a 2x2 grid. Pane 1 of a tab is new-tab (the launch's first pane keeps the
+    `first` rule: split-pane -V when the window already holds neurons), pane 2
+    split-pane -V (right column), pane 3 move-focus left ; split-pane -H (bottom
+    left), pane 4 move-focus right ; split-pane -H (bottom right). Pane 5 opens the
+    next tab in the same window (the argv's one -w names it).
+
+    Live-verified on Windows Terminal 1.24.11911.0: ten panes gave three tabs (4, 4, 2), each
+    tab four equal quadrants in order 1 top-left, 2 top-right, 3 bottom-left, 4 bottom-right."""
+    pos = i % TAB_PANES
+    if pos == 0:
+        if i == 0:
+            return ["new-tab"] if first else ["split-pane", "-V"]
+        return [";", "new-tab"]
+    if pos == 1:
+        return [";", "split-pane", "-V"]
+    if pos == 2:
+        return [";", "move-focus", "left", ";", "split-pane", "-H"]
+    return [";", "move-focus", "right", ";", "split-pane", "-H"]
+
+
 def isolated_wt_argv(thread: str | int, seats: list[dict[str, Any]], *, wt: str | None = None,
                      root: Path | str | None = None, raw: bool = False, window: str | None = None,
-                     first: bool = True, here: bool = False) -> list[str]:
+                     first: bool = True, here: bool = False, tile_offset: int = 0,
+                     tile_total: int | None = None) -> list[str]:
     """Pure Windows Terminal argv for n seated neurons. Does not spawn.
 
     Every launch is an owned body: with `root` each pane runs
@@ -1414,6 +1445,13 @@ def isolated_wt_argv(thread: str | int, seats: list[dict[str, Any]], *, wt: str 
     Never nw / rename-window.
     Literal ';' WT separators via Start-Process -ArgumentList, not cmd ^;.
     No --append-system-prompt. Claude live flags on the inner argv.
+    More than four panes tile: tabs of four, each a 2x2 grid (_tile_step, live-verified
+    on WT 1.24.11911.0); four or fewer keep the new-tab / -V / -H chain.
+    A here build takes at most four panes (the person's one window, no new tabs).
+    tile_offset continues a layout another argv began (crew's canary is pane 1 of
+    tab 1, the rest start at pane 2): panes are placed as if they followed
+    tile_offset earlier ones, in a window that already holds them (first=False),
+    and tile_total (default offset + n) decides whether the whole launch tiles.
     """
     name = str(thread if thread is not None else "").strip()
     # -w 0 is the most recently used window, i.e. where the person is. Only the
@@ -1427,6 +1465,14 @@ def isolated_wt_argv(thread: str | int, seats: list[dict[str, Any]], *, wt: str 
     panes = _pane_seats(list(seats or []))
     if not panes:
         raise ValueError("refuse empty seats")
+    offset = max(0, int(tile_offset or 0))
+    total = int(tile_total) if tile_total is not None else offset + len(panes)
+    if here and total > HERE_MAX_PANES:
+        raise ValueError("--here takes at most " + str(HERE_MAX_PANES) +
+                         " neurons; drop --here to open them in the thread's window in tabs")
+    tiled = total > TAB_PANES
+    if offset:
+        first = False   # the earlier panes are already in the window
     from .targeted_launch import root_thread_label, thread_pane_title, thread_window_name
     label = root_thread_label(root, name or None)
     if window is None:
@@ -1437,12 +1483,16 @@ def isolated_wt_argv(thread: str | int, seats: list[dict[str, Any]], *, wt: str 
     argv: list[str] = [wt_bin, "-w", str(window)]
     records: list[tuple[str, list[str], str | None]] = []
     for i, seat in enumerate(panes):
-        if i == 0 and first:
+        g = i + offset   # the pane's place in the whole launch
+        if tiled:
+            step = _tile_step(g, first)
+            argv.extend(step[1:] if i == 0 and step[0] == ";" else step)
+        elif i == 0 and first:
             argv.append("new-tab")
         else:
             if i > 0:
                 argv.append(";")
-            split = "-V" if i <= 1 else "-H"
+            split = "-V" if g <= 1 else "-H"
             argv.extend(["split-pane", split])
         cwd = seat.get("worktree") or seat.get("cwd") or ""
         # Mint BEFORE the argv is built, because the launch record written
@@ -1738,7 +1788,8 @@ def _tile_console(pid: int, rect: dict[str, int], title: str | None) -> str | No
         return "visible console spawned; tile skipped (" + type(e).__name__ + ")"
 
 
-def live_runner(argv: list[str], cwd: str | None = None, rect: dict[str, int] | None = None, **_k: Any) -> dict[str, Any]:
+def live_runner(argv: list[str], cwd: str | None = None, rect: dict[str, int] | None = None, *, here: bool = False,
+                **_k: Any) -> dict[str, Any]:
     """ONE isolated wt.exe spawn for a named thread. Not called from unit tests.
 
     FileName is wt. ArgumentList is isolated_wt_argv[1:] (-w convoy-<8 hex>, new-tab / split-pane).
@@ -1746,10 +1797,16 @@ def live_runner(argv: list[str], cwd: str | None = None, rect: dict[str, int] | 
     Isolated spawn is a new WINDOW not a new PROCESS; do not close WT windows.
     cwd and rect are ignored: each pane has -d DIR; WT split-pane tiles.
     """
-    argv = _live_argv(list(argv))
+    argv = _live_argv(list(argv), here=here)
     # Do not pass CREATE_NEW_CONSOLE / startupinfo / MoveWindow / WM_CLOSE.
     proc = subprocess.Popen(argv, env=pane_env())
     return {"ok": True, "pid": proc.pid, "argv": argv}
+
+
+def live_here_runner(argv: list[str], cwd: str | None = None, rect: dict[str, int] | None = None,
+                     **_k: Any) -> dict[str, Any]:
+    """live_runner for the person's explicit --here: the argv targets `-w 0 split-pane`."""
+    return live_runner(argv, cwd, rect, here=True)
 
 
 def _resolve(root: Path, convoy_id: str | None, thread: str | None) -> dict[str, Any]:
@@ -1829,7 +1886,7 @@ def _window_for(root: Path, seat: dict[str, Any], rect: dict[str, int] | None, c
     return win
 
 
-def bring_up(root: Path, convoy_id: str | None = None, thread: str | None = None, runner: Runner | None = None, tiler: Tiler | None = None, session_ids: list[str] | None = None, *, allow_unverified_launch: bool = False, write_repo_files: bool | None = None, exclude: dict[str, str] | None = None) -> dict[str, Any]:
+def bring_up(root: Path, convoy_id: str | None = None, thread: str | None = None, runner: Runner | None = None, tiler: Tiler | None = None, session_ids: list[str] | None = None, *, allow_unverified_launch: bool = False, write_repo_files: bool | None = None, exclude: dict[str, str] | None = None, here: bool = False, plan_argv: bool = False, tile_offset: int = 0, tile_total: int | None = None) -> dict[str, Any]:
     """Resume seated neurons in ONE isolated wt.exe window. Conductor grok-bot is not a window.
 
     write_repo_files None writes every repo file only into a minted worktree (ensure_first_run);
@@ -1838,6 +1895,8 @@ def bring_up(root: Path, convoy_id: str | None = None, thread: str | None = None
     (would_write, would_write_home) and it must not Popen wt. Pass live_runner only for a real TUI pop (one isolated_wt_argv).
     Unit tests must not pass live_runner without mocking Popen.
     session_ids=None is the bulk show; a list restricts the window to those chairs.
+    plan_argv=True on a dry run adds `planned_argv`: the one wt argv a live run would
+    spawn, built raw (no session minted, no launch record written).
     """
     resolved = _resolve(root, convoy_id, thread)
     if not resolved.get("ok"):
@@ -1935,7 +1994,8 @@ def bring_up(root: Path, convoy_id: str | None = None, thread: str | None = None
                 # terminal owns and nobody counts.
                 launching = {str(s.get("session_id")) for s in ready}
                 wt_argv = isolated_wt_argv(bound or "", ready, wt=_resolve_wt_bin(), root=root,
-                                           first=not _window_holds_another(root, launching))
+                                           first=not _window_holds_another(root, launching), here=here,
+                                           tile_offset=tile_offset, tile_total=tile_total)
                 result = runner(wt_argv)
                 if isinstance(result, dict):
                     for i in ready_idx:
@@ -1953,6 +2013,16 @@ def bring_up(root: Path, convoy_id: str | None = None, thread: str | None = None
                 for i in ready_idx:
                     windows[i]["ok"] = False
                     windows[i]["error"] = str(e)
+    planned: dict[str, Any] = {}
+    if runner is None and plan_argv:
+        try:
+            ready = _pane_seats([_prepare_wt_seat(s) for i, s in enumerate(effective) if windows[i].get("ok")])
+            if ready:
+                launching = {str(s.get("session_id")) for s in ready}
+                planned["planned_argv"] = isolated_wt_argv(bound or "", ready, wt=_resolve_wt_bin(), root=root, raw=True,
+                                                           first=not _window_holds_another(root, launching), here=here)
+        except Exception as e:
+            planned["planned_argv_error"] = str(e)
     overall = all(w.get("ok") for w in windows) if windows else True
     card: dict[str, Any] = {
         "ok": overall,
@@ -1966,6 +2036,7 @@ def bring_up(root: Path, convoy_id: str | None = None, thread: str | None = None
         "launched": [str(w.get("session_id")) for w in windows
                      if runner is not None and w.get("ok") and w.get("session_id")],
         "cloud": _cloud_seats(root, cid, session_ids),
+        **planned,
     }
     if skipped and not hops:
         # ok stays true (nothing failed), but a caller reading ok alone must not think a pane opened.
