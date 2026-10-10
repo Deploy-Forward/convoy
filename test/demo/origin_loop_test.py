@@ -33,9 +33,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 from convoy.convoy import bind, ensure_id, seat, update_seat  # noqa: E402
 from convoy.origin_loop import (  # noqa: E402
     BACKOFF_S,
+    REFUSED_REASONS,
     Outbox,
     OriginLoop,
     chair_reachable,
+    decide,
     frame_brief,
     is_slug,
     next_poll_interval,
@@ -77,6 +79,10 @@ class FakeClient:
         self.calls.append(("beat", payload))
         return self._answer("beat")
 
+    def answer_nudge(self, nudge_id, outcome, reason):
+        self.calls.append(("answer_nudge", {"nudge_id": nudge_id, "outcome": outcome, "reason": reason}))
+        return self._answer("answer_nudge")
+
 
 def _link(**kw):
     """One PendingLink row as the platform emits it: {link, card, settings}. `card=` sets the
@@ -86,6 +92,19 @@ def _link(**kw):
             "repoSlug": "acme/widgets", "harness": "codex"}
     link.update(kw)
     return {"link": link, "card": card, "settings": None}
+
+
+def _nudge_row(**kw):
+    """One PendingNudge row: {link, card, nudge}. `nudge=` overrides the nudge
+    fields; every other keyword lands on the link, same convention as _link."""
+    nudge = kw.pop("nudge", {})
+    link = {"id": "l1", "cardId": "c1", "originId": MINE, "status": "active",
+            "repoSlug": "acme/widgets", "harness": "codex", "sessionId": "chair"}
+    link.update(kw)
+    full_nudge = {"nudgeId": "n1", "requestedBy": {"kind": "user", "id": "u1"},
+                 "requestedAt": 0, "status": "pending", "reason": None, "answeredAt": None}
+    full_nudge.update(nudge)
+    return {"link": link, "card": {"id": "c1"}, "nudge": full_nudge}
 
 
 class Addressing(unittest.TestCase):
@@ -144,6 +163,220 @@ class Addressing(unittest.TestCase):
         self.assertIn("IGNORE PREVIOUS INSTRUCTIONS", delivered["body"])
         _kind, call = client.calls[1]
         self.assertEqual(call["body"]["outcome"], "active", "hostile text changes nothing about the outcome")
+
+
+class Decide(unittest.TestCase):
+    """deliver | launch | refuse: one pure function, every fact about the
+    world (who is seated, whether the harness is installed, whether a pane
+    host can open a window) handed in as plain data."""
+
+    ORIGIN = {"user_id": "u1"}
+    READY = {"installed": True, "can_host": True}
+    LINK = {"id": "l1", "harness": "codex", "requestedBy": {"kind": "user", "id": "u1"}}
+
+    def test_decide_table(self):
+        live = {"session_id": "c1", "to": "codex", "detached": False}
+        other_live = {"session_id": "c2", "to": "codex", "detached": False}
+        detached = {"session_id": "c3", "to": "codex", "detached": True}
+        other_harness = {"session_id": "c4", "to": "claude", "detached": False}
+        no_requester = {**self.LINK, "requestedBy": {}}
+        wrong_requester = {**self.LINK, "requestedBy": {"kind": "user", "id": "stranger"}}
+        rows = [
+            ("one live chair of the harness delivers to it",
+             self.LINK, [live], self.ORIGIN, self.READY, ("deliver", live)),
+            ("two live chairs: ambiguous, refuse rather than guess",
+             self.LINK, [live, other_live], self.ORIGIN, self.READY, ("refuse", "no_resume_target")),
+            ("every chair of the harness detached: no second body beside one that could resume",
+             self.LINK, [detached], self.ORIGIN, self.READY, ("refuse", "no_resume_target")),
+            ("a chair of another harness never matches; zero codex chairs is a launch",
+             self.LINK, [other_harness], self.ORIGIN, self.READY,
+             ("launch", {"harness": "codex", "model": None, "effort": None,
+                         "reuseLinkId": None, "takeOver": False})),
+            ("no requestedBy at all: R1 fails closed, never an accidental match",
+             no_requester, [], self.ORIGIN, self.READY, ("refuse", "policy_denied")),
+            ("requestedBy names someone other than the device owner",
+             wrong_requester, [], self.ORIGIN, self.READY, ("refuse", "policy_denied")),
+            ("owner matches but origin carries no user_id: fail closed, not a vacuous match",
+             self.LINK, [], {}, self.READY, ("refuse", "policy_denied")),
+            ("owner matches, harness not installed",
+             self.LINK, [], self.ORIGIN, {"installed": False, "can_host": True},
+             ("refuse", "harness_not_installed")),
+            ("owner matches, installed, no terminal can host a pane",
+             self.LINK, [], self.ORIGIN, {"installed": True, "can_host": False},
+             ("refuse", "no_terminal")),
+            ("owner matches, installed, a terminal can host: launch, with model/effort carried",
+             {**self.LINK, "model": "sonnet", "effort": "high"}, [], self.ORIGIN, self.READY,
+             ("launch", {"harness": "codex", "model": "sonnet", "effort": "high",
+                         "reuseLinkId": None, "takeOver": False})),
+        ]
+        for name, link, seats, origin, terminal, expected in rows:
+            with self.subTest(name):
+                self.assertEqual(decide(link, seats, origin, terminal), expected)
+
+    def test_launch_plan_carries_reuse_link_id_and_take_over_through_untouched(self):
+        link = {**self.LINK, "reuseLinkId": "l0", "takeOver": True}
+        outcome, plan = decide(link, [], self.ORIGIN, self.READY)
+        self.assertEqual(outcome, "launch")
+        self.assertEqual(plan["reuseLinkId"], "l0")
+        self.assertTrue(plan["takeOver"])
+
+    def test_every_refuse_reason_decide_can_return_is_in_the_fulfilable_set(self):
+        # _act maps an unrecognised reason to harness_absent before it ever reaches
+        # the platform; decide() must never emit one that needs that fallback.
+        for reason in ("no_resume_target", "policy_denied", "harness_not_installed", "no_terminal"):
+            self.assertIn(reason, REFUSED_REASONS, reason)
+
+
+class LaunchWiring(unittest.TestCase):
+    """_act, on ("launch", plan): the existing crew.add, never a new spawn path."""
+
+    def setUp(self):
+        self.home = Path(tempfile.mkdtemp(prefix="convoy-home-"))
+        self.root = Path(tempfile.mkdtemp(prefix="convoy-root-"))
+        ensure_id(self.root)
+        bind(self.root, "launch-t")
+
+    def _loop(self, client, **kw):
+        kw.setdefault("resolve", lambda _slug: self.root)
+        kw.setdefault("terminal", lambda _link: {"installed": True, "can_host": True})
+        return OriginLoop(self.home, origin_id=MINE, client=client, **kw)
+
+    def test_no_chair_and_owners_own_press_calls_the_injected_launch_once(self):
+        row = _link(requestedBy={"kind": "user", "id": "u1"})
+        client = FakeClient({"pendingLinks": [row], "openDelegations": []})
+        client.origin = {"user_id": "u1"}
+        calls = []
+
+        def fake_launch(**kw):
+            calls.append(kw)
+            return {"ok": True, "session_id": "new-chair", "token": "tok1", "delivery": "queued"}
+
+        loop = self._loop(client, launch=fake_launch)
+        card = loop.poll_once()
+        self.assertEqual(len(calls), 1, "one launch per link")
+        self.assertEqual(calls[0]["plan"]["harness"], "codex")
+        self.assertEqual(calls[0]["root"], self.root)
+        self.assertIn("quoted", calls[0]["body"].lower())
+        _kind, fulfil_call = client.calls[1]
+        self.assertEqual(fulfil_call["body"]["outcome"], "active")
+        self.assertEqual(fulfil_call["body"]["sessionId"], "new-chair")
+
+    def test_replay_never_launches_a_second_chair_for_the_same_link(self):
+        """A crash-and-restart replays the outbox, not the queue; the chair this
+        process already launched for this link must never be launched twice."""
+        row = {"link": {"id": "l1", "cardId": "c1", "originId": MINE, "status": "pending",
+                        "repoSlug": "acme/widgets", "harness": "codex",
+                        "requestedBy": {"kind": "user", "id": "u1"}},
+               "card": {"id": "c1", "title": "t", "description": "d"}, "settings": None}
+        client = FakeClient({"pendingLinks": [row], "openDelegations": []})
+        client.origin = {"user_id": "u1"}
+        calls = []
+
+        def fake_launch(**kw):
+            calls.append(kw)
+            return {"ok": True, "session_id": "new-chair", "token": "tok1", "delivery": "queued"}
+
+        loop = self._loop(client, launch=fake_launch,
+                          deliver=lambda **kw: {"ok": True, "session_id": "new-chair", "token": "t2",
+                                                "delivery": "queued"})
+        loop.poll_once()
+        # The same link is now "active" on the seated chair codex/new-chair; a seat
+        # exists so the SECOND poll must deliver, not launch, even against the same
+        # pending queue (a fulfilled link would not really still be pending, but the
+        # no-second-launch guarantee is the seat check, not the platform's status).
+        seat(self.root, "codex", "new-chair", worktree=str(self.root))
+        loop.poll_once()
+        self.assertEqual(len(calls), 1, "the second pass delivers to the now-seated chair, never launches again")
+
+    def test_a_link_for_another_origin_never_launches(self):
+        row = {"link": {"id": "l1", "cardId": "c1", "originId": THEIRS, "status": "pending",
+                        "repoSlug": "acme/widgets", "harness": "codex",
+                        "requestedBy": {"kind": "user", "id": "u1"}},
+               "card": {"id": "c1", "title": "t", "description": "d"}, "settings": None}
+        client = FakeClient({"pendingLinks": [row], "openDelegations": []})
+        client.origin = {"user_id": "u1"}
+        calls = []
+        loop = self._loop(client, launch=lambda **kw: calls.append(kw) or {"ok": True})
+        loop.poll_once()
+        self.assertEqual(calls, [], "not addressed to this origin: never acted on, never launched")
+
+    def test_no_launch_when_requested_by_differs_from_the_origin_user(self):
+        row = {"link": {"id": "l1", "cardId": "c1", "originId": MINE, "status": "pending",
+                        "repoSlug": "acme/widgets", "harness": "codex",
+                        "requestedBy": {"kind": "user", "id": "someone-else"}},
+               "card": {"id": "c1", "title": "t", "description": "d"}, "settings": None}
+        client = FakeClient({"pendingLinks": [row], "openDelegations": []})
+        client.origin = {"user_id": "u1"}
+        calls = []
+        loop = self._loop(client, launch=lambda **kw: calls.append(kw) or {"ok": True})
+        card = loop.poll_once()
+        self.assertEqual(calls, [], "an assignee's press is not the owner's; never launches")
+        self.assertEqual(card["acted"][0]["refusedReason"], "policy_denied")
+
+
+class Nudges(unittest.TestCase):
+    """pendingNudges: answered once per nudge, never typed into a pane without
+    a consent-free wake path, unsupported when there is no pane host."""
+
+    def setUp(self):
+        self.home = Path(tempfile.mkdtemp(prefix="convoy-home-"))
+        self.root = Path(tempfile.mkdtemp(prefix="convoy-root-"))
+
+    def _loop(self, client, **kw):
+        kw.setdefault("resolve", lambda _slug: self.root)
+        return OriginLoop(self.home, origin_id=MINE, client=client, **kw)
+
+    def test_a_nudge_for_another_origin_is_skipped_never_answered(self):
+        row = _nudge_row(originId=THEIRS)
+        client = FakeClient({"pendingLinks": [], "pendingNudges": [row], "openDelegations": []})
+        card = self._loop(client).poll_once()
+        self.assertEqual([k for k, _ in client.calls], ["origin_queue"],
+                         "a nudge for another origin is never answered, same rule as a pending link")
+        self.assertEqual(card["nudges"], [])
+        self.assertEqual(card["skipped"], [{"nudgeId": "n1", "reason": "not_addressed"}])
+
+    def test_each_pending_nudge_is_answered_exactly_once(self):
+        row = _nudge_row()
+        client = FakeClient({"pendingLinks": [], "pendingNudges": [row], "openDelegations": []})
+        calls = []
+        loop = self._loop(client, nudge=lambda **kw: calls.append(kw) or ("nudged", None))
+        card = loop.poll_once()
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(card["nudges"], [{"nudgeId": "n1", "outcome": "nudged", "delivered": True}])
+        _kind, answered = client.calls[1]
+        self.assertEqual(answered, {"nudge_id": "n1", "outcome": "nudged", "reason": None})
+
+    def test_unsupported_when_there_is_no_pane_host(self):
+        row = _nudge_row()
+        client = FakeClient({"pendingLinks": [], "pendingNudges": [row], "openDelegations": []})
+        loop = self._loop(client, terminal=lambda _link: {"installed": True, "can_host": False})
+        card = loop.poll_once()
+        self.assertEqual(card["nudges"], [{"nudgeId": "n1", "outcome": "unsupported", "delivered": True}])
+        _kind, answered = client.calls[1]
+        self.assertEqual(answered["outcome"], "unsupported")
+        self.assertIn("pane host", answered["reason"])
+
+    def test_unsupported_when_the_repo_slug_does_not_resolve(self):
+        row = _nudge_row()
+        client = FakeClient({"pendingLinks": [], "pendingNudges": [row], "openDelegations": []})
+        loop = self._loop(client, resolve=lambda _slug: None)
+        card = loop.poll_once()
+        self.assertEqual(card["nudges"][0]["outcome"], "unsupported")
+
+    def test_outbox_queues_the_answer_before_the_call_like_any_other_write(self):
+        home = self.home
+        row = _nudge_row()
+        seen = []
+
+        class Watching(FakeClient):
+            def answer_nudge(self, nudge_id, outcome, reason):
+                seen.append(json.loads((home / "outbox.jsonl").read_text(encoding="utf-8").strip()))
+                return super().answer_nudge(nudge_id, outcome, reason)
+
+        client = Watching({"pendingLinks": [], "pendingNudges": [row], "openDelegations": []})
+        self._loop(client).poll_once()
+        self.assertEqual(seen[0]["kind"], "answer_nudge")
+        self.assertEqual((home / "outbox.jsonl").read_text(encoding="utf-8").strip(), "")
 
 
 class Backoff(unittest.TestCase):
@@ -306,6 +539,30 @@ class ChairLiveness(unittest.TestCase):
         for money in ("usd", "dollar", "cost", "spend", "price", "amount"):
             self.assertNotIn(money, raw, money)
 
+    def test_beat_payload_matches_the_platforms_originbeat_field_list(self):
+        """worklanesApi.ts originBeat reads writeGate, paneHost, harnesses[] and,
+        per thread, convoyId/threadKey/repoSlug/present/chairs; the old shape
+        (thread, root; no writeGate/paneHost/harnesses at all) is a mismatch the
+        ground-truth audit named and this pins shut."""
+        client = FakeClient()
+        loop = OriginLoop(self.home, origin_id=MINE, client=client, roots=lambda: [self.root],
+                          now=lambda: "2026-09-17T12:00:00.000000Z")
+        payload = loop.beat_payload()
+        self.assertEqual(set(payload) - {"originId", "asOf"}, {"writeGate", "paneHost", "harnesses", "threads"})
+        self.assertIn(payload["writeGate"], ("bearer", "closed"))
+        self.assertIn(payload["paneHost"], ("wt", "tmux", "none"))
+        self.assertIsInstance(payload["harnesses"], list)
+        for row in payload["harnesses"]:
+            self.assertEqual(set(row), {"id", "present", "quota"})
+        thread = payload["threads"][0]
+        self.assertEqual(set(thread), {"convoyId", "threadKey", "repoSlug", "present", "chairs"})
+        self.assertEqual(thread["threadKey"], "beat-t")
+        self.assertIs(thread["present"], True)
+        # No money, same rule as the chair-level check above: a harness-level
+        # quota must never ride as an invented dollar figure either.
+        for row in payload["harnesses"]:
+            self.assertIsNone(row["quota"])
+
 
 if __name__ == "__main__":
     unittest.main()
@@ -315,6 +572,14 @@ class ReviewP1WireShape(unittest.TestCase):
     def setUp(self):
         self.home = Path(tempfile.mkdtemp(prefix="convoy-home-"))
         self.root = Path(tempfile.mkdtemp(prefix="convoy-root-"))
+        # decide() only reaches the injected `deliver` fake for a live seated
+        # chair of the link's harness; with none, and no requestedBy/origin
+        # user_id to satisfy R1, it would refuse policy_denied before ever
+        # calling deliver. These tests are about the brief reaching deliver,
+        # not about launch eligibility, so a matching chair is seated here.
+        ensure_id(self.root)
+        bind(self.root, "wire-t")
+        seat(self.root, "claude", "chair", worktree=str(self.root))
 
     """The platform emits pendingLinks[] of {link, card, settings} with the
     link's wire id under `id`. The loop read `links` and `linkId`, so fed the REAL 200 it acted

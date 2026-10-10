@@ -344,31 +344,23 @@ class ManagedPaneHost(unittest.TestCase):
         self.assertEqual(rows[0]["cited"], 0)
 
     @mock.patch("convoy.bringup.shutil.which", return_value="C:\\Tools\\codex.exe")
-    def test_child_exit_stamps_pane_row_with_returncode_and_stderr_tail(self, _which_harness):
+    def test_child_exit_stamps_pane_row_with_returncode(self, _which_harness):
         """Death is a row. A body that died at boot left nothing behind:
         the pane scrolled its error away and closed, and the feed showed a
         chair that simply never acked. The host owns the child, so it is the
-        only place that can record the exit code and the child's last words.
-        Recorded, never inferred: the tail comes from the child's own stderr."""
+        only place that can record the exit code."""
         from convoy.layer import feed_since
-
-        outer = self
 
         class FakeProcess:
             pid = 707
             polls = 0
-
-            def __init__(self, sink):
-                sink.write(b"boot failed: no such model\n")
-                sink.flush()
 
             def poll(self):
                 self.polls += 1
                 return 3 if self.polls >= 2 else None
 
         def fake_popen(argv, cwd=None, stderr=None, **_kwargs):
-            outer.assertIsNotNone(stderr, "the host must own the child's stderr to record it")
-            return FakeProcess(stderr)
+            return FakeProcess()
 
         rc = run_host(
             self.root,
@@ -384,10 +376,37 @@ class ManagedPaneHost(unittest.TestCase):
         self.assertEqual(row["chair"], "managed-chair")
         self.assertEqual(row["exit"], 3)
         self.assertEqual(row["incarnation"], 1)
-        self.assertIn("no such model", row["stderr_tail"])
         # The origin loop beats on a local transition instead of waiting out
         # its idle backoff; the exit of a body is one.
         self.assertTrue((self.root / ".convoy" / "beat-request").exists())
+
+    @mock.patch("convoy.bringup.shutil.which", return_value="C:\\Tools\\grok.exe")
+    def test_the_childs_stderr_is_inherited_not_sunk_to_a_file(self, _which_harness):
+        """Root cause of the black pane: sinking the child's stderr to a file this
+        host alone read silenced a TUI that draws there instead of on stdout
+        (Grok 1.0.50 does), leaving the pane black while the neuron worked.
+        stderr is now inherited exactly like stdout and stdin already were -
+        this test pins the call shape so a regression is a failing assertion,
+        not a black pane somebody notices days later."""
+        seen = {}
+
+        class FakeProcess:
+            pid = 808
+            polls = 0
+
+            def poll(self):
+                self.polls += 1
+                return 0 if self.polls >= 2 else None
+
+        def fake_popen(argv, cwd=None, stderr=None, **_kwargs):
+            seen["stderr"] = stderr
+            return FakeProcess()
+
+        run_host(self.root, "managed-chair", popen=fake_popen,
+                 terminate=lambda _proc: None, sleep=lambda _seconds: None)
+        self.assertIsNone(seen["stderr"], "inherited (same as stdout/stdin), never redirected to a sink")
+        self.assertFalse(host_state_path(self.root, "managed-chair").with_suffix(".stderr").exists(),
+                         "no sink file is created at all")
 
     @mock.patch("convoy.bringup.shutil.which", return_value="C:\\Tools\\codex.exe")
     def test_host_pulses_while_the_body_is_up(self, _which_harness):

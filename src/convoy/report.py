@@ -144,6 +144,15 @@ class ReportClient:
     def beat(self, payload: dict[str, Any]) -> dict[str, Any]:
         return self._call("POST", API_BASE + "/origin/beat", body=payload)
 
+    def answer_nudge(self, nudge_id: str, outcome: str, reason: str | None = None) -> dict[str, Any]:
+        """The origin's account of one nudge: nudged, refused or unsupported.
+        The platform never types anything itself; this is the only place that
+        tells it what actually happened on this machine."""
+        body: dict[str, Any] = {"outcome": outcome}
+        if reason:
+            body["reason"] = str(reason)[:400]
+        return self._call("POST", API_BASE + "/origin/nudges/" + _segment(nudge_id), body=body)
+
     # -- one transport ----------------------------------------------------
 
     def _call(self, method: str, path: str, body: dict[str, Any] | None = None) -> dict[str, Any]:

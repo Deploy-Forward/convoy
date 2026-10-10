@@ -28,10 +28,6 @@ from .pulse import write_pulse
 # freshness window, so one missed beat is noise and two are a signal.
 HOST_PULSE_EVERY_S = 60.0
 
-# How much of the child's dying words ride the feed row. A boot failure says
-# what it needs in a line or two; the whole log is on disk beside the state.
-STDERR_TAIL_CHARS = 2000
-
 
 def _stamp() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
@@ -212,23 +208,6 @@ def _close_request_incarnation(request: Path) -> Any:
         return int(cited)
     except (TypeError, ValueError):
         return None
-
-
-def stderr_log_path(root: Path, session_id: str) -> Path:
-    return host_state_path(root, session_id).with_suffix(".stderr")
-
-
-def _stderr_tail(path: Path, limit: int = STDERR_TAIL_CHARS) -> str | None:
-    """The child's last words, or None when it said nothing. Never an
-    invented reason: an unreadable log is None, not an empty string."""
-    try:
-        text = path.read_text(encoding="utf-8-sig", errors="replace")
-    except OSError:
-        return None
-    text = text.strip()
-    if not text:
-        return None
-    return text[-limit:]
 
 
 def request_beat(root: Path) -> None:
@@ -509,18 +488,18 @@ def run_host(
         child_argv = [str(a) for a in launch["argv"]]
     if launch:
         launch_argv_path(root, session_id).unlink(missing_ok=True)
-    # The child's stderr goes to a file this host owns rather than to the
-    # pane, which scrolls it away and then closes. A file cannot deadlock the
-    # way an undrained pipe can, and it is what makes the exit row honest.
-    log = stderr_log_path(root, session_id)
-    log.parent.mkdir(parents=True, exist_ok=True)
-    sink = open(log, "wb")
+    # The child's stderr is INHERITED from this host's own (the pane's),
+    # exactly like stdout and stdin already are. Sinking it to a file (every
+    # release through 1.4.0) silenced a TUI that draws on stderr instead of
+    # stdout - Grok 1.0.50 does - leaving the pane black while the neuron
+    # worked (one chair's sunk .stderr file held 1.68 MB and
+    # 106,121 escape sequences nobody could see). Claude and Codex draw on
+    # stdout, already inherited, so this changes nothing for them.
     launched_at = _stamp()
     incarnation = int(row.get("incarnation") or 0) + 1
     try:
-        process = popen(child_argv, cwd=worktree, stderr=sink, **_popen_kwargs())
+        process = popen(child_argv, cwd=worktree, stderr=None, **_popen_kwargs())
     except BaseException:
-        sink.close()
         from .targeted_launch import release_launch_claim as _release
 
         _release(root, session_id)
@@ -537,7 +516,6 @@ def run_host(
         "started_at": launched_at,
         "worktree": worktree,
         "to": row.get("to"),
-        "stderr_log": str(log),
         "terminal_session": os.environ.get("WT_SESSION") or os.environ.get("TMUX_PANE"),
     }
     _write_state(root, session_id, state)
@@ -576,117 +554,115 @@ def run_host(
     # pulse is a chair with no body at all. They fail differently, so they are
     # recorded separately.
     last_host_pulse: float | None = None
-    try:
-        while True:
-            beat_at = clock()
-            if last_host_pulse is None or beat_at - last_host_pulse >= HOST_PULSE_EVERY_S:
-                try:
-                    write_pulse(root, session_id, pulse_source="host", incarnation=incarnation)
-                except (OSError, ValueError):
-                    pass    # a pulse must never take the body down
-                last_host_pulse = beat_at
-            cited = _close_request_incarnation(request)
-            if cited is not _NO_REQUEST and cited != incarnation:
-                # A request addressed to an earlier life. Consume it so it
-                # cannot fire again, and say so — silently deleting it would
-                # leave a human's consented close looking as if it worked.
-                request.unlink(missing_ok=True)
-                try:
-                    hook(
-                        root,
-                        "close-ignored",
-                        "close request for chair " + session_id + " cited incarnation " + str(cited),
-                        instance_id=session_id,
-                        extra={"chair": session_id, "incarnation": incarnation, "cited": cited},
-                    )
-                except (OSError, ValueError):
-                    pass
-                continue
-            if cited is not _NO_REQUEST:
-                terminate(process)
-                request.unlink(missing_ok=True)        # consumed: exactly one close per request
-                release_launch_claim(root, session_id)  # the pane is going away
-                state.update({"status": "close-request-acknowledged", "closed_at": _stamp()})
-                _write_state(root, session_id, state)
-                try:
-                    update_seat(
-                        root,
-                        session_id,
-                        process_state="exited",
-                        pane_state="close-dispatched",
-                        launch_state="closed-by-consent",
-                    )
-                except ValueError:
-                    pass
-                request_beat(root)
-                return 0
-            nudge = _read_nudge_request(nudge_request)
-            if nudge is not None:
-                nudge_id = str(nudge.get("nudge_id") or "")
-                text = str(nudge.get("text") or "")
-                result = console_writer(text)
-                typed_at = _stamp() if result.get("ok") else None
-                state["last_nudge"] = {
-                    "nudge_id": nudge_id,
-                    "typed_at": typed_at,
-                    "ok": bool(result.get("ok")),
-                    "error": result.get("error"),
-                }
-                _write_state(root, session_id, state)
-                nudge_request.unlink(missing_ok=True)  # consumed: exactly one type per request
-                try:
-                    hook(
-                        root,
-                        "nudge-typed" if result.get("ok") else "nudge-failed",
-                        ("typed into " if result.get("ok") else "failed to type into ") + session_id + " nudge=" + nudge_id,
-                        instance_id=session_id,
-                        extra={"nudge_id": nudge_id, "ok": bool(result.get("ok")), "error": result.get("error")},
-                    )
-                except (OSError, ValueError):
-                    pass
-                request_beat(root)
-                continue
-            return_code = process.poll()
-            if return_code is not None:
-                state.update(
-                    {
-                        "status": "child-exited",
-                        "child_returncode": int(return_code),
-                        "closed_at": _stamp(),
-                    }
+    while True:
+        beat_at = clock()
+        if last_host_pulse is None or beat_at - last_host_pulse >= HOST_PULSE_EVERY_S:
+            try:
+                write_pulse(root, session_id, pulse_source="host", incarnation=incarnation)
+            except (OSError, ValueError):
+                pass    # a pulse must never take the body down
+            last_host_pulse = beat_at
+        cited = _close_request_incarnation(request)
+        if cited is not _NO_REQUEST and cited != incarnation:
+            # A request addressed to an earlier life. Consume it so it
+            # cannot fire again, and say so — silently deleting it would
+            # leave a human's consented close looking as if it worked.
+            request.unlink(missing_ok=True)
+            try:
+                hook(
+                    root,
+                    "close-ignored",
+                    "close request for chair " + session_id + " cited incarnation " + str(cited),
+                    instance_id=session_id,
+                    extra={"chair": session_id, "incarnation": incarnation, "cited": cited},
                 )
-                _write_state(root, session_id, state)
-                release_launch_claim(root, session_id)  # no body left; the chair may be launched again
-                try:
-                    update_seat(root, session_id, process_state="exited", pane_state="child-exited")
-                except ValueError:
-                    pass
-                sink.close()
-                # Death is a row. Before this, a body that failed at boot
-                # left the feed showing a chair that simply never acked.
-                tail = _stderr_tail(log)
-                summary = "chair " + session_id + " exited " + str(int(return_code))
-                try:
-                    hook(
-                        root,
-                        "pane",
-                        summary,
-                        instance_id=session_id,
-                        extra={
-                            "chair": session_id,
-                            "incarnation": incarnation,
-                            "exit": int(return_code),
-                            "stderr_tail": tail,
-                        },
-                    )
-                except (OSError, ValueError):
-                    pass
-                request_beat(root)
-                return int(return_code)
-            sleep(0.2)
-    finally:
-        if not sink.closed:
-            sink.close()
+            except (OSError, ValueError):
+                pass
+            continue
+        if cited is not _NO_REQUEST:
+            terminate(process)
+            request.unlink(missing_ok=True)        # consumed: exactly one close per request
+            release_launch_claim(root, session_id)  # the pane is going away
+            state.update({"status": "close-request-acknowledged", "closed_at": _stamp()})
+            _write_state(root, session_id, state)
+            try:
+                update_seat(
+                    root,
+                    session_id,
+                    process_state="exited",
+                    pane_state="close-dispatched",
+                    launch_state="closed-by-consent",
+                )
+            except ValueError:
+                pass
+            request_beat(root)
+            return 0
+        nudge = _read_nudge_request(nudge_request)
+        if nudge is not None:
+            nudge_id = str(nudge.get("nudge_id") or "")
+            text = str(nudge.get("text") or "")
+            result = console_writer(text)
+            typed_at = _stamp() if result.get("ok") else None
+            state["last_nudge"] = {
+                "nudge_id": nudge_id,
+                "typed_at": typed_at,
+                "ok": bool(result.get("ok")),
+                "error": result.get("error"),
+            }
+            _write_state(root, session_id, state)
+            nudge_request.unlink(missing_ok=True)  # consumed: exactly one type per request
+            try:
+                hook(
+                    root,
+                    "nudge-typed" if result.get("ok") else "nudge-failed",
+                    ("typed into " if result.get("ok") else "failed to type into ") + session_id + " nudge=" + nudge_id,
+                    instance_id=session_id,
+                    extra={"nudge_id": nudge_id, "ok": bool(result.get("ok")), "error": result.get("error")},
+                )
+            except (OSError, ValueError):
+                pass
+            request_beat(root)
+            continue
+        return_code = process.poll()
+        if return_code is not None:
+            state.update(
+                {
+                    "status": "child-exited",
+                    "child_returncode": int(return_code),
+                    "closed_at": _stamp(),
+                }
+            )
+            _write_state(root, session_id, state)
+            release_launch_claim(root, session_id)  # no body left; the chair may be launched again
+            try:
+                update_seat(root, session_id, process_state="exited", pane_state="child-exited")
+            except ValueError:
+                pass
+            # Death is a row. Before this, a body that failed at boot
+            # left the feed showing a chair that simply never acked.
+            # stderr_tail is gone: it inherited the pane's own stderr
+            # (so a TUI that draws there is visible) rather than a sink
+            # this host could read back; a boot failure's own words are
+            # on the pane's scrollback, not in this row.
+            summary = "chair " + session_id + " exited " + str(int(return_code))
+            try:
+                hook(
+                    root,
+                    "pane",
+                    summary,
+                    instance_id=session_id,
+                    extra={
+                        "chair": session_id,
+                        "incarnation": incarnation,
+                        "exit": int(return_code),
+                        "stderr_tail": None,
+                    },
+                )
+            except (OSError, ValueError):
+                pass
+            request_beat(root)
+            return int(return_code)
+        sleep(0.2)
 
 
 def request_close(root: Path, session_id: str, *, incarnation: Any = None,

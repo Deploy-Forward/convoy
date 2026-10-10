@@ -133,6 +133,22 @@ class ReportClientContract(unittest.TestCase):
         self.assertEqual(receiver.requests[0].selector,
                          "/api/org/worklanes/cards/card%2F..%2F..%2Fadmin/threads/l%201/fulfil")
 
+    def test_answer_nudge_posts_the_origin_nudges_path_with_the_outcome(self):
+        receiver = Receiver(FakeResponse(200, b"{}"))
+        self._client(receiver).answer_nudge("n1", "unsupported", "no pane host on this machine")
+        request = receiver.requests[0]
+        self.assertEqual(request.selector, "/api/org/worklanes/origin/nudges/n1")
+        self.assertEqual(request.get_method(), "POST")
+        self.assertIsNotNone(request.get_header("Idempotency-key"), "a write")
+        sent = json.loads(request.data.decode("utf-8"))
+        self.assertEqual(sent, {"outcome": "unsupported", "reason": "no pane host on this machine"})
+
+    def test_answer_nudge_omits_reason_when_none_given(self):
+        receiver = Receiver(FakeResponse(200, b"{}"))
+        self._client(receiver).answer_nudge("n1", "nudged")
+        sent = json.loads(receiver.requests[0].data.decode("utf-8"))
+        self.assertEqual(sent, {"outcome": "nudged"})
+
     def test_credential_never_appears_in_logs_or_exceptions(self):
         logged = []
         boom = urllib.error.HTTPError("https://example.invalid/x", 500, "Server Error", {},
